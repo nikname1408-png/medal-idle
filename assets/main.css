@@ -1,12 +1,12 @@
 :root {
-    --bg: #100e0b;
-    --panel: #1c1813;
-    --panel-2: #241f18;
-    --line: #3a3024;
-    --text: #eadfc8;
-    --muted: #a9997a;
-    --gold: #d4af37;
-    --danger: #c0563c;
+    --energy: #bad118;
+    --bg: #222222;
+    --text: #f4f1e8;
+    --muted: #b9b3a4;
+    --line: rgba(255, 255, 255, 0.14);
+    --gold: #d9c27a;
+    --danger: #e06b52;
+    --radius: 12px;
 }
 
 * {
@@ -22,7 +22,7 @@ body,
 }
 
 body {
-    background: radial-gradient(circle at top, #1d1812, var(--bg) 60%);
+    background: var(--bg);
     color: var(--text);
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
     overflow: hidden;
@@ -34,6 +34,24 @@ button {
     touch-action: manipulation;
 }
 
+/* ---------- Темы ---------- */
+
+.theme-classic {
+    --btn: #004487;
+    --panel: #2a2a2a;
+    --panel-2: #303030;
+    --accent: #7fb6ff;
+}
+
+.theme-dark {
+    --btn: #444444;
+    --panel: #2a2a2a;
+    --panel-2: #303030;
+    --accent: #d9d9d9;
+}
+
+/* ---------- Каркас ---------- */
+
 .app {
     position: relative;
     height: 100dvh;
@@ -41,6 +59,8 @@ button {
     margin: 0 auto;
     display: flex;
     flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
 }
 
 .topbar {
@@ -49,22 +69,22 @@ button {
     gap: 8px;
     padding: 10px 12px;
     border-bottom: 1px solid var(--line);
-    background: rgba(16, 14, 11, 0.9);
+    background: var(--btn);
 }
 
 .icon-btn {
     width: 40px;
     height: 40px;
-    border: 1px solid var(--line);
+    border: 1px solid rgba(255, 255, 255, 0.28);
     border-radius: 10px;
-    background: var(--panel);
-    color: var(--text);
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
     font-size: 18px;
     cursor: pointer;
 }
 
 .icon-btn:active {
-    background: rgba(212, 175, 55, 0.14);
+    background: rgba(255, 255, 255, 0.24);
 }
 
 .topbar-title {
@@ -74,7 +94,7 @@ button {
     font-size: 20px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--gold);
+    color: #ffffff;
 }
 
 .content {
@@ -84,11 +104,19 @@ button {
     -webkit-overflow-scrolling: touch;
 }
 
+.content::-webkit-scrollbar,
+.resources::-webkit-scrollbar,
+.tabs::-webkit-scrollbar {
+    display: none;
+}
+
+/* ---------- Сворачиваемые разделы ---------- */
+
 .section {
     margin-bottom: 10px;
     border: 1px solid var(--line);
-    border-radius: 12px;
-    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border-radius: var(--radius);
+    background: var(--panel);
     overflow: hidden;
 }
 
@@ -97,17 +125,17 @@ button {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 14px;
+    padding: 13px 14px;
     border: 0;
-    background: none;
+    background: var(--panel-2);
     color: var(--text);
     font-size: 16px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
 }
 
 .section-head:active {
-    background: rgba(212, 175, 55, 0.1);
+    filter: brightness(1.12);
 }
 
 .section-title {
@@ -127,13 +155,14 @@ button {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 0 12px 12px;
+    padding: 10px 12px 12px;
 }
 
+/* ---------- Кнопки действий ---------- */
+
 .action {
-    border: 1px solid var(--line);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 10px;
-    background: rgba(0, 0, 0, 0.15);
     overflow: hidden;
 }
 
@@ -147,57 +176,140 @@ button {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    padding: 12px 14px;
+    padding: 13px 14px;
     border: 0;
-    background: none;
-    color: var(--text);
+    background: var(--btn);
+    color: #ffffff;
     font-size: 15px;
+    font-weight: 600;
     text-align: left;
     cursor: pointer;
 }
 
-.action-main:active {
-    background: rgba(212, 175, 55, 0.16);
+.action-main:active,
+.chev-btn:active {
+    filter: brightness(1.2);
 }
 
 .chev-btn {
-    flex: 0 0 44px;
+    flex: 0 0 46px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: 0;
-    border-left: 1px solid var(--line);
-    background: rgba(0, 0, 0, 0.2);
-    color: var(--muted);
+    border-left: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--btn);
+    color: rgba(255, 255, 255, 0.85);
     font-size: 15px;
     cursor: pointer;
-}
-
-.chev-btn:active {
-    background: rgba(212, 175, 55, 0.16);
 }
 
 .action-info {
     padding: 10px 14px 12px;
     border-top: 1px solid var(--line);
+    background: rgba(0, 0, 0, 0.22);
     color: var(--muted);
     font-size: 13px;
+    line-height: 1.4;
+}
+
+.hint {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(186, 209, 24, 0.1);
+    color: #d7e37a;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+/* ---------- Постройки ---------- */
+
+.build {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.build-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.build-title {
+    font-weight: 700;
+}
+
+.build-level {
+    font-size: 12px;
+    color: var(--gold);
+}
+
+.build-desc {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.4;
+}
+
+.build-cost {
+    font-size: 12px;
+    color: var(--gold);
+}
+
+.build-cost.poor {
+    color: var(--danger);
+}
+
+.build-btn {
+    margin-top: 4px;
+    padding: 11px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--btn);
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.build-btn:active {
+    filter: brightness(1.2);
+}
+
+/* ---------- Нижняя панель ---------- */
+
+.bottom {
+    flex: 0 0 auto;
+    background: var(--bg);
 }
 
 .resources {
     display: flex;
+    align-items: center;
     gap: 6px;
-    padding: 8px 10px;
+    min-height: 42px;
+    padding: 7px 10px;
     overflow-x: auto;
     border-top: 1px solid var(--line);
-    background: rgba(16, 14, 11, 0.95);
+    background: var(--bg);
+}
+
+.resources-empty {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
 }
 
 .resource {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
+    gap: 5px;
+    padding: 4px 9px;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--panel);
@@ -224,13 +336,13 @@ button {
     padding: 8px 10px;
     overflow-x: auto;
     border-top: 1px solid var(--line);
-    background: rgba(16, 14, 11, 0.95);
+    background: var(--bg);
 }
 
 .tab {
     flex: 0 0 auto;
-    width: 62px;
-    height: 62px;
+    width: 64px;
+    height: 64px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -244,13 +356,13 @@ button {
 }
 
 .tab:active {
-    background: rgba(212, 175, 55, 0.12);
+    filter: brightness(1.2);
 }
 
 .tab.active {
-    border-color: var(--gold);
-    color: var(--gold);
-    background: #2a2318;
+    border-color: var(--energy);
+    color: var(--energy);
+    background: rgba(186, 209, 24, 0.1);
 }
 
 .tab-icon {
@@ -265,44 +377,163 @@ button {
 
 .energy {
     position: relative;
-    height: 46px;
+    height: 48px;
     display: flex;
     align-items: center;
     justify-content: center;
     border-top: 1px solid var(--line);
-    background: #0b0907;
+    background: var(--bg);
     padding-bottom: env(safe-area-inset-bottom);
+    overflow: hidden;
 }
 
 .energy-fill {
     position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, #2f5a2a, #6f9c46);
-    opacity: 0.55;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--energy);
     transition: width 0.3s linear;
 }
 
 .energy-label {
     position: relative;
+    z-index: 1;
+    padding: 3px 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.45);
+    color: #ffffff;
     font-size: 14px;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
-    color: #f2e7cf;
-    text-shadow: 0 1px 2px #000;
+    white-space: nowrap;
 }
+
+/* ---------- Всплывающая плашка ---------- */
 
 .toast {
     position: absolute;
     left: 50%;
-    bottom: 190px;
+    bottom: 200px;
     transform: translateX(-50%);
     z-index: 10;
+    max-width: 90%;
     padding: 8px 14px;
-    border: 1px solid var(--gold);
+    border: 1px solid var(--energy);
     border-radius: 999px;
-    background: rgba(20, 16, 10, 0.95);
-    color: var(--gold);
+    background: rgba(20, 20, 20, 0.96);
+    color: var(--energy);
     font-size: 13px;
+    text-align: center;
     white-space: nowrap;
     pointer-events: none;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------- Настройки ---------- */
+
+.settings {
+    margin-bottom: 10px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+}
+
+.settings-title {
+    margin: 0 0 10px;
+    font-size: 16px;
+}
+
+.settings-note {
+    margin: 8px 0 0;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.4;
+}
+
+.theme-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.theme-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.18);
+    color: var(--text);
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.theme-option.active {
+    border-color: var(--energy);
+}
+
+.theme-swatch {
+    width: 26px;
+    height: 26px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+}
+
+.theme-name {
+    flex: 1;
+    text-align: left;
+}
+
+.theme-check {
+    color: var(--energy);
+    font-weight: 700;
+}
+
+.danger-btn {
+    width: 100%;
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid var(--danger);
+    border-radius: 10px;
+    background: rgba(224, 107, 82, 0.12);
+    color: var(--danger);
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.danger-btn.armed {
+    background: var(--danger);
+    color: #ffffff;
+}
+
+/* ---------- Заглушки вкладок ---------- */
+
+.placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 55vh;
+    text-align: center;
+}
+
+.placeholder-icon {
+    font-size: 42px;
+}
+
+.placeholder-title {
+    margin: 0;
+    color: var(--text);
+    font-size: 20px;
+}
+
+.placeholder-text {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
 }

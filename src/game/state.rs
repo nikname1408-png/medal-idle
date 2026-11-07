@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use super::balance;
 
 /// Виды ресурсов, которые можно добывать кликом.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResourceKind {
     Wood,
     Stone,
@@ -18,12 +20,23 @@ impl ResourceKind {
     }
 }
 
+/// Визуальная тема игры.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Theme {
+    #[default]
+    Classic,
+    Dark,
+}
+
 /// Всё состояние игры. Логика не зависит от Dioxus.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GameState {
+    pub version: u32,
+
     pub energy: f64,
     pub energy_max: f64,
-    pub energy_regen: f64,
 
     pub wood: f64,
     pub stone: f64,
@@ -31,29 +44,38 @@ pub struct GameState {
     pub coal: f64,
     pub gold: f64,
 
-    pub wood_cap: f64,
-    pub stone_cap: f64,
-    pub iron_cap: f64,
-    pub coal_cap: f64,
-    pub gold_cap: f64,
+    /// Сколько раз игрок нажимал «Отдых».
+    pub rest_clicks: u32,
+    /// Уровень своего дома (0 — ещё не построен).
+    pub house_level: u32,
+    /// Уровень склада.
+    pub storage_level: u32,
+
+    /// Значок дерева уже показывался в баре.
+    pub wood_seen: bool,
+    /// Открыты ли камень, дом и склад.
+    pub stone_seen: bool,
+
+    pub theme: Theme,
 }
 
 impl Default for GameState {
     fn default() -> Self {
         Self {
+            version: balance::SAVE_VERSION,
             energy: balance::START_ENERGY,
             energy_max: balance::START_ENERGY_MAX,
-            energy_regen: balance::START_ENERGY_REGEN,
             wood: 0.0,
             stone: 0.0,
             iron: 0.0,
             coal: 0.0,
             gold: 0.0,
-            wood_cap: balance::BASE_STORAGE_CAP,
-            stone_cap: balance::BASE_STORAGE_CAP,
-            iron_cap: balance::BASE_STORAGE_CAP,
-            coal_cap: balance::BASE_STORAGE_CAP,
-            gold_cap: balance::BASE_STORAGE_CAP,
+            rest_clicks: 0,
+            house_level: 0,
+            storage_level: 0,
+            wood_seen: false,
+            stone_seen: false,
+            theme: Theme::Classic,
         }
     }
 }
@@ -67,12 +89,24 @@ impl GameState {
         }
     }
 
-    pub fn cap(&self, kind: ResourceKind) -> f64 {
-        match kind {
-            ResourceKind::Wood => self.wood_cap,
-            ResourceKind::Stone => self.stone_cap,
-            ResourceKind::Iron => self.iron_cap,
-        }
+    /// Лимит ресурса с учётом склада.
+    pub fn cap(&self, _kind: ResourceKind) -> f64 {
+        balance::BASE_STORAGE_CAP + self.storage_level as f64 * balance::STORAGE_CAP_PER_LEVEL
+    }
+
+    /// Регенерация энергии в секунду. Без дома — ноль.
+    pub fn energy_regen(&self) -> f64 {
+        self.house_level as f64 * balance::HOUSE_ENERGY_PER_LEVEL
+    }
+
+    /// Открыта ли добыча ресурсов.
+    pub fn gathering_unlocked(&self) -> bool {
+        self.rest_clicks >= balance::REST_CLICKS_TO_UNLOCK_GATHER
+    }
+
+    /// Открыты ли камень, дом и склад.
+    pub fn stone_unlocked(&self) -> bool {
+        self.stone_seen
     }
 
     /// Добавляет ресурс с учётом лимита. Возвращает, сколько реально поместилось.
@@ -112,6 +146,16 @@ impl GameState {
             0.0
         } else {
             (self.energy / self.energy_max).clamp(0.0, 1.0)
+        }
+    }
+
+    /// Обновляет флаги открытия по текущим ресурсам. Флаги не откатываются.
+    pub fn refresh_unlocks(&mut self) {
+        if self.wood >= balance::WOOD_VISIBLE_FROM {
+            self.wood_seen = true;
+        }
+        if self.wood >= balance::STONE_UNLOCK_WOOD {
+            self.stone_seen = true;
         }
     }
 }

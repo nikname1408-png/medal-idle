@@ -1,10 +1,17 @@
+use std::time::Duration;
+
 use dioxus::prelude::*;
 
-use crate::game::actions::{self, GatherResult};
-use crate::game::state::ResourceKind;
+use crate::game::actions::{self, BuildResult, GatherResult};
+use crate::game::state::{ResourceKind, Theme};
 use crate::game::{balance, GameState};
 
+use super::save;
+
 const MAIN_CSS: Asset = asset!("/assets/main.css");
+
+const TAB_FIELD: usize = 0;
+const TAB_SETTINGS: usize = 7;
 
 const TABS: [(&str, &str); 8] = [
     ("🌾", "Поле"),
@@ -20,120 +27,75 @@ const TABS: [(&str, &str); 8] = [
 #[component]
 pub fn App() -> Element {
     let mut state = use_signal(GameState::default);
-    let active_tab = use_signal(|| 0usize);
-    let mut toast = use_signal(String::new);
+    let active_tab = use_signal(|| TAB_FIELD);
+    let toast = use_signal(String::new);
+    let toast_seq = use_signal(|| 0u64);
+    let mut loaded = use_signal(|| false);
 
-    // Игровой цикл: раз в секунду начисляем энергию.
+    // Загружаем сохранение один раз при старте.
+    use_future(move || async move {
+        match save::load().await {
+            Ok(Some(mut saved)) => {
+                saved.refresh_unlocks();
+                state.set(saved);
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("Не удалось загрузить сохранение: {error}"),
+        }
+        loaded.set(true);
+    });
+
+    // Игровой цикл: энергия восстанавливается только от дома.
     use_future(move || async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(balance::TICK_MS)).await;
+            tokio::time::sleep(Duration::from_millis(balance::TICK_MS)).await;
+            if !*loaded.peek() {
+                continue;
+            }
             let mut guard = state.write();
             actions::tick(&mut guard, 1.0);
         }
     });
 
+    // Автосохранение каждые две секунды.
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if !*loaded.peek() {
+                continue;
+            }
+            let snapshot = state();
+            if let Err(error) = save::save(&snapshot).await {
+                eprintln!("Не удалось сохранить игру: {error}");
+            }
+        }
+    });
+
     let snapshot = state();
+    let theme_class = theme_css_class(snapshot.theme);
+    let title = if active_tab() == TAB_SETTINGS {
+        "Настройки"
+    } else {
+        "Поле"
+    };
+
+    let screen = match active_tab() {
+        TAB_FIELD => rsx! {
+            FieldScreen { state, toast, toast_seq }
+        },
+        TAB_SETTINGS => rsx! {
+            SettingsScreen { state, toast, toast_seq }
+        },
+        index => rsx! {
+            PlaceholderScreen { title: TABS[index].1.to_string() }
+        },
+    };
 
     rsx! {
         document::Stylesheet { href: MAIN_CSS }
-        div { class: "app",
-            TopBar {}
-            main { class: "content",
-                CollapsibleSection { title: "Отдых".to_string(),
-                    ActionRow {
-                        label: "Отдых".to_string(),
-                        info: "+10 энергии за клик".to_string(),
-                        on_press: move |_| {
-                            let gained = {
-                                let mut guard = state.write();
-                                actions::rest(&mut guard)
-                            };
-                            toast.set(rest_message(gained));
-                        },
-                    }
-                }
-                CollapsibleSection { title: "Сбор".to_string(),
-                    ActionRow {
-                        label: "Собрать камень".to_string(),
-                        info: "+1 камень за клик (−1 энергия)".to_string(),
-                        on_press: move |_| {
-                            let result = {
-                                let mut guard = state.write();
-                                actions::gather(&mut guard, ResourceKind::Stone)
-                            };
-                            toast.set(gather_message(ResourceKind::Stone, result));
-                        },
-                    }
-                    ActionRow {
-                        label: "Собрать дерево".to_string(),
-                        info: "+1 дерево за клик (−1 энергия)".to_string(),
-                        on_press: move |_| {
-                            let result = {
-                                let mut guard = state.write();
-                                actions::gather(&mut guard, ResourceKind::Wood)
-                            };
-                            toast.set(gather_message(ResourceKind::Wood, result));
-                        },
-                    }
-                    ActionRow {
-                        label: "Собрать железо".to_string(),
-                        info: "+1 железо за клик (−1 энергия)".to_string(),
-                        on_press: move |_| {
-                            let result = {
-                                let mut guard = state.write();
-                                actions::gather(&mut guard, ResourceKind::Iron)
-                            };
-                            toast.set(gather_message(ResourceKind::Iron, result));
-                        },
-                    }
-                }
-                CollapsibleSection { title: "Продукция".to_string(),
-                    ActionRow {
-                        label: "Лесопилка".to_string(),
-                        info: "Работяги добывают дерево автоматически".to_string(),
-                        on_press: move |_| toast.set("Откроется позже".to_string()),
-                    }
-                    ActionRow {
-                        label: "Угольная яма".to_string(),
-                        info: "Переработка дерева в уголь".to_string(),
-                        on_press: move |_| toast.set("Откроется позже".to_string()),
-                    }
-                    ActionRow {
-                        label: "Кузница".to_string(),
-                        info: "Переработка руды в железо и ковка мечей".to_string(),
-                        on_press: move |_| toast.set("Откроется позже".to_string()),
-                    }
-                }
-                CollapsibleSection { title: "Хранение".to_string(),
-                    ActionRow {
-                        label: "Склад".to_string(),
-                        info: "Увеличивает лимит ресурсов".to_string(),
-                        on_press: move |_| toast.set("Откроется позже".to_string()),
-                    }
-                    ActionRow {
-                        label: "Амбар".to_string(),
-                        info: "Откроется позже".to_string(),
-                        on_press: move |_| toast.set("Откроется позже".to_string()),
-                    }
-                    ActionRow {
-                        label: "Банк".to_string(),
-                        info: "Увеличивает лимит золота".to_string(),
-                        on_press: move |_| toast.set("Откроется позже".to_string()),
-                    }
-                }
-                CollapsibleSection { title: "Дома".to_string(),
-                    ActionRow {
-                        label: "Дом для работяг".to_string(),
-                        info: "+1 работник за уровень".to_string(),
-                        on_press: move |_| toast.set("Откроется позже".to_string()),
-                    }
-                    ActionRow {
-                        label: "Исследовательская лаборатория".to_string(),
-                        info: "Исследования зданий, чертежей и предметов".to_string(),
-                        on_press: move |_| toast.set("Откроется позже".to_string()),
-                    }
-                }
-            }
+        div { class: "app {theme_class}",
+            TopBar { title: title.to_string() }
+            main { class: "content", {screen} }
             if !toast().is_empty() {
                 div { class: "toast", "{toast}" }
             }
@@ -147,11 +109,185 @@ pub fn App() -> Element {
 }
 
 #[component]
-fn TopBar() -> Element {
+fn FieldScreen(
+    state: Signal<GameState>,
+    toast: Signal<String>,
+    toast_seq: Signal<u64>,
+) -> Element {
+    let snapshot = state();
+
+    let rests_left = balance::REST_CLICKS_TO_UNLOCK_GATHER.saturating_sub(snapshot.rest_clicks);
+    let house_cost = balance::house_cost(snapshot.house_level);
+    let storage_cost = balance::storage_cost(snapshot.storage_level);
+    let house_affordable = snapshot.wood >= house_cost.wood && snapshot.stone >= house_cost.stone;
+    let storage_affordable =
+        snapshot.wood >= storage_cost.wood && snapshot.stone >= storage_cost.stone;
+
+    let house_description = if snapshot.house_level == 0 {
+        "Первая постройка. Даёт +1 энергии в секунду.".to_string()
+    } else {
+        format!(
+            "Сейчас даёт +{}/с энергии. Улучшение добавит ещё +1/с.",
+            snapshot.house_level
+        )
+    };
+
+    let storage_description = format!(
+        "Сейчас лимит ресурсов: {}. Улучшение добавит +{}.",
+        format_num(snapshot.cap(ResourceKind::Wood)),
+        format_num(balance::STORAGE_CAP_PER_LEVEL)
+    );
+
+    rsx! {
+        CollapsibleSection { title: "Отдых".to_string(),
+            ActionRow {
+                label: "Отдых".to_string(),
+                info: "+10 энергии за клик. Пока нет дома — это единственный способ получить энергию.".to_string(),
+                on_press: move |_| do_rest(state, toast, toast_seq),
+            }
+            if !snapshot.gathering_unlocked() {
+                div { class: "hint",
+                    "Осталось отдохнуть: {rests_left}. После этого откроется добыча дерева."
+                }
+            } else if snapshot.house_level == 0 {
+                div { class: "hint",
+                    "Построй свой дом — он начнёт восстанавливать энергию сам."
+                }
+            }
+        }
+
+        if snapshot.gathering_unlocked() {
+            CollapsibleSection { title: "Сбор".to_string(),
+                ActionRow {
+                    label: "Собрать дерево".to_string(),
+                    info: "+1 дерево за клик (−1 энергия).".to_string(),
+                    on_press: move |_| do_gather(state, toast, toast_seq, ResourceKind::Wood),
+                }
+                if snapshot.stone_unlocked() {
+                    ActionRow {
+                        label: "Собрать камень".to_string(),
+                        info: "+1 камень за клик (−1 энергия).".to_string(),
+                        on_press: move |_| do_gather(state, toast, toast_seq, ResourceKind::Stone),
+                    }
+                }
+            }
+        }
+
+        if snapshot.stone_unlocked() {
+            CollapsibleSection { title: "Хранение".to_string(),
+                BuildRow {
+                    title: "Склад".to_string(),
+                    level: snapshot.storage_level,
+                    description: storage_description,
+                    cost: cost_text(storage_cost),
+                    affordable: storage_affordable,
+                    on_build: move |_| do_build_storage(state, toast, toast_seq),
+                }
+            }
+            CollapsibleSection { title: "Дома".to_string(),
+                BuildRow {
+                    title: "Свой дом".to_string(),
+                    level: snapshot.house_level,
+                    description: house_description,
+                    cost: cost_text(house_cost),
+                    affordable: house_affordable,
+                    on_build: move |_| do_build_house(state, toast, toast_seq),
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn SettingsScreen(
+    state: Signal<GameState>,
+    toast: Signal<String>,
+    toast_seq: Signal<u64>,
+) -> Element {
+    let mut state = state;
+    let reset_armed = use_signal(|| false);
+    let theme = state().theme;
+
+    rsx! {
+        section { class: "settings",
+            h2 { class: "settings-title", "Внешний вид" }
+            div { class: "theme-list",
+                ThemeOption {
+                    name: "Классический".to_string(),
+                    color: "#004487".to_string(),
+                    active: theme == Theme::Classic,
+                    on_pick: move |_| {
+                        state.write().theme = Theme::Classic;
+                    },
+                }
+                ThemeOption {
+                    name: "Тёмный".to_string(),
+                    color: "#444444".to_string(),
+                    active: theme == Theme::Dark,
+                    on_pick: move |_| {
+                        state.write().theme = Theme::Dark;
+                    },
+                }
+            }
+            p { class: "settings-note", "Цвет энергии одинаковый во всех темах: #BAD118." }
+        }
+
+        section { class: "settings",
+            h2 { class: "settings-title", "Прогресс" }
+            p { class: "settings-note", "Игра сохраняется автоматически каждые 2 секунды." }
+            button {
+                class: if reset_armed() { "danger-btn armed" } else { "danger-btn" },
+                onclick: move |_| reset_progress(state, toast, toast_seq, reset_armed),
+                if reset_armed() {
+                    "Нажми ещё раз, чтобы сбросить"
+                } else {
+                    "Сбросить прогресс"
+                }
+            }
+            p { class: "settings-note",
+                "Сброс вернёт игру в самое начало. Тема оформления сохранится."
+            }
+        }
+
+        section { class: "settings",
+            h2 { class: "settings-title", "Об игре" }
+            p { class: "settings-note", "«Поле» — версия v0.3. Rust + Dioxus 0.7." }
+        }
+    }
+}
+
+#[component]
+fn ThemeOption(name: String, color: String, active: bool, on_pick: EventHandler<()>) -> Element {
+    rsx! {
+        button {
+            class: if active { "theme-option active" } else { "theme-option" },
+            onclick: move |_| on_pick.call(()),
+            span { class: "theme-swatch", style: "background: {color};" }
+            span { class: "theme-name", "{name}" }
+            if active {
+                span { class: "theme-check", "✓" }
+            }
+        }
+    }
+}
+
+#[component]
+fn PlaceholderScreen(title: String) -> Element {
+    rsx! {
+        div { class: "placeholder",
+            div { class: "placeholder-icon", "🚧" }
+            h2 { class: "placeholder-title", "{title}" }
+            p { class: "placeholder-text", "Этот раздел появится в следующих версиях." }
+        }
+    }
+}
+
+#[component]
+fn TopBar(title: String) -> Element {
     rsx! {
         header { class: "topbar",
             button { class: "icon-btn", "☰" }
-            h1 { class: "topbar-title", "Поле" }
+            h1 { class: "topbar-title", "{title}" }
             button { class: "icon-btn", "🔔" }
         }
     }
@@ -206,23 +342,74 @@ fn ActionRow(label: String, info: String, on_press: EventHandler<()>) -> Element
 }
 
 #[component]
+fn BuildRow(
+    title: String,
+    level: u32,
+    description: String,
+    cost: String,
+    affordable: bool,
+    on_build: EventHandler<()>,
+) -> Element {
+    let level_label = if level == 0 {
+        "не построено".to_string()
+    } else {
+        format!("уровень {level}")
+    };
+    let button_label = if level == 0 { "Построить" } else { "Улучшить" };
+
+    rsx! {
+        div { class: "build",
+            div { class: "build-head",
+                span { class: "build-title", "{title}" }
+                span { class: "build-level", "{level_label}" }
+            }
+            div { class: "build-desc", "{description}" }
+            div {
+                class: if affordable { "build-cost" } else { "build-cost poor" },
+                "{cost}"
+            }
+            button {
+                class: "build-btn",
+                onclick: move |_| on_build.call(()),
+                "{button_label}"
+            }
+        }
+    }
+}
+
+#[component]
 fn ResourceBar(state: GameState) -> Element {
-    let items = [
-        ("🌲", "Дерево", state.wood, state.wood_cap),
-        ("🪨", "Камень", state.stone, state.stone_cap),
-        ("⛏️", "Железо", state.iron, state.iron_cap),
-        ("🪙", "Уголь", state.coal, state.coal_cap),
-        ("💰", "Золото", state.gold, state.gold_cap),
-    ];
+    let mut items: Vec<(&str, &str, f64, f64)> = Vec::new();
+
+    if state.wood_seen || state.wood > 0.0 {
+        items.push((
+            "🌲",
+            "Дерево",
+            state.wood,
+            state.cap(ResourceKind::Wood),
+        ));
+    }
+    if state.stone_seen || state.stone > 0.0 {
+        items.push((
+            "🪨",
+            "Камень",
+            state.stone,
+            state.cap(ResourceKind::Stone),
+        ));
+    }
 
     rsx! {
         div { class: "resources",
-            for (icon, name, value, cap) in items {
-                div { class: "resource", key: "{name}",
-                    span { class: "resource-icon", "{icon}" }
-                    span {
-                        class: if value >= cap { "resource-value full" } else { "resource-value" },
-                        "{format_num(value)}"
+            if items.is_empty() {
+                span { class: "resources-empty", "Ресурсов пока нет — отдохни и начни добывать" }
+            } else {
+                for (icon, name, value, cap) in items {
+                    div { class: "resource", key: "{name}",
+                        span { class: "resource-icon", "{icon}" }
+                        span {
+                            class: if value >= cap { "resource-value full" } else { "resource-value" },
+                            "{format_num(value)}"
+                        }
                     }
                 }
             }
@@ -254,7 +441,7 @@ fn EnergyBar(state: GameState) -> Element {
         "{} / {} (+{:.2}/с)",
         format_num(state.energy),
         format_num(state.energy_max),
-        state.energy_regen
+        state.energy_regen()
     );
 
     rsx! {
@@ -265,14 +452,149 @@ fn EnergyBar(state: GameState) -> Element {
     }
 }
 
+fn do_rest(mut state: Signal<GameState>, toast: Signal<String>, toast_seq: Signal<u64>) {
+    let was_unlocked = state.peek().gathering_unlocked();
+    let gained = {
+        let mut guard = state.write();
+        actions::rest(&mut guard)
+    };
+    let now_unlocked = state.peek().gathering_unlocked();
+
+    if !was_unlocked && now_unlocked {
+        notify(toast, toast_seq, "Открылась добыча дерева!");
+    } else {
+        notify(toast, toast_seq, rest_message(gained));
+    }
+}
+
+fn do_gather(
+    mut state: Signal<GameState>,
+    toast: Signal<String>,
+    toast_seq: Signal<u64>,
+    kind: ResourceKind,
+) {
+    let result = {
+        let mut guard = state.write();
+        actions::gather(&mut guard, kind)
+    };
+    notify(toast, toast_seq, gather_message(kind, result));
+}
+
+fn do_build_house(mut state: Signal<GameState>, toast: Signal<String>, toast_seq: Signal<u64>) {
+    let result = {
+        let mut guard = state.write();
+        actions::build_house(&mut guard)
+    };
+
+    let message = match result {
+        BuildResult::Built(level) => {
+            format!("Дом улучшен до ур. {level}. Энергия: +{level}/с")
+        }
+        other => build_message("Дом", other),
+    };
+    notify(toast, toast_seq, message);
+}
+
+fn do_build_storage(mut state: Signal<GameState>, toast: Signal<String>, toast_seq: Signal<u64>) {
+    let result = {
+        let mut guard = state.write();
+        actions::build_storage(&mut guard)
+    };
+
+    let message = match result {
+        BuildResult::Built(level) => {
+            let cap = state.peek().cap(ResourceKind::Wood);
+            format!("Склад улучшен до ур. {level}. Лимит: {}", format_num(cap))
+        }
+        other => build_message("Склад", other),
+    };
+    notify(toast, toast_seq, message);
+}
+
+fn reset_progress(
+    mut state: Signal<GameState>,
+    toast: Signal<String>,
+    toast_seq: Signal<u64>,
+    mut reset_armed: Signal<bool>,
+) {
+    if *reset_armed.peek() {
+        let theme = state.peek().theme;
+        let fresh = GameState {
+            theme,
+            ..GameState::default()
+        };
+        state.set(fresh);
+        reset_armed.set(false);
+
+        spawn(async move {
+            if let Err(error) = save::clear().await {
+                eprintln!("Не удалось удалить сохранение: {error}");
+            }
+        });
+        notify(toast, toast_seq, "Прогресс сброшен");
+    } else {
+        reset_armed.set(true);
+        notify(toast, toast_seq, "Нажми ещё раз для сброса");
+
+        spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            if *reset_armed.peek() {
+                reset_armed.set(false);
+            }
+        });
+    }
+}
+
+fn notify(mut toast: Signal<String>, mut toast_seq: Signal<u64>, message: impl Into<String>) {
+    let id = *toast_seq.peek() + 1;
+    toast_seq.set(id);
+    toast.set(message.into());
+
+    spawn(async move {
+        tokio::time::sleep(Duration::from_millis(1800)).await;
+        if *toast_seq.peek() == id {
+            toast.set(String::new());
+        }
+    });
+}
+
+fn theme_css_class(theme: Theme) -> &'static str {
+    match theme {
+        Theme::Classic => "theme-classic",
+        Theme::Dark => "theme-dark",
+    }
+}
+
+fn cost_text(cost: balance::Cost) -> String {
+    format!(
+        "Нужно: {} дерева, {} камня",
+        format_num(cost.wood),
+        format_num(cost.stone)
+    )
+}
+
 fn gather_message(kind: ResourceKind, result: GatherResult) -> String {
     match result {
         GatherResult::Gathered(value) if value > 0.0 => {
             format!("+{} {}", format_num(value), kind.name())
         }
         GatherResult::Gathered(_) => "Склад полон".to_string(),
-        GatherResult::NoEnergy => "Не хватает энергии".to_string(),
+        GatherResult::NoEnergy => "Не хватает энергии — отдохни".to_string(),
         GatherResult::StorageFull => format!("Склад полон: {}", kind.name()),
+        GatherResult::Locked => "Это ещё не открыто".to_string(),
+    }
+}
+
+fn build_message(name: &str, result: BuildResult) -> String {
+    match result {
+        BuildResult::Built(level) => format!("{name}: уровень {level}"),
+        BuildResult::NotEnough(cost) => format!(
+            "Не хватает: нужно {} дерева и {} камня",
+            format_num(cost.wood),
+            format_num(cost.stone)
+        ),
+        BuildResult::Locked => "Ещё не открыто".to_string(),
+        BuildResult::MaxLevel => "Максимальный уровень".to_string(),
     }
 }
 
