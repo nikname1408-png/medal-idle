@@ -1236,6 +1236,28 @@ fn ResourceBar(state: GameState) -> Element {
 
 #[component]
 fn TabBar(active: Signal<usize>) -> Element {
+    // На десктопе колесо мыши над вкладками крутит их по горизонтали.
+    use_effect(move || {
+        spawn(async move {
+            let script = r#"
+                (() => {
+                    const nav = document.querySelector('.tabs');
+                    if (!nav || nav.dataset.wheelBound) return true;
+                    nav.dataset.wheelBound = '1';
+                    nav.addEventListener('wheel', (event) => {
+                        if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+                        nav.scrollLeft += event.deltaY;
+                        event.preventDefault();
+                    }, { passive: false });
+                    return true;
+                })();
+            "#;
+            if let Err(error) = document::eval(script).await {
+                eprintln!("Не удалось включить прокрутку вкладок колесом: {error}");
+            }
+        });
+    });
+
     rsx! {
         nav { class: "tabs",
             for (i, (icon, label)) in TABS.iter().enumerate() {
