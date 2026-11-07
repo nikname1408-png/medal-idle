@@ -123,12 +123,18 @@ fn FieldScreen(
 ) -> Element {
     let snapshot = state();
 
-    let rests_left = balance::REST_CLICKS_TO_UNLOCK_GATHER.saturating_sub(snapshot.rest_clicks);
     let house_cost = balance::house_cost(snapshot.house_level);
     let storage_cost = balance::storage_cost(snapshot.storage_level);
     let house_affordable = snapshot.wood >= house_cost.wood && snapshot.stone >= house_cost.stone;
     let storage_affordable =
         snapshot.wood >= storage_cost.wood && snapshot.stone >= storage_cost.stone;
+
+    let gather_yield = balance::CLICK_YIELD + snapshot.dev.gather_yield;
+    let rest_available = snapshot.energy < snapshot.energy_max;
+    let wood_available = snapshot.energy >= balance::CLICK_ENERGY_COST
+        && snapshot.wood < snapshot.cap(ResourceKind::Wood);
+    let stone_available = snapshot.energy >= balance::CLICK_ENERGY_COST
+        && snapshot.stone < snapshot.cap(ResourceKind::Stone);
 
     let house_description = if snapshot.house_level == 0 {
         "После постройки: +2 энергии за отдых и +1 энергии в секунду.".to_string()
@@ -153,20 +159,14 @@ fn FieldScreen(
     );
 
     rsx! {
+        CurrentGoal { state: snapshot.clone() }
+
         CollapsibleSection { title: "Отдых".to_string(),
             ActionRow {
                 label: "Отдых".to_string(),
                 info: rest_info,
+                available: rest_available,
                 on_press: move |_| do_rest(state, toast, toast_seq),
-            }
-            if !snapshot.gathering_unlocked() {
-                div { class: "hint",
-                    "Осталось отдохнуть: {rests_left}. После этого откроется добыча дерева."
-                }
-            } else if snapshot.house_level == 0 {
-                div { class: "hint",
-                    "Построй свой дом — он начнёт восстанавливать энергию сам."
-                }
             }
         }
 
@@ -174,13 +174,15 @@ fn FieldScreen(
             CollapsibleSection { title: "Сбор".to_string(),
                 ActionRow {
                     label: "Собрать дерево".to_string(),
-                    info: "+1 дерево за клик (−1 энергия).".to_string(),
+                    info: format!("+{} за клик (−1 энергия).", format_num(gather_yield)),
+                    available: wood_available,
                     on_press: move |_| do_gather(state, toast, toast_seq, ResourceKind::Wood),
                 }
                 if snapshot.stone_unlocked() {
                     ActionRow {
                         label: "Собрать камень".to_string(),
-                        info: "+1 камень за клик (−1 энергия).".to_string(),
+                        info: format!("+{} за клик (−1 энергия).", format_num(gather_yield)),
+                        available: stone_available,
                         on_press: move |_| do_gather(state, toast, toast_seq, ResourceKind::Stone),
                     }
                 }
@@ -300,12 +302,27 @@ fn PlaceholderScreen(title: String) -> Element {
 fn TopBar(title: String, on_dev: EventHandler<()>) -> Element {
     rsx! {
         header { class: "topbar",
-            button { class: "icon-btn", "☰" }
+            button { class: "icon-btn", aria_label: "Меню",
+                span { class: "burger" }
+            }
             h1 { class: "topbar-title", "{title}" }
-            button { class: "icon-btn", "🔔" }
+            button { class: "icon-btn", aria_label: "Уведомления",
+                svg {
+                    class: "bell",
+                    view_box: "0 0 24 24",
+                    fill: "none",
+                    stroke: "currentColor",
+                    stroke_width: "1.8",
+                    stroke_linecap: "round",
+                    stroke_linejoin: "round",
+                    path { d: "M6 9a6 6 0 0 1 12 0c0 4 1.4 5.4 1.9 5.9H4.1C4.6 14.4 6 13 6 9z" }
+                    path { d: "M10 18.5a2 2 0 0 0 4 0" }
+                }
+            }
             button {
                 class: "icon-btn dev-icon",
                 title: "Панель разработчика (временно)",
+                aria_label: "Панель разработчика",
                 onclick: move |_| on_dev.call(()),
                 "🛠"
             }
@@ -566,7 +583,7 @@ fn CollapsibleSection(title: String, children: Element) -> Element {
                 class: "section-head",
                 onclick: move |_| open.set(!open()),
                 span { class: "section-title", "{title}" }
-                span { class: chev_class, "▾" }
+                span { class: chev_class }
             }
             if is_open {
                 div { class: "section-body", {children} }
@@ -576,23 +593,25 @@ fn CollapsibleSection(title: String, children: Element) -> Element {
 }
 
 #[component]
-fn ActionRow(label: String, info: String, on_press: EventHandler<()>) -> Element {
+fn ActionRow(label: String, info: String, available: bool, on_press: EventHandler<()>) -> Element {
     let mut open = use_signal(|| false);
     let is_open = open();
-    let arrow = if is_open { "▴" } else { "▾" };
+    let chev_class = if is_open { "chev open" } else { "chev" };
 
     rsx! {
         div { class: "action",
-            div { class: "action-row",
+            div { class: "action-line",
                 button {
-                    class: "action-main",
+                    class: if available { "action-main" } else { "action-main unavailable" },
+                    disabled: !available,
                     onclick: move |_| on_press.call(()),
                     span { class: "action-label", "{label}" }
                 }
                 button {
                     class: "chev-btn",
+                    aria_label: "Подробнее",
                     onclick: move |_| open.set(!open()),
-                    span { class: "chev", "{arrow}" }
+                    span { class: chev_class }
                 }
             }
             if is_open {
@@ -611,6 +630,9 @@ fn BuildRow(
     affordable: bool,
     on_build: EventHandler<()>,
 ) -> Element {
+    let mut open = use_signal(|| false);
+    let is_open = open();
+    let chev_class = if is_open { "chev open" } else { "chev" };
     let level_label = if level == 0 {
         "не построено".to_string()
     } else {
@@ -620,19 +642,89 @@ fn BuildRow(
 
     rsx! {
         div { class: "build",
-            div { class: "build-head",
+            div { class: "action-line",
+                button {
+                    class: if affordable { "action-main" } else { "action-main unavailable" },
+                    disabled: !affordable,
+                    onclick: move |_| on_build.call(()),
+                    span { class: "action-label", "{button_label}" }
+                }
+                button {
+                    class: "chev-btn",
+                    aria_label: "Подробнее",
+                    onclick: move |_| open.set(!open()),
+                    span { class: chev_class }
+                }
+            }
+            div { class: "build-sub",
                 span { class: "build-title", "{title}" }
                 span { class: "build-level", "{level_label}" }
+                span {
+                    class: if affordable { "build-cost" } else { "build-cost poor" },
+                    "{cost}"
+                }
             }
-            div { class: "build-desc", "{description}" }
-            div {
-                class: if affordable { "build-cost" } else { "build-cost poor" },
-                "{cost}"
+            if is_open {
+                div { class: "build-info", "{description}" }
             }
-            button {
-                class: "build-btn",
-                onclick: move |_| on_build.call(()),
-                "{button_label}"
+        }
+    }
+}
+
+#[component]
+fn CurrentGoal(state: GameState) -> Element {
+    let total = balance::REST_CLICKS_TO_UNLOCK_GATHER;
+
+    let (goal_text, goal_hint, goal_progress) = if !state.gathering_unlocked() {
+        let done = state.rest_clicks.min(total);
+        let left = total.saturating_sub(done);
+        let width = format!("{:.0}%", done as f64 / total as f64 * 100.0);
+        let count = format!("{done} / {total}");
+        (
+            format!("Отдохни ещё {left}, чтобы открыть добычу дерева."),
+            String::new(),
+            Some((width, count)),
+        )
+    } else if state.house_level == 0 {
+        (
+            "Построй свой дом — он даст энергию и усилит отдых.".to_string(),
+            cost_text(balance::house_cost(0)),
+            None,
+        )
+    } else if state.wood >= state.cap(ResourceKind::Wood)
+        || state.stone >= state.cap(ResourceKind::Stone)
+    {
+        (
+            "Склад полон. Улучши склад, чтобы добывать дальше.".to_string(),
+            cost_text(balance::storage_cost(state.storage_level)),
+            None,
+        )
+    } else {
+        (
+            "Развивай дом: больше энергии за отдых и в секунду.".to_string(),
+            cost_text(balance::house_cost(state.house_level)),
+            None,
+        )
+    };
+
+    rsx! {
+        section { class: "goal",
+            div { class: "goal-head",
+                span { class: "goal-label", "Текущая цель" }
+                if let Some((_, count)) = goal_progress.clone() {
+                    span { class: "goal-count", "{count}" }
+                }
+            }
+            div { class: "goal-text", "{goal_text}" }
+            match goal_progress {
+                Some((width, _)) => rsx! {
+                    div { class: "goal-track",
+                        div { class: "goal-fill", style: "width: {width}" }
+                    }
+                },
+                None => rsx! {
+                    div { class: "goal-cost", "{goal_hint}" }
+                },
             }
         }
     }
@@ -667,9 +759,10 @@ fn ResourceBar(state: GameState) -> Element {
                 for (icon, name, value, cap) in items {
                     div { class: "resource", key: "{name}",
                         span { class: "resource-icon", "{icon}" }
+                        span { class: "resource-name", "{name}" }
                         span {
                             class: if value >= cap { "resource-value full" } else { "resource-value" },
-                            "{format_num(value)}"
+                            "{format_num(value)} / {format_num(cap)}"
                         }
                     }
                 }
@@ -708,7 +801,10 @@ fn EnergyBar(state: GameState) -> Element {
     rsx! {
         div { class: "energy",
             div { class: "energy-fill", style: "{fill_style}" }
-            div { class: "energy-label", "{label}" }
+            div { class: "energy-content",
+                span { class: "energy-bolt", "⚡" }
+                span { class: "energy-label", "{label}" }
+            }
         }
     }
 }
@@ -828,7 +924,7 @@ fn theme_css_class(theme: Theme) -> &'static str {
 
 fn cost_text(cost: balance::Cost) -> String {
     format!(
-        "Нужно: {} дерева, {} камня",
+        "🌲 {}   🪨 {}",
         format_num(cost.wood),
         format_num(cost.stone)
     )
