@@ -359,14 +359,14 @@ mod tests {
     #[test]
     fn house_costs_resources_and_gives_regen() {
         let mut state = rested_state();
-        state.wood = 10.0;
-        state.stone = 5.0;
+        state.wood = 15.0;
+        state.stone = 8.0;
         state.stone_seen = true;
 
         assert_eq!(build_house(&mut state), BuildResult::Built(1));
         assert_eq!(state.house_level, 1);
-        assert_eq!(state.energy_regen(), 1.0);
-        assert_eq!(state.rest_energy(), 2.0);
+        assert_eq!(state.energy_regen(), 0.5);
+        assert_eq!(state.rest_energy(), 1.5);
         assert_eq!(state.wood, 0.0);
         assert_eq!(state.stone, 0.0);
     }
@@ -396,8 +396,8 @@ mod tests {
 
         tick(&mut state, 10.0);
 
-        assert_eq!(state.wood, 5.0);
-        assert_eq!(state.sawmill_wood_per_sec(), 0.5);
+        assert_eq!(state.wood, 4.0);
+        assert_eq!(state.sawmill_wood_per_sec(), 0.4);
     }
 
     #[test]
@@ -427,7 +427,10 @@ mod tests {
         adjust_coal_pit_researchers(&mut state, 1);
         assert_eq!(state.coal_pit_researchers, 1);
 
-        tick(&mut state, balance::COAL_PIT_RESEARCH_COST);
+        tick(
+            &mut state,
+            balance::COAL_PIT_RESEARCH_COST / balance::RESEARCH_PER_RESEARCHER_PER_SEC,
+        );
 
         assert!(state.coal_pit_researched);
         assert_eq!(state.coal_pit_level, 1);
@@ -466,8 +469,8 @@ mod tests {
     #[test]
     fn storage_raises_cap() {
         let mut state = rested_state();
-        state.wood = 20.0;
-        state.stone = 10.0;
+        state.wood = 30.0;
+        state.stone = 15.0;
         state.stone_seen = true;
 
         let before = state.cap(ResourceKind::Wood);

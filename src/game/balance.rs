@@ -17,7 +17,7 @@ pub const TICK_MS: u64 = 1000;
 /// Сколько энергии даёт одно нажатие «Отдых» без дома.
 pub const REST_ENERGY: f64 = 1.0;
 /// Насколько «Отдых» становится сильнее за каждый уровень дома.
-pub const REST_ENERGY_PER_HOUSE_LEVEL: f64 = 1.0;
+pub const REST_ENERGY_PER_HOUSE_LEVEL: f64 = 0.5;
 /// Сколько раз нужно отдохнуть, чтобы открыть добычу ресурсов.
 pub const REST_CLICKS_TO_UNLOCK_GATHER: u32 = 10;
 
@@ -37,7 +37,7 @@ pub const BASE_STORAGE_CAP: f64 = 100.0;
 pub const STORAGE_CAP_PER_LEVEL: f64 = 150.0;
 
 /// Прирост регенерации энергии за уровень дома.
-pub const HOUSE_ENERGY_PER_LEVEL: f64 = 1.0;
+pub const HOUSE_ENERGY_PER_LEVEL: f64 = 0.5;
 
 /// Стоимость постройки.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -106,40 +106,40 @@ pub const WORKERS_PER_HOUSE_LEVEL: u32 = 1;
 pub const RESEARCHERS_PER_HOUSE_LEVEL: u32 = 1;
 
 /// Сколько дерева в секунду приносит один работник лесопилки.
-pub const SAWMILL_WOOD_PER_WORKER_PER_SEC: f64 = 0.5;
+pub const SAWMILL_WOOD_PER_WORKER_PER_SEC: f64 = 0.4;
 
 /// Сколько опыта нужно, чтобы изучить угольную яму.
-pub const COAL_PIT_RESEARCH_COST: f64 = 30.0;
+pub const COAL_PIT_RESEARCH_COST: f64 = 45.0;
 /// Сколько опыта в секунду даёт один исследователь.
-pub const RESEARCH_PER_RESEARCHER_PER_SEC: f64 = 1.0;
+pub const RESEARCH_PER_RESEARCHER_PER_SEC: f64 = 0.75;
 
 /// Сколько дерева тратит одна партия угольной ямы.
 pub const COAL_PIT_WOOD_PER_BATCH: f64 = 1.0;
 /// Сколько угля даёт одна партия угольной ямы.
 pub const COAL_PIT_COAL_PER_BATCH: f64 = 1.0;
 /// За сколько секунд один работник делает одну партию.
-pub const COAL_PIT_BATCH_SECONDS: f64 = 4.0;
+pub const COAL_PIT_BATCH_SECONDS: f64 = 5.0;
 
-const HOUSE_BASE_COST_WOOD: f64 = 10.0;
-const HOUSE_BASE_COST_STONE: f64 = 5.0;
-const HOUSE_COST_GROWTH: f64 = 1.8;
+const HOUSE_BASE_COST_WOOD: f64 = 15.0;
+const HOUSE_BASE_COST_STONE: f64 = 8.0;
+const HOUSE_COST_GROWTH: f64 = 1.9;
 
-const STORAGE_BASE_COST_WOOD: f64 = 20.0;
-const STORAGE_BASE_COST_STONE: f64 = 10.0;
-const STORAGE_COST_GROWTH: f64 = 1.8;
+const STORAGE_BASE_COST_WOOD: f64 = 30.0;
+const STORAGE_BASE_COST_STONE: f64 = 15.0;
+const STORAGE_COST_GROWTH: f64 = 1.9;
 
-const WORKER_HOUSE_BASE_COST_WOOD: f64 = 12.0;
-const WORKER_HOUSE_BASE_COST_STONE: f64 = 8.0;
-const WORKER_HOUSE_COST_GROWTH: f64 = 1.8;
+const WORKER_HOUSE_BASE_COST_WOOD: f64 = 18.0;
+const WORKER_HOUSE_BASE_COST_STONE: f64 = 12.0;
+const WORKER_HOUSE_COST_GROWTH: f64 = 1.9;
 
-const RESEARCH_HOUSE_BASE_COST_WOOD: f64 = 16.0;
-const RESEARCH_HOUSE_BASE_COST_STONE: f64 = 10.0;
-const RESEARCH_HOUSE_COST_GROWTH: f64 = 1.8;
+const RESEARCH_HOUSE_BASE_COST_WOOD: f64 = 24.0;
+const RESEARCH_HOUSE_BASE_COST_STONE: f64 = 15.0;
+const RESEARCH_HOUSE_COST_GROWTH: f64 = 1.9;
 
-const SAWMILL_BASE_COST_WOOD: f64 = 16.0;
-const SAWMILL_BASE_COST_STONE: f64 = 8.0;
-const SAWMILL_COST_GROWTH: f64 = 1.8;
+const SAWMILL_BASE_COST_WOOD: f64 = 24.0;
+const SAWMILL_BASE_COST_STONE: f64 = 12.0;
+const SAWMILL_COST_GROWTH: f64 = 1.9;
 
-const COAL_PIT_BASE_COST_WOOD: f64 = 20.0;
-const COAL_PIT_BASE_COST_STONE: f64 = 12.0;
-const COAL_PIT_COST_GROWTH: f64 = 1.8;
+const COAL_PIT_BASE_COST_WOOD: f64 = 30.0;
+const COAL_PIT_BASE_COST_STONE: f64 = 18.0;
+const COAL_PIT_COST_GROWTH: f64 = 1.9;

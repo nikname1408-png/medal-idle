@@ -355,6 +355,23 @@ button {
     color: var(--danger);
 }
 
+.cost {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    vertical-align: middle;
+}
+
+.cost-img {
+    width: 15px;
+    height: 15px;
+    object-fit: contain;
+}
+
+.cost-num {
+    font-variant-numeric: tabular-nums;
+}
+
 .build-info {
     padding: 10px 12px;
     border-radius: 4px;
@@ -574,6 +591,12 @@ button {
     width: 18px;
     height: 18px;
     object-fit: contain;
+    filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.35));
+}
+
+/* Уголь почти чёрный — чуть подсвечиваем, чтобы читался на тёмной панели. */
+.resource-img.dark {
+    filter: brightness(2.0) drop-shadow(0 0 1px rgba(255, 255, 255, 0.45));
 }
 
 .resource-name {
@@ -595,23 +618,32 @@ button {
 /* ---------- Вкладки ---------- */
 
 .tabs {
-    display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
-    gap: 2px;
-    padding: 6px 6px;
+    display: flex;
+    gap: 4px;
+    padding: 6px;
     border-top: 1px solid var(--line);
     background: var(--bg);
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+}
+
+.tabs::-webkit-scrollbar {
+    display: none;
 }
 
 .tab {
-    min-width: 0;
-    height: 72px;
+    flex: 0 0 92px;
+    height: 84px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 3px;
     padding: 0 2px;
+    scroll-snap-align: start;
     border: 0;
     border-radius: 4px;
     background: transparent;
@@ -629,12 +661,12 @@ button {
 }
 
 .tab-icon {
-    font-size: 24px;
+    font-size: 36px;
 }
 
 .tab-img {
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
     object-fit: contain;
     image-rendering: auto;
 }
@@ -642,7 +674,7 @@ button {
 .tab-label {
     max-width: 100%;
     overflow: hidden;
-    font-size: 9px;
+    font-size: 10px;
     line-height: 1.05;
     text-align: center;
     text-overflow: ellipsis;

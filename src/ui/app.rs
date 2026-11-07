@@ -11,7 +11,11 @@ use super::save;
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 const FIELD_ICON: Asset = asset!("/assets/icons/field.png");
 const WOOD_ICON: Asset = asset!("/assets/icons/wood.png");
+const STONE_ICON: Asset = asset!("/assets/icons/stone.png");
+const IRON_ICON: Asset = asset!("/assets/icons/iron.png");
 const COAL_ICON: Asset = asset!("/assets/icons/coal.png");
+const SCROLL_ICON: Asset = asset!("/assets/icons/scroll.png");
+const GEAR_ICON: Asset = asset!("/assets/icons/gear.png");
 
 const TAB_FIELD: usize = 0;
 const TAB_STUDIES: usize = 1;
@@ -28,6 +32,26 @@ const TABS: [(&str, &str); 8] = [
     ("📊", "Статы"),
     ("⚙️", "Настр."),
 ];
+
+/// Картинка вкладки, если для неё уже нарисован спрайт.
+fn tab_image(index: usize) -> Option<Asset> {
+    match index {
+        TAB_FIELD => Some(FIELD_ICON),
+        TAB_STUDIES => Some(SCROLL_ICON),
+        TAB_SETTINGS => Some(GEAR_ICON),
+        _ => None,
+    }
+}
+
+/// Спрайт ресурса для строки ресурсов и цен.
+fn resource_icon(kind: ResourceKind) -> Asset {
+    match kind {
+        ResourceKind::Wood => WOOD_ICON,
+        ResourceKind::Stone => STONE_ICON,
+        ResourceKind::Iron => IRON_ICON,
+        ResourceKind::Coal => COAL_ICON,
+    }
+}
 
 #[component]
 pub fn App() -> Element {
@@ -247,7 +271,7 @@ fn FieldScreen(
                     title: "Склад".to_string(),
                     level: snapshot.storage_level,
                     description: storage_description,
-                    cost: cost_text(storage_cost),
+                    cost: storage_cost,
                     affordable: storage_affordable,
                     on_build: move |_| do_build_storage(state, toast, toast_seq),
                 }
@@ -257,7 +281,7 @@ fn FieldScreen(
                     title: "Свой дом".to_string(),
                     level: snapshot.house_level,
                     description: house_description,
-                    cost: cost_text(house_cost),
+                    cost: house_cost,
                     affordable: house_affordable,
                     on_build: move |_| do_build_house(state, toast, toast_seq),
                 }
@@ -266,7 +290,7 @@ fn FieldScreen(
                         title: "Дом для работников".to_string(),
                         level: snapshot.worker_house_level,
                         description: worker_house_description,
-                        cost: cost_text(worker_house_cost),
+                        cost: worker_house_cost,
                         affordable: worker_house_affordable,
                         on_build: move |_| do_build_with(state, toast, toast_seq, "Дом для работников", actions::build_worker_house),
                     }
@@ -274,7 +298,7 @@ fn FieldScreen(
                         title: "Дом для изучения".to_string(),
                         level: snapshot.research_house_level,
                         description: research_house_description,
-                        cost: cost_text(research_house_cost),
+                        cost: research_house_cost,
                         affordable: research_house_affordable,
                         on_build: move |_| do_build_with(state, toast, toast_seq, "Дом для изучения", actions::build_research_house),
                     }
@@ -288,7 +312,7 @@ fn FieldScreen(
                     title: "Лесопилка".to_string(),
                     level: snapshot.sawmill_level,
                     description: sawmill_description,
-                    cost: cost_text(sawmill_cost),
+                    cost: sawmill_cost,
                     affordable: sawmill_affordable,
                     on_build: move |_| do_build_with(state, toast, toast_seq, "Лесопилка", actions::build_sawmill),
                 }
@@ -297,7 +321,7 @@ fn FieldScreen(
                         title: "Угольная яма".to_string(),
                         level: snapshot.coal_pit_level,
                         description: coal_pit_description,
-                        cost: cost_text(coal_pit_cost),
+                        cost: coal_pit_cost,
                         affordable: coal_pit_affordable,
                         on_build: move |_| do_build_with(state, toast, toast_seq, "Угольная яма", actions::build_coal_pit),
                     }
@@ -997,11 +1021,23 @@ fn ActionRow(label: String, info: String, available: bool, on_press: EventHandle
 }
 
 #[component]
+fn CostLabel(cost: balance::Cost) -> Element {
+    rsx! {
+        span { class: "cost",
+            img { class: "cost-img", src: WOOD_ICON, alt: "дерево" }
+            span { class: "cost-num", "{format_num(cost.wood)}" }
+            img { class: "cost-img", src: STONE_ICON, alt: "камень" }
+            span { class: "cost-num", "{format_num(cost.stone)}" }
+        }
+    }
+}
+
+#[component]
 fn BuildRow(
     title: String,
     level: u32,
     description: String,
-    cost: String,
+    cost: balance::Cost,
     affordable: bool,
     on_build: EventHandler<()>,
 ) -> Element {
@@ -1022,7 +1058,7 @@ fn BuildRow(
                 span { class: "build-level", "{level_label}" }
                 span {
                     class: if affordable { "build-cost" } else { "build-cost poor" },
-                    "{cost}"
+                    CostLabel { cost }
                 }
             }
             div { class: "action-line",
@@ -1057,43 +1093,43 @@ fn CurrentGoal(state: GameState) -> Element {
         let count = format!("{done} / {total}");
         (
             format!("Отдохни ещё {left}, чтобы открыть добычу дерева."),
-            String::new(),
+            None,
             Some((width, count)),
         )
     } else if state.house_level == 0 {
         (
             "Построй свой дом — он даст энергию и усилит отдых.".to_string(),
-            cost_text(balance::house_cost(0)),
+            Some(balance::house_cost(0)),
             None,
         )
     } else if state.worker_house_level == 0 {
         (
             "Построй дом для работников, чтобы получить первого работника.".to_string(),
-            cost_text(balance::worker_house_cost(0)),
+            Some(balance::worker_house_cost(0)),
             None,
         )
     } else if state.research_house_level == 0 {
         (
             "Построй дом для изучения, чтобы начать исследования.".to_string(),
-            cost_text(balance::research_house_cost(0)),
+            Some(balance::research_house_cost(0)),
             None,
         )
     } else if state.sawmill_level == 0 {
         (
             "Построй лесопилку и назначь на неё работника.".to_string(),
-            cost_text(balance::sawmill_cost(0)),
+            Some(balance::sawmill_cost(0)),
             None,
         )
     } else if state.sawmill_workers == 0 {
         (
             "Назначь работника на лесопилку во вкладке «Труд».".to_string(),
-            String::new(),
+            None,
             None,
         )
     } else if !state.coal_pit_researched {
         (
             "Назначь исследователя на угольную яму во вкладке «Изучения».".to_string(),
-            String::new(),
+            None,
             None,
         )
     } else if state.wood >= state.cap(ResourceKind::Wood)
@@ -1101,13 +1137,13 @@ fn CurrentGoal(state: GameState) -> Element {
     {
         (
             "Склад полон. Улучши склад, чтобы добывать дальше.".to_string(),
-            cost_text(balance::storage_cost(state.storage_level)),
+            Some(balance::storage_cost(state.storage_level)),
             None,
         )
     } else {
         (
             "Развивай дом: больше энергии за отдых и в секунду.".to_string(),
-            cost_text(balance::house_cost(state.house_level)),
+            Some(balance::house_cost(state.house_level)),
             None,
         )
     };
@@ -1128,8 +1164,8 @@ fn CurrentGoal(state: GameState) -> Element {
                     }
                 },
                 None => rsx! {
-                    if !goal_hint.is_empty() {
-                        div { class: "goal-cost", "{goal_hint}" }
+                    if let Some(cost) = goal_hint {
+                        div { class: "goal-cost", CostLabel { cost } }
                     }
                 },
             }
@@ -1157,6 +1193,14 @@ fn ResourceBar(state: GameState) -> Element {
             state.cap(ResourceKind::Stone),
         ));
     }
+    if state.iron > 0.0 {
+        items.push((
+            ResourceKind::Iron,
+            "Железо",
+            state.iron,
+            state.cap(ResourceKind::Iron),
+        ));
+    }
     if state.coal_seen || state.coal > 0.0 {
         items.push((
             ResourceKind::Coal,
@@ -1173,12 +1217,10 @@ fn ResourceBar(state: GameState) -> Element {
             } else {
                 for (kind, name, value, cap) in items {
                     div { class: "resource", key: "{name}",
-                        if kind == ResourceKind::Wood {
-                            img { class: "resource-img", src: WOOD_ICON, alt: "Дерево" }
-                        } else if kind == ResourceKind::Coal {
-                            img { class: "resource-img", src: COAL_ICON, alt: "Уголь" }
-                        } else {
-                            span { class: "resource-icon", "🪨" }
+                        img {
+                            class: if kind == ResourceKind::Coal { "resource-img dark" } else { "resource-img" },
+                            src: resource_icon(kind),
+                            alt: "{name}",
                         }
                         span { class: "resource-name", "{name}" }
                         span {
@@ -1201,11 +1243,11 @@ fn TabBar(active: Signal<usize>) -> Element {
                     key: "{i}",
                     class: if active() == i { "tab active" } else { "tab" },
                     onclick: move |_| active.set(i),
-                    if i == TAB_FIELD {
+                    if let Some(src) = tab_image(i) {
                         img {
                             class: "tab-img",
-                            src: FIELD_ICON,
-                            alt: "Поле",
+                            src,
+                            alt: "{label}",
                         }
                     } else {
                         span { class: "tab-icon", "{icon}" }
@@ -1371,14 +1413,6 @@ fn theme_css_class(theme: Theme) -> &'static str {
         Theme::Classic => "theme-classic",
         Theme::Dark => "theme-dark",
     }
-}
-
-fn cost_text(cost: balance::Cost) -> String {
-    format!(
-        "🌲 {}   🪨 {}",
-        format_num(cost.wood),
-        format_num(cost.stone)
-    )
 }
 
 fn gather_message(kind: ResourceKind, result: GatherResult) -> String {
