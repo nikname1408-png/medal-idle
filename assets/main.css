@@ -626,6 +626,13 @@ button {
     font-size: 20px;
 }
 
+.tab-img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+    image-rendering: auto;
+}
+
 .tab-label {
     max-width: 100%;
     overflow: hidden;

@@ -9,6 +9,7 @@ use crate::game::{balance, GameState};
 use super::save;
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
+const FIELD_ICON: Asset = asset!("/assets/icons/field.png");
 
 const TAB_FIELD: usize = 0;
 const TAB_STUDIES: usize = 1;
@@ -1196,7 +1197,15 @@ fn TabBar(active: Signal<usize>) -> Element {
                     key: "{i}",
                     class: if active() == i { "tab active" } else { "tab" },
                     onclick: move |_| active.set(i),
-                    span { class: "tab-icon", "{icon}" }
+                    if i == TAB_FIELD {
+                        img {
+                            class: "tab-img",
+                            src: FIELD_ICON,
+                            alt: "Поле",
+                        }
+                    } else {
+                        span { class: "tab-icon", "{icon}" }
+                    }
                     span { class: "tab-label", "{label}" }
                 }
             }
