@@ -20,6 +20,9 @@ pub const CLICK_ENERGY_COST: f64 = 1.0;
 /// Сколько ресурса даёт один клик.
 pub const CLICK_YIELD: f64 = 1.0;
 
+/// Сколько энергии восстанавливает кнопка «Отдых».
+pub const REST_ENERGY: f64 = 10.0;
+
 /// Базовый лимит ресурсов без склада.
 pub const BASE_STORAGE_CAP: f64 = 100.0;
 

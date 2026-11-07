@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 
-use crate::game::{actions, balance, GameState};
+use crate::game::actions::{self, GatherResult};
+use crate::game::state::ResourceKind;
+use crate::game::{balance, GameState};
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
@@ -19,6 +21,7 @@ const TABS: [(&str, &str); 8] = [
 pub fn App() -> Element {
     let mut state = use_signal(GameState::default);
     let active_tab = use_signal(|| 0usize);
+    let mut toast = use_signal(String::new);
 
     // Игровой цикл: раз в секунду начисляем энергию.
     use_future(move || async move {
@@ -39,61 +42,100 @@ pub fn App() -> Element {
                 CollapsibleSection { title: "Отдых".to_string(),
                     ActionRow {
                         label: "Отдых".to_string(),
-                        info: "+1 энергия за клик".to_string(),
+                        info: "+10 энергии за клик".to_string(),
+                        on_press: move |_| {
+                            let gained = {
+                                let mut guard = state.write();
+                                actions::rest(&mut guard)
+                            };
+                            toast.set(rest_message(gained));
+                        },
                     }
                 }
                 CollapsibleSection { title: "Сбор".to_string(),
                     ActionRow {
                         label: "Собрать камень".to_string(),
-                        info: "+1 камень за клик".to_string(),
+                        info: "+1 камень за клик (−1 энергия)".to_string(),
+                        on_press: move |_| {
+                            let result = {
+                                let mut guard = state.write();
+                                actions::gather(&mut guard, ResourceKind::Stone)
+                            };
+                            toast.set(gather_message(ResourceKind::Stone, result));
+                        },
                     }
                     ActionRow {
                         label: "Собрать дерево".to_string(),
-                        info: "+1 дерево за клик".to_string(),
+                        info: "+1 дерево за клик (−1 энергия)".to_string(),
+                        on_press: move |_| {
+                            let result = {
+                                let mut guard = state.write();
+                                actions::gather(&mut guard, ResourceKind::Wood)
+                            };
+                            toast.set(gather_message(ResourceKind::Wood, result));
+                        },
                     }
                     ActionRow {
                         label: "Собрать железо".to_string(),
-                        info: "+1 железо за клик".to_string(),
+                        info: "+1 железо за клик (−1 энергия)".to_string(),
+                        on_press: move |_| {
+                            let result = {
+                                let mut guard = state.write();
+                                actions::gather(&mut guard, ResourceKind::Iron)
+                            };
+                            toast.set(gather_message(ResourceKind::Iron, result));
+                        },
                     }
                 }
                 CollapsibleSection { title: "Продукция".to_string(),
                     ActionRow {
                         label: "Лесопилка".to_string(),
                         info: "Работяги добывают дерево автоматически".to_string(),
+                        on_press: move |_| toast.set("Откроется позже".to_string()),
                     }
                     ActionRow {
                         label: "Угольная яма".to_string(),
                         info: "Переработка дерева в уголь".to_string(),
+                        on_press: move |_| toast.set("Откроется позже".to_string()),
                     }
                     ActionRow {
                         label: "Кузница".to_string(),
                         info: "Переработка руды в железо и ковка мечей".to_string(),
+                        on_press: move |_| toast.set("Откроется позже".to_string()),
                     }
                 }
                 CollapsibleSection { title: "Хранение".to_string(),
                     ActionRow {
                         label: "Склад".to_string(),
                         info: "Увеличивает лимит ресурсов".to_string(),
+                        on_press: move |_| toast.set("Откроется позже".to_string()),
                     }
                     ActionRow {
                         label: "Амбар".to_string(),
                         info: "Откроется позже".to_string(),
+                        on_press: move |_| toast.set("Откроется позже".to_string()),
                     }
                     ActionRow {
                         label: "Банк".to_string(),
                         info: "Увеличивает лимит золота".to_string(),
+                        on_press: move |_| toast.set("Откроется позже".to_string()),
                     }
                 }
                 CollapsibleSection { title: "Дома".to_string(),
                     ActionRow {
                         label: "Дом для работяг".to_string(),
                         info: "+1 работник за уровень".to_string(),
+                        on_press: move |_| toast.set("Откроется позже".to_string()),
                     }
                     ActionRow {
                         label: "Исследовательская лаборатория".to_string(),
                         info: "Исследования зданий, чертежей и предметов".to_string(),
+                        on_press: move |_| toast.set("Откроется позже".to_string()),
                     }
                 }
+            }
+            if !toast().is_empty() {
+                div { class: "toast", "{toast}" }
             }
             div { class: "bottom",
                 ResourceBar { state: snapshot.clone() }
@@ -137,18 +179,24 @@ fn CollapsibleSection(title: String, children: Element) -> Element {
 }
 
 #[component]
-fn ActionRow(label: String, info: String) -> Element {
+fn ActionRow(label: String, info: String, on_press: EventHandler<()>) -> Element {
     let mut open = use_signal(|| false);
     let is_open = open();
     let arrow = if is_open { "▴" } else { "▾" };
 
     rsx! {
         div { class: "action",
-            button {
-                class: "action-main",
-                onclick: move |_| open.set(!open()),
-                span { class: "action-label", "{label}" }
-                span { class: "chev", "{arrow}" }
+            div { class: "action-row",
+                button {
+                    class: "action-main",
+                    onclick: move |_| on_press.call(()),
+                    span { class: "action-label", "{label}" }
+                }
+                button {
+                    class: "chev-btn",
+                    onclick: move |_| open.set(!open()),
+                    span { class: "chev", "{arrow}" }
+                }
             }
             if is_open {
                 div { class: "action-info", "{info}" }
@@ -160,19 +208,22 @@ fn ActionRow(label: String, info: String) -> Element {
 #[component]
 fn ResourceBar(state: GameState) -> Element {
     let items = [
-        ("🌲", "Дерево", state.wood),
-        ("🪨", "Камень", state.stone),
-        ("⛏️", "Железо", state.iron),
-        ("🪙", "Уголь", state.coal),
-        ("💰", "Золото", state.gold),
+        ("🌲", "Дерево", state.wood, state.wood_cap),
+        ("🪨", "Камень", state.stone, state.stone_cap),
+        ("⛏️", "Железо", state.iron, state.iron_cap),
+        ("🪙", "Уголь", state.coal, state.coal_cap),
+        ("💰", "Золото", state.gold, state.gold_cap),
     ];
 
     rsx! {
         div { class: "resources",
-            for (icon, name, value) in items {
+            for (icon, name, value, cap) in items {
                 div { class: "resource", key: "{name}",
                     span { class: "resource-icon", "{icon}" }
-                    span { class: "resource-value", "{format_num(value)}" }
+                    span {
+                        class: if value >= cap { "resource-value full" } else { "resource-value" },
+                        "{format_num(value)}"
+                    }
                 }
             }
         }
@@ -211,6 +262,25 @@ fn EnergyBar(state: GameState) -> Element {
             div { class: "energy-fill", style: "{fill_style}" }
             div { class: "energy-label", "{label}" }
         }
+    }
+}
+
+fn gather_message(kind: ResourceKind, result: GatherResult) -> String {
+    match result {
+        GatherResult::Gathered(value) if value > 0.0 => {
+            format!("+{} {}", format_num(value), kind.name())
+        }
+        GatherResult::Gathered(_) => "Склад полон".to_string(),
+        GatherResult::NoEnergy => "Не хватает энергии".to_string(),
+        GatherResult::StorageFull => format!("Склад полон: {}", kind.name()),
+    }
+}
+
+fn rest_message(gained: f64) -> String {
+    if gained > 0.0 {
+        format!("+{} энергии", format_num(gained))
+    } else {
+        "Энергия уже полная".to_string()
     }
 }
 
