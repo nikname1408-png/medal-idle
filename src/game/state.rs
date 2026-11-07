@@ -29,6 +29,23 @@ pub enum Theme {
     Dark,
 }
 
+/// Временные настройки разработчика. В сохранение не попадают.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct DevSettings {
+    /// Добавка к пассивной регенерации энергии в секунду.
+    pub energy_regen: f64,
+    /// Добавка к энергии за одно нажатие «Отдых».
+    pub rest_bonus: f64,
+    /// Добавка к количеству ресурса за клик добычи.
+    pub gather_yield: f64,
+    /// Автодобыча ресурсов в секунду.
+    pub wood_per_sec: f64,
+    pub stone_per_sec: f64,
+    pub iron_per_sec: f64,
+    pub coal_per_sec: f64,
+    pub gold_per_sec: f64,
+}
+
 /// Всё состояние игры. Логика не зависит от Dioxus.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -57,6 +74,10 @@ pub struct GameState {
     pub stone_seen: bool,
 
     pub theme: Theme,
+
+    /// Временные настройки разработчика. В сохранение не попадают.
+    #[serde(skip)]
+    pub dev: DevSettings,
 }
 
 impl Default for GameState {
@@ -76,6 +97,7 @@ impl Default for GameState {
             wood_seen: false,
             stone_seen: false,
             theme: Theme::Classic,
+            dev: DevSettings::default(),
         }
     }
 }
@@ -96,7 +118,14 @@ impl GameState {
 
     /// Регенерация энергии в секунду. Без дома — ноль.
     pub fn energy_regen(&self) -> f64 {
-        self.house_level as f64 * balance::HOUSE_ENERGY_PER_LEVEL
+        self.house_level as f64 * balance::HOUSE_ENERGY_PER_LEVEL + self.dev.energy_regen
+    }
+
+    /// Сколько энергии даёт одно нажатие «Отдых».
+    pub fn rest_energy(&self) -> f64 {
+        balance::REST_ENERGY
+            + self.house_level as f64 * balance::REST_ENERGY_PER_HOUSE_LEVEL
+            + self.dev.rest_bonus
     }
 
     /// Открыта ли добыча ресурсов.

@@ -31,6 +31,7 @@ pub fn App() -> Element {
     let toast = use_signal(String::new);
     let toast_seq = use_signal(|| 0u64);
     let mut loaded = use_signal(|| false);
+    let mut dev_open = use_signal(|| false);
 
     // Загружаем сохранение один раз при старте.
     use_future(move || async move {
@@ -94,7 +95,10 @@ pub fn App() -> Element {
     rsx! {
         document::Stylesheet { href: MAIN_CSS }
         div { class: "app {theme_class}",
-            TopBar { title: title.to_string() }
+            TopBar {
+                title: title.to_string(),
+                on_dev: move |_| dev_open.set(!dev_open()),
+            }
             main { class: "content", {screen} }
             if !toast().is_empty() {
                 div { class: "toast", "{toast}" }
@@ -103,6 +107,9 @@ pub fn App() -> Element {
                 ResourceBar { state: snapshot.clone() }
                 TabBar { active: active_tab }
                 EnergyBar { state: snapshot }
+            }
+            if dev_open() {
+                DevPanel { state, on_close: move |_| dev_open.set(false) }
             }
         }
     }
@@ -124,13 +131,20 @@ fn FieldScreen(
         snapshot.wood >= storage_cost.wood && snapshot.stone >= storage_cost.stone;
 
     let house_description = if snapshot.house_level == 0 {
-        "Первая постройка. Даёт +1 энергии в секунду.".to_string()
+        "После постройки: +2 энергии за отдых и +1 энергии в секунду.".to_string()
     } else {
         format!(
-            "Сейчас даёт +{}/с энергии. Улучшение добавит ещё +1/с.",
-            snapshot.house_level
+            "Сейчас: +{} за отдых, +{}/с. Улучшение добавит ещё +1 к отдыху и +1/с.",
+            format_num(snapshot.rest_energy()),
+            format_num(snapshot.energy_regen())
         )
     };
+
+    let rest_info = format!(
+        "+{} энергии за клик. Пассивно: +{:.2}/с.",
+        format_num(snapshot.rest_energy()),
+        snapshot.energy_regen()
+    );
 
     let storage_description = format!(
         "Сейчас лимит ресурсов: {}. Улучшение добавит +{}.",
@@ -142,7 +156,7 @@ fn FieldScreen(
         CollapsibleSection { title: "Отдых".to_string(),
             ActionRow {
                 label: "Отдых".to_string(),
-                info: "+10 энергии за клик. Пока нет дома — это единственный способ получить энергию.".to_string(),
+                info: rest_info,
                 on_press: move |_| do_rest(state, toast, toast_seq),
             }
             if !snapshot.gathering_unlocked() {
@@ -283,12 +297,259 @@ fn PlaceholderScreen(title: String) -> Element {
 }
 
 #[component]
-fn TopBar(title: String) -> Element {
+fn TopBar(title: String, on_dev: EventHandler<()>) -> Element {
     rsx! {
         header { class: "topbar",
             button { class: "icon-btn", "☰" }
             h1 { class: "topbar-title", "{title}" }
             button { class: "icon-btn", "🔔" }
+            button {
+                class: "icon-btn dev-icon",
+                title: "Панель разработчика (временно)",
+                onclick: move |_| on_dev.call(()),
+                "🛠"
+            }
+        }
+    }
+}
+
+#[component]
+fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
+    let mut state = state;
+    let snapshot = state();
+    let dev = snapshot.dev.clone();
+
+    rsx! {
+        div { class: "dev-overlay",
+            div { class: "dev-panel",
+                div { class: "dev-head",
+                    h2 { class: "dev-title", "Панель разработчика" }
+                    button {
+                        class: "dev-close",
+                        onclick: move |_| on_close.call(()),
+                        "×"
+                    }
+                }
+                p { class: "dev-note", "Временная панель для тестов. В релизе её не будет." }
+
+                section { class: "dev-group",
+                    h3 { class: "dev-group-title", "Энергия" }
+                    DevNumberRow {
+                        label: "Сейчас".to_string(),
+                        value: snapshot.energy,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            let max = state.peek().energy_max;
+                            state.write().energy = value.clamp(0.0, max);
+                        },
+                    }
+                    DevNumberRow {
+                        label: "Максимум".to_string(),
+                        value: snapshot.energy_max,
+                        step: "10".to_string(),
+                        on_change: move |value: f64| {
+                            let mut guard = state.write();
+                            guard.energy_max = value.max(1.0);
+                            guard.energy = guard.energy.min(guard.energy_max);
+                        },
+                    }
+                    DevNumberRow {
+                        label: "В секунду (бонус)".to_string(),
+                        value: dev.energy_regen,
+                        step: "0.5".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().dev.energy_regen = value.max(0.0);
+                        },
+                    }
+                    DevNumberRow {
+                        label: "За отдых (бонус)".to_string(),
+                        value: dev.rest_bonus,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().dev.rest_bonus = value.max(0.0);
+                        },
+                    }
+                    DevNumberRow {
+                        label: "За клик добычи (бонус)".to_string(),
+                        value: dev.gather_yield,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().dev.gather_yield = value.max(0.0);
+                        },
+                    }
+                }
+
+                section { class: "dev-group",
+                    h3 { class: "dev-group-title", "Постройки" }
+                    DevNumberRow {
+                        label: "Дом, уровень".to_string(),
+                        value: snapshot.house_level as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().house_level = value.max(0.0) as u32;
+                        },
+                    }
+                    DevNumberRow {
+                        label: "Склад, уровень".to_string(),
+                        value: snapshot.storage_level as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().storage_level = value.max(0.0) as u32;
+                        },
+                    }
+                }
+
+                section { class: "dev-group",
+                    h3 { class: "dev-group-title", "Ресурсы" }
+                    DevResourceRow {
+                        icon: "🌲".to_string(),
+                        name: "Дерево".to_string(),
+                        value: snapshot.wood,
+                        speed: dev.wood_per_sec,
+                        on_value: move |value: f64| {
+                            let mut guard = state.write();
+                            guard.wood = value.max(0.0);
+                            guard.refresh_unlocks();
+                        },
+                        on_speed: move |value: f64| {
+                            state.write().dev.wood_per_sec = value.max(0.0);
+                        },
+                    }
+                    DevResourceRow {
+                        icon: "🪨".to_string(),
+                        name: "Камень".to_string(),
+                        value: snapshot.stone,
+                        speed: dev.stone_per_sec,
+                        on_value: move |value: f64| {
+                            state.write().stone = value.max(0.0);
+                        },
+                        on_speed: move |value: f64| {
+                            state.write().dev.stone_per_sec = value.max(0.0);
+                        },
+                    }
+                    DevResourceRow {
+                        icon: "⛏️".to_string(),
+                        name: "Железо".to_string(),
+                        value: snapshot.iron,
+                        speed: dev.iron_per_sec,
+                        on_value: move |value: f64| {
+                            state.write().iron = value.max(0.0);
+                        },
+                        on_speed: move |value: f64| {
+                            state.write().dev.iron_per_sec = value.max(0.0);
+                        },
+                    }
+                    DevResourceRow {
+                        icon: "🪙".to_string(),
+                        name: "Уголь".to_string(),
+                        value: snapshot.coal,
+                        speed: dev.coal_per_sec,
+                        on_value: move |value: f64| {
+                            state.write().coal = value.max(0.0);
+                        },
+                        on_speed: move |value: f64| {
+                            state.write().dev.coal_per_sec = value.max(0.0);
+                        },
+                    }
+                    DevResourceRow {
+                        icon: "💰".to_string(),
+                        name: "Золото".to_string(),
+                        value: snapshot.gold,
+                        speed: dev.gold_per_sec,
+                        on_value: move |value: f64| {
+                            state.write().gold = value.max(0.0);
+                        },
+                        on_speed: move |value: f64| {
+                            state.write().dev.gold_per_sec = value.max(0.0);
+                        },
+                    }
+                }
+
+                button {
+                    class: "dev-reset",
+                    onclick: move |_| {
+                        let mut guard = state.write();
+                        guard.dev = Default::default();
+                        guard.energy = guard.energy_max;
+                    },
+                    "Сбросить настройки разработчика"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DevNumberRow(
+    label: String,
+    value: f64,
+    step: String,
+    on_change: EventHandler<f64>,
+) -> Element {
+    rsx! {
+        div { class: "dev-row",
+            span { class: "dev-label", "{label}" }
+            input {
+                class: "dev-input",
+                r#type: "number",
+                step: "{step}",
+                value: "{value}",
+                onchange: move |event| {
+                    if let Ok(parsed) = event.value().parse::<f64>() {
+                        on_change.call(parsed);
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn DevResourceRow(
+    icon: String,
+    name: String,
+    value: f64,
+    speed: f64,
+    on_value: EventHandler<f64>,
+    on_speed: EventHandler<f64>,
+) -> Element {
+    rsx! {
+        div { class: "dev-resource",
+            div { class: "dev-resource-head",
+                span { class: "dev-resource-name", "{icon} {name}" }
+                span { class: "dev-resource-value", "{format_num(value)}" }
+            }
+            div { class: "dev-row",
+                span { class: "dev-label", "Количество" }
+                input {
+                    class: "dev-input",
+                    r#type: "number",
+                    step: "1",
+                    value: "{value}",
+                    onchange: move |event| {
+                        if let Ok(parsed) = event.value().parse::<f64>() {
+                            on_value.call(parsed);
+                        }
+                    },
+                }
+                button { class: "dev-btn", onclick: move |_| on_value.call(value + 10.0), "+10" }
+                button { class: "dev-btn", onclick: move |_| on_value.call(value + 100.0), "+100" }
+                button { class: "dev-btn", onclick: move |_| on_value.call(0.0), "0" }
+            }
+            div { class: "dev-row",
+                span { class: "dev-label", "В секунду" }
+                input {
+                    class: "dev-input",
+                    r#type: "number",
+                    step: "0.1",
+                    value: "{speed}",
+                    onchange: move |event| {
+                        if let Ok(parsed) = event.value().parse::<f64>() {
+                            on_speed.call(parsed);
+                        }
+                    },
+                }
+            }
         }
     }
 }

@@ -48,24 +48,38 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
         return GatherResult::NoEnergy;
     }
 
-    let added = state.add_resource(kind, balance::CLICK_YIELD);
+    let yield_amount = balance::CLICK_YIELD + state.dev.gather_yield;
+    let added = state.add_resource(kind, yield_amount);
     state.refresh_unlocks();
     GatherResult::Gathered(added)
 }
 
 /// Кнопка «Отдых»: восстанавливает энергию и считается для открытия добычи.
 pub fn rest(state: &mut GameState) -> f64 {
-    let gained = state.add_energy(balance::REST_ENERGY);
+    let gained = state.add_energy(state.rest_energy());
     state.rest_clicks = state.rest_clicks.saturating_add(1);
     gained
 }
 
-/// Один игровой тик: регенерация энергии от дома.
+/// Один игровой тик: регенерация энергии от дома и автодобыча разработчика.
 pub fn tick(state: &mut GameState, dt_seconds: f64) {
+    let dt = dt_seconds.max(0.0);
     let regen = state.energy_regen();
     if regen > 0.0 {
-        state.energy = (state.energy + regen * dt_seconds).min(state.energy_max);
+        state.energy = (state.energy + regen * dt).min(state.energy_max);
     }
+
+    let wood = state.dev.wood_per_sec;
+    let stone = state.dev.stone_per_sec;
+    let iron = state.dev.iron_per_sec;
+    let coal = state.dev.coal_per_sec;
+    let gold = state.dev.gold_per_sec;
+
+    state.wood += wood * dt;
+    state.stone += stone * dt;
+    state.iron += iron * dt;
+    state.coal += coal * dt;
+    state.gold += gold * dt;
 }
 
 /// Строит или улучшает свой дом.
@@ -127,7 +141,15 @@ mod tests {
     fn ten_rests_unlock_gathering() {
         let state = rested_state();
         assert!(state.gathering_unlocked());
-        assert_eq!(state.energy, 100.0);
+        assert_eq!(state.energy, 10.0);
+    }
+
+    #[test]
+    fn rest_gives_one_energy_at_start() {
+        let mut state = GameState::default();
+        let gained = rest(&mut state);
+        assert_eq!(gained, 1.0);
+        assert_eq!(state.energy, 1.0);
     }
 
     #[test]
@@ -136,7 +158,7 @@ mod tests {
         let result = gather(&mut state, ResourceKind::Wood);
         assert_eq!(result, GatherResult::Gathered(1.0));
         assert_eq!(state.wood, 1.0);
-        assert_eq!(state.energy, 99.0);
+        assert_eq!(state.energy, 9.0);
     }
 
     #[test]
@@ -164,8 +186,25 @@ mod tests {
         assert_eq!(build_house(&mut state), BuildResult::Built(1));
         assert_eq!(state.house_level, 1);
         assert_eq!(state.energy_regen(), 1.0);
+        assert_eq!(state.rest_energy(), 2.0);
         assert_eq!(state.wood, 0.0);
         assert_eq!(state.stone, 0.0);
+    }
+
+    #[test]
+    fn dev_speed_adds_resources() {
+        let mut state = GameState::default();
+        state.dev.wood_per_sec = 5.0;
+        tick(&mut state, 2.0);
+        assert_eq!(state.wood, 10.0);
+    }
+
+    #[test]
+    fn dev_energy_regen_adds_energy() {
+        let mut state = GameState::default();
+        state.dev.energy_regen = 2.0;
+        tick(&mut state, 3.0);
+        assert_eq!(state.energy, 6.0);
     }
 
     #[test]
@@ -192,5 +231,17 @@ mod tests {
         let json = serde_json::to_string(&state).expect("сериализация");
         let restored: GameState = serde_json::from_str(&json).expect("десериализация");
         assert_eq!(state, restored);
+    }
+
+    #[test]
+    fn dev_settings_are_not_saved() {
+        let mut state = GameState::default();
+        state.dev.wood_per_sec = 42.0;
+
+        let json = serde_json::to_string(&state).expect("сериализация");
+        assert!(!json.contains("wood_per_sec"));
+
+        let restored: GameState = serde_json::from_str(&json).expect("десериализация");
+        assert_eq!(restored.dev, crate::game::state::DevSettings::default());
     }
 }
