@@ -1,0 +1,7 @@
+/target
+/dist
+/.dioxus
+*.apk
+*.aab
+.DS_Store
+Thumbs.db

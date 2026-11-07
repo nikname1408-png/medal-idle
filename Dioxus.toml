@@ -1,0 +1,15 @@
+[application]
+name = "medieval-idle"
+
+[web.app]
+title = "Поле"
+
+[web.watcher]
+watch_path = ["src", "assets"]
+
+[bundle]
+identifier = "club.tooken.pole"
+publisher = "Pole"
+category = "StrategyGame"
+short_description = "Средневековая idle-игра"
+long_description = "Мобильная idle/clicker-игра в средневековом сеттинге."
