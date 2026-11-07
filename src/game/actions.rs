@@ -36,7 +36,7 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
     if kind == ResourceKind::Stone && !state.stone_unlocked() {
         return GatherResult::Locked;
     }
-    if kind == ResourceKind::Iron {
+    if kind == ResourceKind::Iron || kind == ResourceKind::Coal {
         return GatherResult::Locked;
     }
 
@@ -61,9 +61,10 @@ pub fn rest(state: &mut GameState) -> f64 {
     gained
 }
 
-/// Один игровой тик: регенерация энергии от дома и автодобыча разработчика.
+/// Один игровой тик: энергия, лесопилка, исследование и угольная яма.
 pub fn tick(state: &mut GameState, dt_seconds: f64) {
     let dt = dt_seconds.max(0.0);
+
     let regen = state.energy_regen();
     if regen > 0.0 {
         state.energy = (state.energy + regen * dt).min(state.energy_max);
@@ -80,6 +81,71 @@ pub fn tick(state: &mut GameState, dt_seconds: f64) {
     state.iron += iron * dt;
     state.coal += coal * dt;
     state.gold += gold * dt;
+
+    let sawmill = state.sawmill_wood_per_sec() * dt;
+    if sawmill > 0.0 {
+        state.add_resource(ResourceKind::Wood, sawmill);
+    }
+
+    tick_research(state, dt);
+    tick_coal_pit(state, dt);
+}
+
+/// Продвигает изучение угольной ямы, если назначены исследователи.
+fn tick_research(state: &mut GameState, dt: f64) {
+    if state.coal_pit_researched {
+        return;
+    }
+
+    let speed = state.coal_pit_research_speed();
+    if speed <= 0.0 {
+        return;
+    }
+
+    state.coal_pit_research =
+        (state.coal_pit_research + speed * dt).min(balance::COAL_PIT_RESEARCH_COST);
+
+    if state.coal_pit_research >= balance::COAL_PIT_RESEARCH_COST {
+        state.coal_pit_researched = true;
+        state.coal_pit_level = state.coal_pit_level.max(1);
+        state.coal_seen = true;
+        state.coal_pit_researchers = 0;
+    }
+}
+
+/// Продвигает партии угольной ямы: тратит дерево, добавляет уголь.
+fn tick_coal_pit(state: &mut GameState, dt: f64) {
+    if !state.coal_pit_researched || state.coal_pit_workers == 0 {
+        return;
+    }
+
+    let coal_cap = state.cap(ResourceKind::Coal);
+    if state.coal >= coal_cap {
+        state.coal_pit_progress = 0.0;
+        return;
+    }
+
+    if state.wood + 1e-9 < balance::COAL_PIT_WOOD_PER_BATCH {
+        return;
+    }
+
+    state.coal_pit_progress +=
+        state.coal_pit_workers as f64 * dt / balance::COAL_PIT_BATCH_SECONDS;
+
+    while state.coal_pit_progress >= 1.0 {
+        state.coal_pit_progress -= 1.0;
+
+        if state.wood + 1e-9 < balance::COAL_PIT_WOOD_PER_BATCH
+            || state.coal >= state.cap(ResourceKind::Coal)
+        {
+            state.coal_pit_progress = 0.0;
+            break;
+        }
+
+        state.wood -= balance::COAL_PIT_WOOD_PER_BATCH;
+        state.add_resource(ResourceKind::Coal, balance::COAL_PIT_COAL_PER_BATCH);
+        state.coal_seen = true;
+    }
 }
 
 /// Строит или улучшает свой дом.
@@ -114,6 +180,120 @@ pub fn build_storage(state: &mut GameState) -> BuildResult {
     state.stone -= cost.stone;
     state.storage_level += 1;
     BuildResult::Built(state.storage_level)
+}
+
+/// Строит или улучшает дом для работников.
+pub fn build_worker_house(state: &mut GameState) -> BuildResult {
+    if state.house_level == 0 {
+        return BuildResult::Locked;
+    }
+
+    let cost = balance::worker_house_cost(state.worker_house_level);
+    if state.wood < cost.wood || state.stone < cost.stone {
+        return BuildResult::NotEnough(cost);
+    }
+
+    state.wood -= cost.wood;
+    state.stone -= cost.stone;
+    state.worker_house_level += 1;
+    BuildResult::Built(state.worker_house_level)
+}
+
+/// Строит или улучшает дом для изучения.
+pub fn build_research_house(state: &mut GameState) -> BuildResult {
+    if state.house_level == 0 {
+        return BuildResult::Locked;
+    }
+
+    let cost = balance::research_house_cost(state.research_house_level);
+    if state.wood < cost.wood || state.stone < cost.stone {
+        return BuildResult::NotEnough(cost);
+    }
+
+    state.wood -= cost.wood;
+    state.stone -= cost.stone;
+    state.research_house_level += 1;
+    BuildResult::Built(state.research_house_level)
+}
+
+/// Строит или улучшает лесопилку.
+pub fn build_sawmill(state: &mut GameState) -> BuildResult {
+    if state.house_level == 0 {
+        return BuildResult::Locked;
+    }
+
+    let cost = balance::sawmill_cost(state.sawmill_level);
+    if state.wood < cost.wood || state.stone < cost.stone {
+        return BuildResult::NotEnough(cost);
+    }
+
+    state.wood -= cost.wood;
+    state.stone -= cost.stone;
+    state.sawmill_level += 1;
+    BuildResult::Built(state.sawmill_level)
+}
+
+/// Строит или улучшает угольную яму. Доступна после изучения.
+pub fn build_coal_pit(state: &mut GameState) -> BuildResult {
+    if !state.coal_pit_researched {
+        return BuildResult::Locked;
+    }
+
+    let cost = balance::coal_pit_cost(state.coal_pit_level);
+    if state.wood < cost.wood || state.stone < cost.stone {
+        return BuildResult::NotEnough(cost);
+    }
+
+    state.wood -= cost.wood;
+    state.stone -= cost.stone;
+    state.coal_pit_level += 1;
+    BuildResult::Built(state.coal_pit_level)
+}
+
+/// Меняет число работников на лесопилке на `delta`, не выходя за лимиты.
+pub fn adjust_sawmill_workers(state: &mut GameState, delta: i32) {
+    state.sawmill_workers = adjust_count(
+        state.sawmill_workers,
+        delta,
+        state.workers_free(),
+        state.sawmill_slots(),
+    );
+}
+
+/// Меняет число работников на угольной яме на `delta`.
+pub fn adjust_coal_pit_workers(state: &mut GameState, delta: i32) {
+    if !state.coal_pit_researched {
+        return;
+    }
+    state.coal_pit_workers = adjust_count(
+        state.coal_pit_workers,
+        delta,
+        state.workers_free(),
+        state.coal_pit_slots(),
+    );
+}
+
+/// Меняет число исследователей на изучении угольной ямы.
+pub fn adjust_coal_pit_researchers(state: &mut GameState, delta: i32) {
+    if state.coal_pit_researched {
+        return;
+    }
+    state.coal_pit_researchers = adjust_count(
+        state.coal_pit_researchers,
+        delta,
+        state.researchers_free(),
+        state.researcher_slots(),
+    );
+}
+
+/// Прибавляет или убавляет счётчик в пределах свободных слотов и ёмкости.
+fn adjust_count(current: u32, delta: i32, free: u32, capacity: u32) -> u32 {
+    if delta >= 0 {
+        let room = capacity.saturating_sub(current).min(free);
+        current + (delta as u32).min(room)
+    } else {
+        current.saturating_sub((-delta) as u32)
+    }
 }
 
 #[cfg(test)]
@@ -205,6 +385,82 @@ mod tests {
         state.dev.energy_regen = 2.0;
         tick(&mut state, 3.0);
         assert_eq!(state.energy, 6.0);
+    }
+
+    #[test]
+    fn sawmill_workers_produce_wood() {
+        let mut state = GameState::default();
+        state.worker_house_level = 1;
+        state.sawmill_level = 1;
+        state.sawmill_workers = 1;
+
+        tick(&mut state, 10.0);
+
+        assert_eq!(state.wood, 5.0);
+        assert_eq!(state.sawmill_wood_per_sec(), 0.5);
+    }
+
+    #[test]
+    fn workers_cannot_exceed_slots() {
+        let mut state = GameState::default();
+        state.worker_house_level = 1;
+        state.sawmill_level = 2;
+
+        adjust_sawmill_workers(&mut state, 5);
+        assert_eq!(state.sawmill_workers, 1);
+
+        adjust_coal_pit_workers(&mut state, 1);
+        assert_eq!(state.coal_pit_workers, 0);
+
+        adjust_sawmill_workers(&mut state, -1);
+        assert_eq!(state.sawmill_workers, 0);
+    }
+
+    #[test]
+    fn research_needs_researcher_and_unlocks_coal_pit() {
+        let mut state = GameState::default();
+        state.research_house_level = 1;
+
+        tick(&mut state, 10.0);
+        assert_eq!(state.coal_pit_research, 0.0);
+
+        adjust_coal_pit_researchers(&mut state, 1);
+        assert_eq!(state.coal_pit_researchers, 1);
+
+        tick(&mut state, balance::COAL_PIT_RESEARCH_COST);
+
+        assert!(state.coal_pit_researched);
+        assert_eq!(state.coal_pit_level, 1);
+        assert_eq!(state.coal_pit_researchers, 0);
+    }
+
+    #[test]
+    fn coal_pit_turns_wood_into_coal() {
+        let mut state = GameState::default();
+        state.coal_pit_researched = true;
+        state.coal_pit_level = 1;
+        state.coal_pit_workers = 1;
+        state.wood = 10.0;
+
+        tick(&mut state, balance::COAL_PIT_BATCH_SECONDS);
+
+        assert_eq!(state.wood, 9.0);
+        assert_eq!(state.coal, 1.0);
+        assert!(state.coal_seen);
+    }
+
+    #[test]
+    fn coal_pit_stops_without_wood() {
+        let mut state = GameState::default();
+        state.coal_pit_researched = true;
+        state.coal_pit_level = 1;
+        state.coal_pit_workers = 1;
+        state.wood = 0.0;
+
+        tick(&mut state, balance::COAL_PIT_BATCH_SECONDS * 2.0);
+
+        assert_eq!(state.coal, 0.0);
+        assert_eq!(state.coal_pit_progress, 0.0);
     }
 
     #[test]

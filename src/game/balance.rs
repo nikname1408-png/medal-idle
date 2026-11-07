@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 /// Версия формата сохранения. Меняется при несовместимых правках.
-pub const SAVE_VERSION: u32 = 1;
+pub const SAVE_VERSION: u32 = 2;
 
 /// Энергия в начале игры. Капать сама она не будет — только отдых и дом.
 pub const START_ENERGY: f64 = 0.0;
@@ -64,6 +64,62 @@ pub fn storage_cost(level: u32) -> Cost {
     }
 }
 
+/// Стоимость следующего уровня дома для работников.
+pub fn worker_house_cost(level: u32) -> Cost {
+    let factor = WORKER_HOUSE_COST_GROWTH.powi(level as i32);
+    Cost {
+        wood: (WORKER_HOUSE_BASE_COST_WOOD * factor).ceil(),
+        stone: (WORKER_HOUSE_BASE_COST_STONE * factor).ceil(),
+    }
+}
+
+/// Стоимость следующего уровня дома для изучения.
+pub fn research_house_cost(level: u32) -> Cost {
+    let factor = RESEARCH_HOUSE_COST_GROWTH.powi(level as i32);
+    Cost {
+        wood: (RESEARCH_HOUSE_BASE_COST_WOOD * factor).ceil(),
+        stone: (RESEARCH_HOUSE_BASE_COST_STONE * factor).ceil(),
+    }
+}
+
+/// Стоимость следующего уровня лесопилки.
+pub fn sawmill_cost(level: u32) -> Cost {
+    let factor = SAWMILL_COST_GROWTH.powi(level as i32);
+    Cost {
+        wood: (SAWMILL_BASE_COST_WOOD * factor).ceil(),
+        stone: (SAWMILL_BASE_COST_STONE * factor).ceil(),
+    }
+}
+
+/// Стоимость следующего уровня угольной ямы.
+pub fn coal_pit_cost(level: u32) -> Cost {
+    let factor = COAL_PIT_COST_GROWTH.powi(level as i32);
+    Cost {
+        wood: (COAL_PIT_BASE_COST_WOOD * factor).ceil(),
+        stone: (COAL_PIT_BASE_COST_STONE * factor).ceil(),
+    }
+}
+
+/// Сколько работников даёт один уровень дома для работников.
+pub const WORKERS_PER_HOUSE_LEVEL: u32 = 1;
+/// Сколько исследователей даёт один уровень дома для изучения.
+pub const RESEARCHERS_PER_HOUSE_LEVEL: u32 = 1;
+
+/// Сколько дерева в секунду приносит один работник лесопилки.
+pub const SAWMILL_WOOD_PER_WORKER_PER_SEC: f64 = 0.5;
+
+/// Сколько опыта нужно, чтобы изучить угольную яму.
+pub const COAL_PIT_RESEARCH_COST: f64 = 30.0;
+/// Сколько опыта в секунду даёт один исследователь.
+pub const RESEARCH_PER_RESEARCHER_PER_SEC: f64 = 1.0;
+
+/// Сколько дерева тратит одна партия угольной ямы.
+pub const COAL_PIT_WOOD_PER_BATCH: f64 = 1.0;
+/// Сколько угля даёт одна партия угольной ямы.
+pub const COAL_PIT_COAL_PER_BATCH: f64 = 1.0;
+/// За сколько секунд один работник делает одну партию.
+pub const COAL_PIT_BATCH_SECONDS: f64 = 4.0;
+
 const HOUSE_BASE_COST_WOOD: f64 = 10.0;
 const HOUSE_BASE_COST_STONE: f64 = 5.0;
 const HOUSE_COST_GROWTH: f64 = 1.8;
@@ -71,3 +127,19 @@ const HOUSE_COST_GROWTH: f64 = 1.8;
 const STORAGE_BASE_COST_WOOD: f64 = 20.0;
 const STORAGE_BASE_COST_STONE: f64 = 10.0;
 const STORAGE_COST_GROWTH: f64 = 1.8;
+
+const WORKER_HOUSE_BASE_COST_WOOD: f64 = 12.0;
+const WORKER_HOUSE_BASE_COST_STONE: f64 = 8.0;
+const WORKER_HOUSE_COST_GROWTH: f64 = 1.8;
+
+const RESEARCH_HOUSE_BASE_COST_WOOD: f64 = 16.0;
+const RESEARCH_HOUSE_BASE_COST_STONE: f64 = 10.0;
+const RESEARCH_HOUSE_COST_GROWTH: f64 = 1.8;
+
+const SAWMILL_BASE_COST_WOOD: f64 = 16.0;
+const SAWMILL_BASE_COST_STONE: f64 = 8.0;
+const SAWMILL_COST_GROWTH: f64 = 1.8;
+
+const COAL_PIT_BASE_COST_WOOD: f64 = 20.0;
+const COAL_PIT_BASE_COST_STONE: f64 = 12.0;
+const COAL_PIT_COST_GROWTH: f64 = 1.8;

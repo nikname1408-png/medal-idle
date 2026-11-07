@@ -2,12 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use super::balance;
 
-/// Виды ресурсов, которые можно добывать кликом.
+/// Виды ресурсов.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResourceKind {
     Wood,
     Stone,
     Iron,
+    Coal,
 }
 
 impl ResourceKind {
@@ -16,6 +17,7 @@ impl ResourceKind {
             Self::Wood => "дерево",
             Self::Stone => "камень",
             Self::Iron => "железо",
+            Self::Coal => "уголь",
         }
     }
 }
@@ -67,11 +69,35 @@ pub struct GameState {
     pub house_level: u32,
     /// Уровень склада.
     pub storage_level: u32,
+    /// Уровень дома для работников (каждый уровень — один работник).
+    pub worker_house_level: u32,
+    /// Уровень дома для изучения (каждый уровень — один исследователь).
+    pub research_house_level: u32,
+    /// Уровень лесопилки (каждый уровень — одно рабочее место).
+    pub sawmill_level: u32,
+    /// Уровень угольной ямы (открывается исследованием).
+    pub coal_pit_level: u32,
+
+    /// Сколько работников назначено на лесопилку.
+    pub sawmill_workers: u32,
+    /// Сколько работников назначено на угольную яму.
+    pub coal_pit_workers: u32,
+    /// Сколько исследователей занято изучением угольной ямы.
+    pub coal_pit_researchers: u32,
+
+    /// Изучена ли угольная яма.
+    pub coal_pit_researched: bool,
+    /// Накопленный опыт изучения угольной ямы.
+    pub coal_pit_research: f64,
+    /// Прогресс текущей партии угольной ямы от 0.0 до 1.0.
+    pub coal_pit_progress: f64,
 
     /// Значок дерева уже показывался в баре.
     pub wood_seen: bool,
     /// Открыты ли камень, дом и склад.
     pub stone_seen: bool,
+    /// Показывать ли уголь в баре ресурсов.
+    pub coal_seen: bool,
 
     pub theme: Theme,
 
@@ -94,8 +120,19 @@ impl Default for GameState {
             rest_clicks: 0,
             house_level: 0,
             storage_level: 0,
+            worker_house_level: 0,
+            research_house_level: 0,
+            sawmill_level: 0,
+            coal_pit_level: 0,
+            sawmill_workers: 0,
+            coal_pit_workers: 0,
+            coal_pit_researchers: 0,
+            coal_pit_researched: false,
+            coal_pit_research: 0.0,
+            coal_pit_progress: 0.0,
             wood_seen: false,
             stone_seen: false,
+            coal_seen: false,
             theme: Theme::Classic,
             dev: DevSettings::default(),
         }
@@ -108,6 +145,7 @@ impl GameState {
             ResourceKind::Wood => self.wood,
             ResourceKind::Stone => self.stone,
             ResourceKind::Iron => self.iron,
+            ResourceKind::Coal => self.coal,
         }
     }
 
@@ -126,6 +164,78 @@ impl GameState {
         balance::REST_ENERGY
             + self.house_level as f64 * balance::REST_ENERGY_PER_HOUSE_LEVEL
             + self.dev.rest_bonus
+    }
+
+    /// Сколько работников дают дома для работников.
+    pub fn worker_slots(&self) -> u32 {
+        self.worker_house_level * balance::WORKERS_PER_HOUSE_LEVEL
+    }
+
+    /// Сколько исследователей дают дома для изучения.
+    pub fn researcher_slots(&self) -> u32 {
+        self.research_house_level * balance::RESEARCHERS_PER_HOUSE_LEVEL
+    }
+
+    /// Сколько работников уже назначено.
+    pub fn workers_assigned(&self) -> u32 {
+        self.sawmill_workers + self.coal_pit_workers
+    }
+
+    /// Сколько работников свободно.
+    pub fn workers_free(&self) -> u32 {
+        self.worker_slots().saturating_sub(self.workers_assigned())
+    }
+
+    /// Сколько исследователей занято.
+    pub fn researchers_assigned(&self) -> u32 {
+        self.coal_pit_researchers
+    }
+
+    /// Сколько исследователей свободно.
+    pub fn researchers_free(&self) -> u32 {
+        self.researcher_slots()
+            .saturating_sub(self.researchers_assigned())
+    }
+
+    /// Сколько рабочих мест даёт лесопилка.
+    pub fn sawmill_slots(&self) -> u32 {
+        self.sawmill_level
+    }
+
+    /// Сколько рабочих мест даёт угольная яма.
+    pub fn coal_pit_slots(&self) -> u32 {
+        self.coal_pit_level
+    }
+
+    /// Дерево в секунду с лесопилки.
+    pub fn sawmill_wood_per_sec(&self) -> f64 {
+        self.sawmill_workers as f64 * balance::SAWMILL_WOOD_PER_WORKER_PER_SEC
+    }
+
+    /// Уголь в секунду с угольной ямы.
+    pub fn coal_pit_coal_per_sec(&self) -> f64 {
+        self.coal_pit_workers as f64 * balance::COAL_PIT_COAL_PER_BATCH
+            / balance::COAL_PIT_BATCH_SECONDS
+    }
+
+    /// Дерево в секунду, которое тратит угольная яма.
+    pub fn coal_pit_wood_per_sec(&self) -> f64 {
+        self.coal_pit_workers as f64 * balance::COAL_PIT_WOOD_PER_BATCH
+            / balance::COAL_PIT_BATCH_SECONDS
+    }
+
+    /// Опыт исследования угольной ямы в секунду.
+    pub fn coal_pit_research_speed(&self) -> f64 {
+        self.coal_pit_researchers as f64 * balance::RESEARCH_PER_RESEARCHER_PER_SEC
+    }
+
+    /// Доля изучения угольной ямы от 0.0 до 1.0.
+    pub fn coal_pit_research_ratio(&self) -> f64 {
+        if balance::COAL_PIT_RESEARCH_COST <= 0.0 {
+            1.0
+        } else {
+            (self.coal_pit_research / balance::COAL_PIT_RESEARCH_COST).clamp(0.0, 1.0)
+        }
     }
 
     /// Открыта ли добыча ресурсов.
@@ -147,6 +257,7 @@ impl GameState {
             ResourceKind::Wood => self.wood += added,
             ResourceKind::Stone => self.stone += added,
             ResourceKind::Iron => self.iron += added,
+            ResourceKind::Coal => self.coal += added,
         }
 
         added
@@ -185,6 +296,9 @@ impl GameState {
         }
         if self.wood >= balance::STONE_UNLOCK_WOOD {
             self.stone_seen = true;
+        }
+        if self.coal > 0.0 {
+            self.coal_seen = true;
         }
     }
 }

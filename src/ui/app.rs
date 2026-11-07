@@ -11,16 +11,18 @@ use super::save;
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 const TAB_FIELD: usize = 0;
+const TAB_STUDIES: usize = 1;
+const TAB_WORK: usize = 2;
 const TAB_SETTINGS: usize = 7;
 
 const TABS: [(&str, &str); 8] = [
     ("🌾", "Поле"),
     ("📜", "Изучения"),
     ("👷", "Труд"),
-    ("🎒", "Инвентарь"),
-    ("🧭", "Экспедиции"),
-    ("🔄", "Перерождение"),
-    ("📊", "Статистика"),
+    ("🎒", "Сумка"),
+    ("🧭", "Походы"),
+    ("🔄", "Цикл"),
+    ("📊", "Статы"),
     ("⚙️", "Настройки"),
 ];
 
@@ -74,15 +76,22 @@ pub fn App() -> Element {
 
     let snapshot = state();
     let theme_class = theme_css_class(snapshot.theme);
-    let title = if active_tab() == TAB_SETTINGS {
-        "Настройки"
-    } else {
-        "Поле"
+    let title = match active_tab() {
+        TAB_SETTINGS => "Настройки",
+        TAB_STUDIES => "Изучения",
+        TAB_WORK => "Труд",
+        _ => "Поле",
     };
 
     let screen = match active_tab() {
         TAB_FIELD => rsx! {
             FieldScreen { state, toast, toast_seq }
+        },
+        TAB_STUDIES => rsx! {
+            StudiesScreen { state }
+        },
+        TAB_WORK => rsx! {
+            WorkScreen { state }
         },
         TAB_SETTINGS => rsx! {
             SettingsScreen { state, toast, toast_seq }
@@ -125,9 +134,18 @@ fn FieldScreen(
 
     let house_cost = balance::house_cost(snapshot.house_level);
     let storage_cost = balance::storage_cost(snapshot.storage_level);
-    let house_affordable = snapshot.wood >= house_cost.wood && snapshot.stone >= house_cost.stone;
-    let storage_affordable =
-        snapshot.wood >= storage_cost.wood && snapshot.stone >= storage_cost.stone;
+    let worker_house_cost = balance::worker_house_cost(snapshot.worker_house_level);
+    let research_house_cost = balance::research_house_cost(snapshot.research_house_level);
+    let sawmill_cost = balance::sawmill_cost(snapshot.sawmill_level);
+    let coal_pit_cost = balance::coal_pit_cost(snapshot.coal_pit_level);
+
+    let affordable = |cost: balance::Cost| snapshot.wood >= cost.wood && snapshot.stone >= cost.stone;
+    let house_affordable = affordable(house_cost);
+    let storage_affordable = affordable(storage_cost);
+    let worker_house_affordable = affordable(worker_house_cost);
+    let research_house_affordable = affordable(research_house_cost);
+    let sawmill_affordable = affordable(sawmill_cost);
+    let coal_pit_affordable = affordable(coal_pit_cost);
 
     let gather_yield = balance::CLICK_YIELD + snapshot.dev.gather_yield;
     let rest_available = snapshot.energy < snapshot.energy_max;
@@ -156,6 +174,37 @@ fn FieldScreen(
         "Сейчас лимит ресурсов: {}. Улучшение добавит +{}.",
         format_num(snapshot.cap(ResourceKind::Wood)),
         format_num(balance::STORAGE_CAP_PER_LEVEL)
+    );
+
+    let worker_house_description = if snapshot.worker_house_level == 0 {
+        "Даёт 1 работника. Работников можно назначить на лесопилку и угольную яму."
+            .to_string()
+    } else {
+        format!(
+            "Сейчас работников: {}. Улучшение добавит ещё одного.",
+            snapshot.worker_slots()
+        )
+    };
+
+    let research_house_description = if snapshot.research_house_level == 0 {
+        "Даёт 1 исследователя для изучения новых построек.".to_string()
+    } else {
+        format!(
+            "Сейчас исследователей: {}. Улучшение добавит ещё одного.",
+            snapshot.researcher_slots()
+        )
+    };
+
+    let sawmill_description = format!(
+        "Работники добывают дерево: +{}/с с каждого. Уровень даёт одно рабочее место.",
+        format_num(balance::SAWMILL_WOOD_PER_WORKER_PER_SEC)
+    );
+
+    let coal_pit_description = format!(
+        "Работники тратят {} дерева и получают {} угля за {} с. Уровень даёт одно рабочее место.",
+        format_num(balance::COAL_PIT_WOOD_PER_BATCH),
+        format_num(balance::COAL_PIT_COAL_PER_BATCH),
+        format_num(balance::COAL_PIT_BATCH_SECONDS)
     );
 
     rsx! {
@@ -208,6 +257,260 @@ fn FieldScreen(
                     cost: cost_text(house_cost),
                     affordable: house_affordable,
                     on_build: move |_| do_build_house(state, toast, toast_seq),
+                }
+                if snapshot.house_level > 0 {
+                    BuildRow {
+                        title: "Дом для работников".to_string(),
+                        level: snapshot.worker_house_level,
+                        description: worker_house_description,
+                        cost: cost_text(worker_house_cost),
+                        affordable: worker_house_affordable,
+                        on_build: move |_| do_build_with(state, toast, toast_seq, "Дом для работников", actions::build_worker_house),
+                    }
+                    BuildRow {
+                        title: "Дом для изучения".to_string(),
+                        level: snapshot.research_house_level,
+                        description: research_house_description,
+                        cost: cost_text(research_house_cost),
+                        affordable: research_house_affordable,
+                        on_build: move |_| do_build_with(state, toast, toast_seq, "Дом для изучения", actions::build_research_house),
+                    }
+                }
+            }
+        }
+
+        if snapshot.house_level > 0 {
+            CollapsibleSection { title: "Постройки".to_string(),
+                BuildRow {
+                    title: "Лесопилка".to_string(),
+                    level: snapshot.sawmill_level,
+                    description: sawmill_description,
+                    cost: cost_text(sawmill_cost),
+                    affordable: sawmill_affordable,
+                    on_build: move |_| do_build_with(state, toast, toast_seq, "Лесопилка", actions::build_sawmill),
+                }
+                if snapshot.coal_pit_researched {
+                    BuildRow {
+                        title: "Угольная яма".to_string(),
+                        level: snapshot.coal_pit_level,
+                        description: coal_pit_description,
+                        cost: cost_text(coal_pit_cost),
+                        affordable: coal_pit_affordable,
+                        on_build: move |_| do_build_with(state, toast, toast_seq, "Угольная яма", actions::build_coal_pit),
+                    }
+                } else {
+                    div { class: "locked-note",
+                        "Угольную яму можно открыть на вкладке «Изучения»."
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn StudiesScreen(state: Signal<GameState>) -> Element {
+    let mut state = state;
+    let snapshot = state();
+    let done = snapshot.coal_pit_researched;
+    let slots = snapshot.researcher_slots();
+    let assigned = snapshot.coal_pit_researchers;
+    let free = snapshot.researchers_free();
+    let ratio = snapshot.coal_pit_research_ratio();
+    let percent = format!("{:.0}%", ratio * 100.0);
+    let fill_style = format!("width: {:.1}%", ratio * 100.0);
+    let speed = snapshot.coal_pit_research_speed();
+    let can_minus = assigned > 0;
+    let can_plus = !done && free > 0;
+
+    rsx! {
+        section { class: "goal",
+            div { class: "goal-head",
+                span { class: "goal-label", "Исследователи" }
+                span { class: "goal-count", "{free} свободно из {slots}" }
+            }
+            div { class: "goal-text",
+                if slots == 0 {
+                    "Построй дом для изучения на вкладке «Поле»."
+                } else if done {
+                    "Все доступные изучения завершены."
+                } else {
+                    "Назначь исследователей на изучение."
+                }
+            }
+        }
+
+        section { class: "section",
+            div { class: "section-head static",
+                span { class: "section-title", "Изучения" }
+            }
+            div { class: "section-body",
+                div { class: "research",
+                    div { class: "research-head",
+                        span { class: "research-name", "Угольная яма" }
+                        span { class: if done { "research-status done" } else { "research-status" },
+                            if done { "изучено" } else { "{percent}" }
+                        }
+                    }
+                    div { class: "research-desc",
+                        if done {
+                            "Открыта. Назначь работников на угольную яму во вкладке «Труд»."
+                        } else {
+                            "Открывает угольную яму: работники тратят дерево и добывают уголь."
+                        }
+                    }
+                    div { class: "research-track",
+                        div { class: "research-fill", style: "{fill_style}" }
+                    }
+                    div { class: "research-foot",
+                        span { class: "research-speed", "+{speed:.1} опыта/с" }
+                        div { class: "stepper",
+                            button {
+                                class: "step-btn",
+                                disabled: !can_minus,
+                                onclick: move |_| {
+                                    let mut guard = state.write();
+                                    actions::adjust_coal_pit_researchers(&mut guard, -1);
+                                },
+                                "−"
+                            }
+                            span { class: "step-value", "{assigned}" }
+                            button {
+                                class: "step-btn",
+                                disabled: !can_plus,
+                                onclick: move |_| {
+                                    let mut guard = state.write();
+                                    actions::adjust_coal_pit_researchers(&mut guard, 1);
+                                },
+                                "+"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn WorkScreen(state: Signal<GameState>) -> Element {
+    let mut state = state;
+    let snapshot = state();
+    let slots = snapshot.worker_slots();
+    let free = snapshot.workers_free();
+    let sawmill_workers = snapshot.sawmill_workers;
+    let sawmill_slots = snapshot.sawmill_slots();
+    let sawmill_rate = snapshot.sawmill_wood_per_sec();
+    let coal_workers = snapshot.coal_pit_workers;
+    let coal_slots = snapshot.coal_pit_slots();
+    let coal_rate = snapshot.coal_pit_coal_per_sec();
+    let coal_wood = snapshot.coal_pit_wood_per_sec();
+    let batch_percent = format!("{:.0}%", snapshot.coal_pit_progress.clamp(0.0, 1.0) * 100.0);
+    let batch_fill = format!(
+        "width: {:.1}%",
+        snapshot.coal_pit_progress.clamp(0.0, 1.0) * 100.0
+    );
+
+    rsx! {
+        section { class: "goal",
+            div { class: "goal-head",
+                span { class: "goal-label", "Работники" }
+                span { class: "goal-count", "{free} свободно из {slots}" }
+            }
+            div { class: "goal-text",
+                if slots == 0 {
+                    "Построй дом для работников на вкладке «Поле»."
+                } else {
+                    "Назначай работников на лесопилку и угольную яму."
+                }
+            }
+        }
+
+        section { class: "section",
+            div { class: "section-head static",
+                span { class: "section-title", "Работы" }
+            }
+            div { class: "section-body",
+                WorkerRow {
+                    title: "Лесопилка".to_string(),
+                    detail: format!("+{}/с дерева", format_num(sawmill_rate)),
+                    assigned: sawmill_workers,
+                    capacity: sawmill_slots,
+                    free,
+                    on_minus: move |_| {
+                        let mut guard = state.write();
+                        actions::adjust_sawmill_workers(&mut guard, -1);
+                    },
+                    on_plus: move |_| {
+                        let mut guard = state.write();
+                        actions::adjust_sawmill_workers(&mut guard, 1);
+                    },
+                }
+
+                if snapshot.coal_pit_researched {
+                    WorkerRow {
+                        title: "Угольная яма".to_string(),
+                        detail: format!("+{}/с угля · −{}/с дерева", format_num(coal_rate), format_num(coal_wood)),
+                        assigned: coal_workers,
+                        capacity: coal_slots,
+                        free,
+                        on_minus: move |_| {
+                            let mut guard = state.write();
+                            actions::adjust_coal_pit_workers(&mut guard, -1);
+                        },
+                        on_plus: move |_| {
+                            let mut guard = state.write();
+                            actions::adjust_coal_pit_workers(&mut guard, 1);
+                        },
+                    }
+                    div { class: "batch",
+                        div { class: "batch-track",
+                            div { class: "batch-fill", style: "{batch_fill}" }
+                        }
+                        span { class: "batch-label", "партия {batch_percent}" }
+                    }
+                } else {
+                    div { class: "locked-note",
+                        "Угольная яма не изучена. Открой её во вкладке «Изучения»."
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn WorkerRow(
+    title: String,
+    detail: String,
+    assigned: u32,
+    capacity: u32,
+    free: u32,
+    on_minus: EventHandler<()>,
+    on_plus: EventHandler<()>,
+) -> Element {
+    let can_minus = assigned > 0;
+    let can_plus = free > 0 && assigned < capacity;
+
+    rsx! {
+        div { class: "worker",
+            div { class: "worker-main",
+                span { class: "worker-name", "{title}" }
+                span { class: "worker-detail", "{detail}" }
+            }
+            div { class: "stepper",
+                button {
+                    class: "step-btn",
+                    disabled: !can_minus,
+                    onclick: move |_| on_minus.call(()),
+                    "−"
+                }
+                span { class: "step-value", "{assigned} / {capacity}" }
+                button {
+                    class: "step-btn",
+                    disabled: !can_plus,
+                    onclick: move |_| on_plus.call(()),
+                    "+"
                 }
             }
         }
@@ -267,7 +570,7 @@ fn SettingsScreen(
 
         section { class: "settings",
             h2 { class: "settings-title", "Об игре" }
-            p { class: "settings-note", "«Поле» — версия v0.3. Rust + Dioxus 0.7." }
+            p { class: "settings-note", "«Поле» — версия v0.4. Rust + Dioxus 0.7." }
         }
     }
 }
@@ -413,6 +716,79 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         on_change: move |value: f64| {
                             state.write().storage_level = value.max(0.0) as u32;
                         },
+                    }
+                    DevNumberRow {
+                        label: "Дом для работников".to_string(),
+                        value: snapshot.worker_house_level as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().worker_house_level = value.max(0.0) as u32;
+                        },
+                    }
+                    DevNumberRow {
+                        label: "Дом для изучения".to_string(),
+                        value: snapshot.research_house_level as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().research_house_level = value.max(0.0) as u32;
+                        },
+                    }
+                    DevNumberRow {
+                        label: "Лесопилка, уровень".to_string(),
+                        value: snapshot.sawmill_level as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().sawmill_level = value.max(0.0) as u32;
+                        },
+                    }
+                    DevNumberRow {
+                        label: "Угольная яма, уровень".to_string(),
+                        value: snapshot.coal_pit_level as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().coal_pit_level = value.max(0.0) as u32;
+                        },
+                    }
+                    DevNumberRow {
+                        label: "Работников: лесопилка".to_string(),
+                        value: snapshot.sawmill_workers as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().sawmill_workers = value.max(0.0) as u32;
+                        },
+                    }
+                    DevNumberRow {
+                        label: "Работников: угольная яма".to_string(),
+                        value: snapshot.coal_pit_workers as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().coal_pit_workers = value.max(0.0) as u32;
+                        },
+                    }
+                    DevNumberRow {
+                        label: "Исследователей".to_string(),
+                        value: snapshot.coal_pit_researchers as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().coal_pit_researchers = value.max(0.0) as u32;
+                        },
+                    }
+                    button {
+                        class: "dev-btn dev-wide",
+                        onclick: move |_| {
+                            let mut guard = state.write();
+                            guard.coal_pit_researched = !guard.coal_pit_researched;
+                            if guard.coal_pit_researched {
+                                guard.coal_pit_level = guard.coal_pit_level.max(1);
+                                guard.coal_pit_research = balance::COAL_PIT_RESEARCH_COST;
+                                guard.coal_seen = true;
+                            }
+                        },
+                        if snapshot.coal_pit_researched {
+                            "Сбросить изучение угольной ямы"
+                        } else {
+                            "Изучить угольную яму сразу"
+                        }
                     }
                 }
 
@@ -642,6 +1018,14 @@ fn BuildRow(
 
     rsx! {
         div { class: "build",
+            div { class: "build-sub",
+                span { class: "build-title", "{title}" }
+                span { class: "build-level", "{level_label}" }
+                span {
+                    class: if affordable { "build-cost" } else { "build-cost poor" },
+                    "{cost}"
+                }
+            }
             div { class: "action-line",
                 button {
                     class: if affordable { "action-main" } else { "action-main unavailable" },
@@ -654,14 +1038,6 @@ fn BuildRow(
                     aria_label: "Подробнее",
                     onclick: move |_| open.set(!open()),
                     span { class: chev_class }
-                }
-            }
-            div { class: "build-sub",
-                span { class: "build-title", "{title}" }
-                span { class: "build-level", "{level_label}" }
-                span {
-                    class: if affordable { "build-cost" } else { "build-cost poor" },
-                    "{cost}"
                 }
             }
             if is_open {
@@ -689,6 +1065,36 @@ fn CurrentGoal(state: GameState) -> Element {
         (
             "Построй свой дом — он даст энергию и усилит отдых.".to_string(),
             cost_text(balance::house_cost(0)),
+            None,
+        )
+    } else if state.worker_house_level == 0 {
+        (
+            "Построй дом для работников, чтобы получить первого работника.".to_string(),
+            cost_text(balance::worker_house_cost(0)),
+            None,
+        )
+    } else if state.research_house_level == 0 {
+        (
+            "Построй дом для изучения, чтобы начать исследования.".to_string(),
+            cost_text(balance::research_house_cost(0)),
+            None,
+        )
+    } else if state.sawmill_level == 0 {
+        (
+            "Построй лесопилку и назначь на неё работника.".to_string(),
+            cost_text(balance::sawmill_cost(0)),
+            None,
+        )
+    } else if state.sawmill_workers == 0 {
+        (
+            "Назначь работника на лесопилку во вкладке «Труд».".to_string(),
+            String::new(),
+            None,
+        )
+    } else if !state.coal_pit_researched {
+        (
+            "Назначь исследователя на угольную яму во вкладке «Изучения».".to_string(),
+            String::new(),
             None,
         )
     } else if state.wood >= state.cap(ResourceKind::Wood)
@@ -723,7 +1129,9 @@ fn CurrentGoal(state: GameState) -> Element {
                     }
                 },
                 None => rsx! {
-                    div { class: "goal-cost", "{goal_hint}" }
+                    if !goal_hint.is_empty() {
+                        div { class: "goal-cost", "{goal_hint}" }
+                    }
                 },
             }
         }
@@ -748,6 +1156,14 @@ fn ResourceBar(state: GameState) -> Element {
             "Камень",
             state.stone,
             state.cap(ResourceKind::Stone),
+        ));
+    }
+    if state.coal_seen || state.coal > 0.0 {
+        items.push((
+            "🔥",
+            "Уголь",
+            state.coal,
+            state.cap(ResourceKind::Coal),
         ));
     }
 
@@ -835,6 +1251,25 @@ fn do_gather(
         actions::gather(&mut guard, kind)
     };
     notify(toast, toast_seq, gather_message(kind, result));
+}
+
+fn do_build_with(
+    mut state: Signal<GameState>,
+    toast: Signal<String>,
+    toast_seq: Signal<u64>,
+    name: &'static str,
+    action: fn(&mut GameState) -> BuildResult,
+) {
+    let result = {
+        let mut guard = state.write();
+        action(&mut guard)
+    };
+
+    let message = match result {
+        BuildResult::Built(level) => format!("{name}: уровень {level}"),
+        other => build_message(name, other),
+    };
+    notify(toast, toast_seq, message);
 }
 
 fn do_build_house(mut state: Signal<GameState>, toast: Signal<String>, toast_seq: Signal<u64>) {
