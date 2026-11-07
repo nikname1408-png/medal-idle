@@ -10,6 +10,8 @@ use super::save;
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 const FIELD_ICON: Asset = asset!("/assets/icons/field.png");
+const WOOD_ICON: Asset = asset!("/assets/icons/wood.png");
+const COAL_ICON: Asset = asset!("/assets/icons/coal.png");
 
 const TAB_FIELD: usize = 0;
 const TAB_STUDIES: usize = 1;
@@ -18,7 +20,7 @@ const TAB_SETTINGS: usize = 7;
 
 const TABS: [(&str, &str); 8] = [
     ("🌾", "Поле"),
-    ("📜", "Изучения"),
+    ("📜", "Изуч."),
     ("👷", "Труд"),
     ("🎒", "Сумка"),
     ("🧭", "Походы"),
@@ -549,7 +551,6 @@ fn SettingsScreen(
                     },
                 }
             }
-            p { class: "settings-note", "Цвет энергии одинаковый во всех темах: #BAD118." }
         }
 
         section { class: "settings",
@@ -563,9 +564,6 @@ fn SettingsScreen(
                 } else {
                     "Сбросить прогресс"
                 }
-            }
-            p { class: "settings-note",
-                "Сброс вернёт игру в самое начало. Тема оформления сохранится."
             }
         }
 
@@ -1141,11 +1139,11 @@ fn CurrentGoal(state: GameState) -> Element {
 
 #[component]
 fn ResourceBar(state: GameState) -> Element {
-    let mut items: Vec<(&str, &str, f64, f64)> = Vec::new();
+    let mut items: Vec<(ResourceKind, &str, f64, f64)> = Vec::new();
 
     if state.wood_seen || state.wood > 0.0 {
         items.push((
-            "🌲",
+            ResourceKind::Wood,
             "Дерево",
             state.wood,
             state.cap(ResourceKind::Wood),
@@ -1153,7 +1151,7 @@ fn ResourceBar(state: GameState) -> Element {
     }
     if state.stone_seen || state.stone > 0.0 {
         items.push((
-            "🪨",
+            ResourceKind::Stone,
             "Камень",
             state.stone,
             state.cap(ResourceKind::Stone),
@@ -1161,7 +1159,7 @@ fn ResourceBar(state: GameState) -> Element {
     }
     if state.coal_seen || state.coal > 0.0 {
         items.push((
-            "🔥",
+            ResourceKind::Coal,
             "Уголь",
             state.coal,
             state.cap(ResourceKind::Coal),
@@ -1173,9 +1171,15 @@ fn ResourceBar(state: GameState) -> Element {
             if items.is_empty() {
                 span { class: "resources-empty", "Ресурсов пока нет — отдохни и начни добывать" }
             } else {
-                for (icon, name, value, cap) in items {
+                for (kind, name, value, cap) in items {
                     div { class: "resource", key: "{name}",
-                        span { class: "resource-icon", "{icon}" }
+                        if kind == ResourceKind::Wood {
+                            img { class: "resource-img", src: WOOD_ICON, alt: "Дерево" }
+                        } else if kind == ResourceKind::Coal {
+                            img { class: "resource-img", src: COAL_ICON, alt: "Уголь" }
+                        } else {
+                            span { class: "resource-icon", "🪨" }
+                        }
                         span { class: "resource-name", "{name}" }
                         span {
                             class: if value >= cap { "resource-value full" } else { "resource-value" },
@@ -1259,7 +1263,10 @@ fn do_gather(
         let mut guard = state.write();
         actions::gather(&mut guard, kind)
     };
-    notify(toast, toast_seq, gather_message(kind, result));
+    // Успешная добыча не показывает плашку — только ошибки и открытия.
+    if !matches!(result, GatherResult::Gathered(value) if value > 0.0) {
+        notify(toast, toast_seq, gather_message(kind, result));
+    }
 }
 
 fn do_build_with(
