@@ -228,8 +228,12 @@ pub struct GameState {
 
     /// Инвентарь: ID предмета -> количество.
     pub inventory: HashMap<String, u32>,
-    /// Надетая экипировка.
+    /// Надетая экипировка активного набора.
     pub equipment: EquippedItems,
+    /// Сохранённые наборы экипировки (Set 1–4).
+    pub equipment_sets: [EquippedItems; 4],
+    /// Индекс активного набора экипировки.
+    pub active_set: usize,
     /// Бонус к цене продажи от экипировки.
     pub trade_bonus: f32,
     /// Бонус к добыче в походах от экипировки.
@@ -320,6 +324,8 @@ impl Default for GameState {
             trader_researchers: 0,
             inventory,
             equipment: EquippedItems::default(),
+            equipment_sets: std::array::from_fn(|_| EquippedItems::default()),
+            active_set: 0,
             trade_bonus: 0.0,
             expedition_bonus: 0.0,
             traders: trader::default_markets(),
@@ -691,6 +697,17 @@ impl GameState {
         self.recalculate_stats();
     }
 
+    /// Переключает активный набор экипировки, сохраняя текущий.
+    pub fn switch_set(&mut self, index: usize) {
+        if index >= self.equipment_sets.len() || index == self.active_set {
+            return;
+        }
+        self.equipment_sets[self.active_set] = self.equipment.clone();
+        self.active_set = index;
+        self.equipment = self.equipment_sets[index].clone();
+        self.ensure_equipment_owned();
+    }
+
     /// Пересчитывает бонусы от экипировки.
     pub fn recalculate_stats(&mut self) {
         let mut trade_bonus = 0.0;
@@ -716,6 +733,9 @@ impl GameState {
             if missing {
                 self.equipment.clear(slot);
             }
+        }
+        if let Some(set) = self.equipment_sets.get_mut(self.active_set) {
+            *set = self.equipment.clone();
         }
         self.recalculate_stats();
     }
@@ -898,6 +918,9 @@ impl GameState {
             self.version = balance::SAVE_VERSION;
         }
         self.ensure_markets();
+        if self.active_set >= self.equipment_sets.len() {
+            self.active_set = 0;
+        }
         self.ensure_equipment_owned();
         self.recalculate_stats();
     }

@@ -1,5 +1,6 @@
 :root {
     --energy: #bad118;
+    --energy-bar: #ffd65a;
     --bg: #222222;
     --text: #f4f1e8;
     --muted: #a8a294;
@@ -70,16 +71,16 @@ button {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
+    gap: 4px;
+    padding: calc(4px + env(safe-area-inset-top)) 6px 4px;
     background: var(--topbar);
     border-bottom: 1px solid rgba(0, 0, 0, 0.3);
 }
 
 .icon-btn {
-    flex: 0 0 40px;
-    width: 40px;
-    height: 40px;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -91,7 +92,8 @@ button {
     cursor: pointer;
 }
 
-.icon-btn:active {
+.icon-btn:active,
+.icon-btn.active {
     background: rgba(255, 255, 255, 0.14);
 }
 
@@ -122,16 +124,103 @@ button {
 
 .topbar-title {
     flex: 1;
+    min-width: 0;
     margin: 0;
+    overflow: hidden;
     text-align: center;
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 700;
     letter-spacing: 0.04em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: #ffffff;
 }
 
 .dev-icon {
     color: var(--energy);
+}
+
+/* ---------- Бургер-меню ---------- */
+
+.menu-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 17;
+    display: flex;
+    align-items: flex-start;
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.menu-panel {
+    width: min(280px, 82%);
+    margin: calc(46px + env(safe-area-inset-top)) 0 0 6px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+}
+
+.menu-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+}
+
+.menu-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.menu-close {
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.menu-close:active {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.menu-item:last-child {
+    border-bottom: 0;
+}
+
+.menu-item:active {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.menu-icon {
+    width: 18px;
+    text-align: center;
+    font-size: 15px;
 }
 
 /* ---------- Контент ---------- */
@@ -361,6 +450,11 @@ button {
     object-fit: contain;
 }
 
+.cost-icon {
+    font-size: 12px;
+    line-height: 1;
+}
+
 .cost-num {
     font-variant-numeric: tabular-nums;
 }
@@ -570,18 +664,18 @@ button {
 }
 
 .resources {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 3px 12px;
-    padding: 6px 10px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px 5px;
+    padding: 4px 6px;
     border-top: 1px solid var(--line);
     background: var(--panel);
 }
 
 .resources-empty {
+    grid-column: 1 / -1;
     padding: 2px 0;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--muted);
     text-align: center;
 }
@@ -589,37 +683,41 @@ button {
 .resource {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 2px 0;
-    white-space: nowrap;
+    gap: 4px;
+    min-width: 0;
+    padding: 2px 4px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.18);
 }
 
 .resource-icon {
-    font-size: 15px;
-}
-
-.resource-img {
+    flex: 0 0 18px;
     width: 18px;
-    height: 18px;
-    object-fit: contain;
-    filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.35));
+    text-align: center;
+    font-size: 13px;
+    line-height: 1;
 }
 
-/* Уголь почти чёрный — чуть подсвечиваем, чтобы читался на тёмной панели. */
-.resource-img.dark {
-    filter: brightness(2.0) drop-shadow(0 0 1px rgba(255, 255, 255, 0.45));
+.resource-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.05;
 }
 
 .resource-name {
-    font-size: 12px;
+    overflow: hidden;
+    font-size: 9px;
     color: var(--muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .resource-value {
-    margin-left: auto;
-    font-size: 13px;
+    font-size: 11.5px;
     color: var(--gold);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .resource-value.full {
@@ -628,11 +726,33 @@ button {
 
 /* ---------- Вкладки ---------- */
 
-.tabs {
+.tabbar {
     display: flex;
-    gap: 4px;
-    padding: 4px 6px;
+    align-items: stretch;
     border-top: 1px solid var(--line);
+    background: var(--bg);
+}
+
+.tab-arrow {
+    flex: 0 0 24px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.tab-arrow:active {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.tabs {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 2px;
+    padding: 2px;
     background: var(--bg);
     overflow-x: auto;
     overflow-y: hidden;
@@ -646,14 +766,14 @@ button {
 }
 
 .tab {
-    flex: 0 0 92px;
-    height: 68px;
+    flex: 0 0 64px;
+    height: 46px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 3px;
-    padding: 0 2px;
+    gap: 1px;
+    padding: 1px;
     scroll-snap-align: start;
     border: 0;
     border-radius: 4px;
@@ -672,20 +792,14 @@ button {
 }
 
 .tab-icon {
-    font-size: 36px;
-}
-
-.tab-img {
-    width: 44px;
-    height: 44px;
-    object-fit: contain;
-    image-rendering: auto;
+    font-size: 20px;
+    line-height: 1;
 }
 
 .tab-label {
     max-width: 100%;
     overflow: hidden;
-    font-size: 10px;
+    font-size: 8.5px;
     line-height: 1.05;
     text-align: center;
     text-overflow: ellipsis;
@@ -701,8 +815,8 @@ button {
     align-items: center;
     justify-content: center;
     padding-bottom: env(safe-area-inset-bottom);
-    border-top: 1px solid rgba(186, 209, 24, 0.35);
-    background: #2f330a;
+    border-top: 1px solid rgba(255, 214, 90, 0.35);
+    background: #3a3414;
     overflow: hidden;
 }
 
@@ -711,7 +825,7 @@ button {
     left: 0;
     top: 0;
     bottom: 0;
-    background: var(--energy);
+    background: var(--energy-bar);
     transition: width 0.3s linear;
 }
 
@@ -1621,8 +1735,8 @@ button {
 .inv-equipment,
 .inv-grid-wrap,
 .inv-detail {
-    margin: 8px 10px;
-    padding: 10px;
+    margin: 3px 6px;
+    padding: 4px 6px;
     border: 1px solid var(--line);
     border-radius: 4px;
     background: var(--panel);
@@ -1632,22 +1746,32 @@ button {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 6px;
 }
 
 .inv-title {
     margin: 0;
-    font-size: 16px;
+    font-size: 15px;
+}
+
+.inv-head-actions {
+    display: flex;
+    gap: 4px;
 }
 
 .inv-tool {
-    padding: 7px 10px;
+    padding: 4px 8px;
     border: 1px solid var(--line);
     border-radius: 4px;
     background: var(--btn);
     color: #ffffff;
-    font-size: 12px;
+    font-size: 11px;
+    white-space: nowrap;
     cursor: pointer;
+}
+
+.inv-tool.active {
+    border-color: var(--energy);
 }
 
 .inv-tool:disabled {
@@ -1659,21 +1783,21 @@ button {
 .craft-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-top: 10px;
+    gap: 3px;
+    margin-top: 4px;
 }
 
 .craft-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px;
+    gap: 6px;
+    padding: 4px;
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.18);
 }
 
 .craft-icon {
-    font-size: 22px;
+    font-size: 18px;
 }
 
 .craft-main {
@@ -1682,22 +1806,22 @@ button {
 }
 
 .craft-name {
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
 }
 
 .craft-cost {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--muted);
 }
 
 .craft-btn {
-    padding: 7px 10px;
+    padding: 4px 8px;
     border: 0;
     border-radius: 4px;
     background: var(--btn);
     color: #ffffff;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     cursor: pointer;
 }
@@ -1711,27 +1835,27 @@ button {
 .inv-equipment {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 3px;
 }
 
 .equip-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px;
+    gap: 6px;
+    padding: 2px 4px;
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.18);
 }
 
 .equip-slot {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: 1px dashed var(--line);
     border-radius: 4px;
-    font-size: 20px;
+    font-size: 16px;
 }
 
 .equip-main {
@@ -1742,24 +1866,27 @@ button {
 }
 
 .equip-label {
-    font-size: 11px;
+    font-size: 9px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--muted);
 }
 
 .equip-value {
-    font-size: 14px;
+    overflow: hidden;
+    font-size: 13px;
     font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .equip-btn {
-    padding: 6px 10px;
+    padding: 4px 8px;
     border: 1px solid var(--line);
     border-radius: 4px;
     background: transparent;
     color: var(--text);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
 }
 
@@ -1769,26 +1896,26 @@ button {
 }
 
 .inv-sets {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 4px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px;
+    margin-top: 1px;
 }
 
 .inv-sets-label {
     margin-right: 2px;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--muted);
 }
 
 .set-btn {
-    padding: 5px 9px;
+    width: 100%;
+    padding: 4px 0;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: 4px;
     background: transparent;
     color: var(--muted);
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
 }
 
@@ -1799,22 +1926,28 @@ button {
 
 .inv-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 6px;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 2px;
 }
 
 .inv-item {
     position: relative;
-    aspect-ratio: 1;
+    aspect-ratio: 1 / 1;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0;
     border: 1px solid var(--line);
-    border-radius: 4px;
+    border-radius: 3px;
     background: rgba(0, 0, 0, 0.18);
     color: var(--text);
-    font-size: 24px;
+    font-size: 20px;
+    line-height: 1;
     cursor: pointer;
+}
+
+.inv-item.empty {
+    opacity: 0.45;
 }
 
 .inv-item.selected {
@@ -1822,17 +1955,21 @@ button {
     box-shadow: inset 0 0 0 1px var(--energy);
 }
 
+.inv-item-icon {
+    line-height: 1;
+}
+
 .inv-badge {
     position: absolute;
-    right: 3px;
-    bottom: 2px;
-    min-width: 15px;
-    padding: 0 4px;
+    right: 1px;
+    top: 1px;
+    min-width: 12px;
+    padding: 0 2px;
     border-radius: 999px;
     background: var(--btn);
     color: #ffffff;
-    font-size: 10px;
-    line-height: 15px;
+    font-size: 9px;
+    line-height: 12px;
     text-align: center;
     font-variant-numeric: tabular-nums;
 }
@@ -1840,36 +1977,80 @@ button {
 .inv-detail {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
+}
+
+.inv-detail.empty {
+    padding: 8px 6px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.inv-detail-head {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.inv-detail-icon {
+    font-size: 16px;
+    line-height: 1;
 }
 
 .inv-detail-name {
-    font-size: 16px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 14px;
     font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.inv-detail-price {
+    color: var(--gold);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.inv-detail-close {
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
 }
 
 .inv-detail-slot {
-    font-size: 11px;
+    font-size: 9.5px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--energy);
 }
 
 .inv-detail-desc {
-    font-size: 13px;
-    line-height: 1.35;
+    font-size: 11.5px;
+    line-height: 1.3;
     color: var(--muted);
 }
 
-.inv-detail-count {
-    font-size: 12px;
-    color: var(--gold);
+.inv-detail-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 8px;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
 }
 
 .inv-detail-actions {
     display: flex;
-    gap: 8px;
-    margin-top: 4px;
+    gap: 4px;
+    margin-top: 2px;
 }
 
 .inv-detail-actions .inv-tool {
@@ -1879,10 +2060,10 @@ button {
 .inv-stats {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 12px;
-    margin-top: 6px;
+    gap: 2px 8px;
+    margin-top: 3px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: 10.5px;
     font-variant-numeric: tabular-nums;
 }
 
@@ -1891,8 +2072,8 @@ button {
 }
 
 .inv-subtitle {
-    margin: 2px 0 6px;
-    font-size: 11px;
+    margin: 0 0 2px;
+    font-size: 9.5px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--muted);
@@ -1901,87 +2082,36 @@ button {
 .inv-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    margin: 8px 10px;
+    gap: 4px;
+    margin: 3px 6px;
 }
 
 .inv-message {
-    margin: 8px 10px;
-    padding: 8px 10px;
+    margin: 3px 6px;
+    padding: 3px 6px;
     border: 1px solid var(--line);
     border-radius: 4px;
     background: var(--panel);
     color: var(--gold);
-    font-size: 12px;
+    font-size: 11px;
 }
 
 .inv-craft {
-    margin: 8px 10px;
-    padding: 10px;
+    margin: 3px 6px;
+    padding: 4px 6px;
     border: 1px solid var(--line);
     border-radius: 4px;
     background: var(--panel);
 }
 
-.item-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-}
-
-.item-cell {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    min-height: 58px;
-    padding: 8px;
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.18);
-    color: var(--text);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-}
-
-.item-cell.selected {
-    border-color: var(--energy);
-    box-shadow: inset 0 0 0 1px var(--energy);
-}
-
-.item-cell.empty {
-    color: var(--unavailable-text);
-}
-
-.item-cell-name {
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.25;
-}
-
-.item-cell-meta {
-    font-size: 11px;
-    color: var(--muted);
-}
-
-.item-cell-zero {
-    position: absolute;
-    right: 7px;
-    top: 6px;
-    font-size: 10px;
-    color: var(--unavailable-text);
-}
-
 .equip-bonus {
-    font-size: 11px;
+    font-size: 9.5px;
     color: var(--energy);
 }
 
 .craft-warning {
     margin-top: 2px;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--unavailable-text);
 }
 

@@ -14,15 +14,6 @@ use super::trader::TradeScreen;
 static VIEW: GlobalSignal<GameState> = Signal::global(GameState::default);
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
-const FIELD_ICON: Asset = asset!("/assets/icons/field.png");
-const WOOD_ICON: Asset = asset!("/assets/icons/wood.png");
-const STONE_ICON: Asset = asset!("/assets/icons/stone.png");
-const IRON_ICON: Asset = asset!("/assets/icons/iron.png");
-const COAL_ICON: Asset = asset!("/assets/icons/coal.png");
-const GOLD_ICON: Asset = asset!("/assets/icons/gold.png");
-const BAG_ICON: Asset = asset!("/assets/icons/bag.png");
-const SCROLL_ICON: Asset = asset!("/assets/icons/scroll.png");
-const GEAR_ICON: Asset = asset!("/assets/icons/gear.png");
 
 const TAB_FIELD: usize = 0;
 const TAB_STUDIES: usize = 1;
@@ -43,25 +34,14 @@ const TABS: [(&str, &str); 8] = [
     ("⚙️", "Настр."),
 ];
 
-/// Картинка вкладки, если для неё уже нарисован спрайт.
-fn tab_image(index: usize) -> Option<Asset> {
-    match index {
-        TAB_FIELD => Some(FIELD_ICON),
-        TAB_STUDIES => Some(SCROLL_ICON),
-        TAB_BAG => Some(BAG_ICON),
-        TAB_SETTINGS => Some(GEAR_ICON),
-        _ => None,
-    }
-}
-
-/// Спрайт ресурса для строки ресурсов и цен.
-fn resource_icon(kind: ResourceKind) -> Option<Asset> {
+/// Текстовая заглушка иконки ресурса.
+fn resource_text_icon(kind: ResourceKind) -> &'static str {
     match kind {
-        ResourceKind::Wood => Some(WOOD_ICON),
-        ResourceKind::Stone => Some(STONE_ICON),
-        ResourceKind::Iron => Some(IRON_ICON),
-        ResourceKind::Coal => Some(COAL_ICON),
-        ResourceKind::Gold => Some(GOLD_ICON),
+        ResourceKind::Wood => "🪵",
+        ResourceKind::Stone => "🪨",
+        ResourceKind::Iron => "⛏",
+        ResourceKind::Coal => "🔥",
+        ResourceKind::Gold => "🪙",
     }
 }
 
@@ -71,9 +51,11 @@ pub fn App() -> Element {
     let mut active_tab = use_signal(|| TAB_FIELD);
     let mut bell_open = use_signal(|| false);
     let mut trader_open = use_signal(|| false);
+    let mut menu_open = use_signal(|| false);
     let mut loaded = use_signal(|| false);
     let mut dev_open = use_signal(|| false);
     let mut back = use_signal(|| 0u32);
+    let mut menu_back = use_signal(|| *back.peek());
 
     // Загружаем сохранение один раз при старте.
     use_future(move || async move {
@@ -176,6 +158,18 @@ pub fn App() -> Element {
         }
     });
 
+    // Назад закрывает бургер-меню, если оно открыто.
+    use_effect(move || {
+        let count = back();
+        if count <= *menu_back.peek() {
+            return;
+        }
+        menu_back.set(count);
+        if menu_open() {
+            menu_open.set(false);
+        }
+    });
+
     // Экраны перерисовываются по снимку `VIEW`; сами действия пишут в `state`.
     let snapshot = VIEW();
     let theme_class = theme_css_class(snapshot.theme);
@@ -183,13 +177,13 @@ pub fn App() -> Element {
         TAB_SETTINGS => "Настройки",
         TAB_STUDIES => "Изучения",
         TAB_WORK => "Труд",
-        TAB_BAG => "Сумка",
+        TAB_BAG => "Инвентарь",
         TAB_CYCLE => "Цикл",
         TAB_STATS => "Статы",
         _ => "Поле",
     };
 
-    let screen = if trader_open() {
+    let screen = if trader_open() || menu_open() {
         rsx! {}
     } else {
         match active_tab() {
@@ -232,10 +226,9 @@ pub fn App() -> Element {
             TopBar {
                 title: title.to_string(),
                 bell_open: bell_open(),
-                trader_open: trader_open(),
+                menu_open: menu_open(),
+                on_menu: move |_| menu_open.set(!menu_open()),
                 on_bell: move |_| bell_open.set(!bell_open()),
-                on_trader: move |_| trader_open.set(!trader_open()),
-                on_dev: move |_| dev_open.set(!dev_open()),
             }
             main { class: "content", {screen} }
             div { class: "bottom",
@@ -245,6 +238,23 @@ pub fn App() -> Element {
             }
             if bell_open() {
                 GoalPanel { view: snapshot.clone(), on_close: move |_| bell_open.set(false) }
+            }
+            if menu_open() {
+                BurgerMenu {
+                    on_close: move |_| menu_open.set(false),
+                    on_trader: move |_| {
+                        menu_open.set(false);
+                        trader_open.set(true);
+                    },
+                    on_settings: move |_| {
+                        menu_open.set(false);
+                        active_tab.set(TAB_SETTINGS);
+                    },
+                    on_dev: move |_| {
+                        menu_open.set(false);
+                        dev_open.set(true);
+                    },
+                }
             }
             if trader_open() {
                 TradeScreen {
@@ -1102,30 +1112,29 @@ fn PlaceholderScreen(title: String) -> Element {
 fn TopBar(
     title: String,
     bell_open: bool,
-    trader_open: bool,
+    menu_open: bool,
+    on_menu: EventHandler<()>,
     on_bell: EventHandler<()>,
-    on_trader: EventHandler<()>,
-    on_dev: EventHandler<()>,
 ) -> Element {
     let bell_class = if bell_open {
         "icon-btn bell-btn active"
     } else {
         "icon-btn bell-btn"
     };
-    let trader_class = if trader_open {
-        "icon-btn trader-btn active"
+    let menu_class = if menu_open {
+        "icon-btn menu-btn active"
     } else {
-        "icon-btn trader-btn"
+        "icon-btn menu-btn"
     };
 
     rsx! {
         header { class: "topbar",
             button {
-                class: "{trader_class}",
-                aria_label: "Торговец",
-                title: "Торговец",
-                onclick: move |_| on_trader.call(()),
-                span { class: "trader-icon", "🛒" }
+                class: "{menu_class}",
+                aria_label: "Меню",
+                title: "Меню",
+                onclick: move |_| on_menu.call(()),
+                span { class: "burger" }
             }
             h1 { class: "topbar-title", "{title}" }
             button {
@@ -1144,12 +1153,50 @@ fn TopBar(
                     path { d: "M10 18.5a2 2 0 0 0 4 0" }
                 }
             }
-            button {
-                class: "icon-btn dev-icon",
-                title: "Панель разработчика (временно)",
-                aria_label: "Панель разработчика",
-                onclick: move |_| on_dev.call(()),
-                "🛠"
+        }
+    }
+}
+
+#[component]
+fn BurgerMenu(
+    on_close: EventHandler<()>,
+    on_trader: EventHandler<()>,
+    on_settings: EventHandler<()>,
+    on_dev: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div {
+            class: "menu-overlay",
+            onclick: move |_| on_close.call(()),
+            div {
+                class: "menu-panel",
+                onclick: move |event| event.stop_propagation(),
+                div { class: "menu-head",
+                    span { class: "menu-title", "Меню" }
+                    button {
+                        class: "menu-close",
+                        onclick: move |_| on_close.call(()),
+                        "×"
+                    }
+                }
+                button {
+                    class: "menu-item",
+                    onclick: move |_| on_trader.call(()),
+                    span { class: "menu-icon", "🪙" }
+                    span { "Торговец" }
+                }
+                button {
+                    class: "menu-item",
+                    onclick: move |_| on_settings.call(()),
+                    span { class: "menu-icon", "⚙" }
+                    span { "Настройки" }
+                }
+                button {
+                    class: "menu-item",
+                    onclick: move |_| on_dev.call(()),
+                    span { class: "menu-icon", "🛠" }
+                    span { "Панель разработчика" }
+                }
             }
         }
     }
@@ -1632,9 +1679,9 @@ fn ActionRow(label: String, info: String, available: bool, on_press: EventHandle
 fn CostLabel(cost: balance::Cost) -> Element {
     rsx! {
         span { class: "cost",
-            img { class: "cost-img", src: WOOD_ICON, alt: "дерево" }
+            span { class: "cost-icon", "🪵" }
             span { class: "cost-num", "{format_num(cost.wood)}" }
-            img { class: "cost-img", src: STONE_ICON, alt: "камень" }
+            span { class: "cost-icon", "🪨" }
             span { class: "cost-num", "{format_num(cost.stone)}" }
         }
     }
@@ -1834,27 +1881,23 @@ fn ResourceBar(view: GameState) -> Element {
             } else {
                 for (kind, name, value, cap) in items {
                     div { class: "resource", key: "{name}",
-                        if let Some(src) = resource_icon(kind) {
-                            img {
-                                class: if kind == ResourceKind::Coal { "resource-img dark" } else { "resource-img" },
-                                src,
-                                alt: "{name}",
+                        span { class: "resource-icon", "{resource_text_icon(kind)}" }
+                        div { class: "resource-text",
+                            span { class: "resource-name", "{name}" }
+                            span {
+                                class: if value >= cap { "resource-value full" } else { "resource-value" },
+                                "{format_num(value)} / {format_num(cap)}"
                             }
-                        } else {
-                            span { class: "resource-icon", "💰" }
-                        }
-                        span { class: "resource-name", "{name}" }
-                        span {
-                            class: if value >= cap { "resource-value full" } else { "resource-value" },
-                            "{format_num(value)} / {format_num(cap)}"
                         }
                     }
                 }
                 if state.time > 0.0 {
                     div { class: "resource",
                         span { class: "resource-icon", "⏳" }
-                        span { class: "resource-name", "Время" }
-                        span { class: "resource-value", "{format_num(state.time)}" }
+                        div { class: "resource-text",
+                            span { class: "resource-name", "Время" }
+                            span { class: "resource-value", "{format_num(state.time)}" }
+                        }
                     }
                 }
             }
@@ -1888,26 +1931,45 @@ fn TabBar(active: Signal<usize>) -> Element {
     });
 
     rsx! {
-        nav { class: "tabs",
-            for (i, (icon, label)) in TABS.iter().enumerate() {
-                button {
-                    key: "{i}",
-                    class: if active() == i { "tab active" } else { "tab" },
-                    onclick: move |_| active.set(i),
-                    if let Some(src) = tab_image(i) {
-                        img {
-                            class: "tab-img",
-                            src,
-                            alt: "{label}",
-                        }
-                    } else {
+        div { class: "tabbar",
+            button {
+                class: "tab-arrow",
+                aria_label: "Прокрутить вкладки влево",
+                onclick: move |_| scroll_tabs(-1),
+                "<"
+            }
+            nav { class: "tabs",
+                for (i, (icon, label)) in TABS.iter().enumerate() {
+                    button {
+                        key: "{i}",
+                        class: if active() == i { "tab active" } else { "tab" },
+                        onclick: move |_| active.set(i),
                         span { class: "tab-icon", "{icon}" }
+                        span { class: "tab-label", "{label}" }
                     }
-                    span { class: "tab-label", "{label}" }
                 }
+            }
+            button {
+                class: "tab-arrow",
+                aria_label: "Прокрутить вкладки вправо",
+                onclick: move |_| scroll_tabs(1),
+                ">"
             }
         }
     }
+}
+
+/// Прокручивает нижние вкладки на один экран в заданную сторону.
+fn scroll_tabs(direction: i32) {
+    let delta = direction * 180;
+    spawn(async move {
+        let script = format!(
+            "(() => {{ const nav = document.querySelector('.tabs'); if (nav) nav.scrollBy({{ left: {delta}, behavior: 'smooth' }}); }})();"
+        );
+        if let Err(error) = document::eval(&script).await {
+            eprintln!("Не удалось прокрутить вкладки: {error}");
+        }
+    });
 }
 
 #[component]
