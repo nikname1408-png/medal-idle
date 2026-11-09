@@ -67,7 +67,7 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
     if kind == ResourceKind::Stone && !state.stone_unlocked() {
         return GatherResult::Locked;
     }
-    if kind == ResourceKind::Iron || kind == ResourceKind::Coal || kind == ResourceKind::Clay {
+    if kind == ResourceKind::Iron || kind == ResourceKind::Coal {
         return GatherResult::Locked;
     }
 
@@ -88,7 +88,6 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
         ResourceKind::Stone => state.stats.stone_gathered += added,
         ResourceKind::Coal => state.stats.coal_produced += added,
         ResourceKind::Iron => state.stats.iron_mined += added,
-        ResourceKind::Clay => {}
         ResourceKind::Gold => state.stats.gold_earned += added,
     }
     state.refresh_unlocks();
@@ -516,19 +515,21 @@ pub fn unequip_slot(state: &mut GameState, slot: items::EquipSlot) {
 /// Чит для демо: добавляет по горсти базовых материалов.
 ///
 /// Возвращает число добавленных стопок.
+#[allow(dead_code)]
 pub fn add_demo_resources(state: &mut GameState) -> u32 {
     let mut added = 0;
     for (key, quantity) in [
-        ("iron_ore", 5),
-        ("wood", 5),
+        ("wood", 50),
+        ("stone", 50),
         ("leather", 5),
         ("silver", 1),
         ("quartz", 1),
+        ("clay", 20),
     ] {
-        let ok = if ["iron_ore", "leather", "silver", "quartz"].contains(&key) {
-            state.add_item(key, quantity)
-        } else {
+        let ok = if crate::game::state::is_active_resource(key) {
             state.add_active(key, quantity) > 0
+        } else {
+            state.add_item(key, quantity)
         };
         if ok {
             added += 1;

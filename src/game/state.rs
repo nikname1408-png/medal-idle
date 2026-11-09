@@ -12,7 +12,6 @@ pub enum ResourceKind {
     Wood,
     Stone,
     Iron,
-    Clay,
     Coal,
     Gold,
 }
@@ -25,7 +24,6 @@ impl ResourceKind {
             Self::Wood => "дерево",
             Self::Stone => "камень",
             Self::Iron => "железо",
-            Self::Clay => "глина",
             Self::Coal => "уголь",
             Self::Gold => "золото",
         }
@@ -34,7 +32,7 @@ impl ResourceKind {
 
 /// Ключ относится к активным ресурсам склада (а не к предметам рюкзака).
 pub fn is_active_resource(key: &str) -> bool {
-    matches!(key, "wood" | "stone" | "iron" | "clay" | "coal")
+    matches!(key, "wood" | "stone" | "iron" | "coal")
 }
 
 /// Направления изучения.
@@ -254,6 +252,8 @@ pub struct GameState {
     pub market_timer: f64,
     /// Детерминированное зерно рынка.
     pub market_seed: u64,
+    /// Накопленная дробная секунда пути в походе.
+    pub expedition_timer: f64,
 
     /// Сколько циклов (перерождений) пройдено.
     pub cycles: u32,
@@ -297,11 +297,9 @@ pub struct GameState {
 impl Default for GameState {
     fn default() -> Self {
         let mut inventory = HashMap::new();
-        inventory.insert("iron_ore".to_string(), 5);
         inventory.insert("leather".to_string(), 2);
         inventory.insert("silver".to_string(), 1);
         inventory.insert("quartz".to_string(), 1);
-        inventory.insert("strength_potion".to_string(), 1);
 
         let mut state = Self {
             version: balance::SAVE_VERSION,
@@ -348,6 +346,7 @@ impl Default for GameState {
             traders: trader::default_markets(),
             market_timer: 0.0,
             market_seed: 0x9e37_79b9_7f4a_7c15,
+            expedition_timer: 0.0,
             cycles: 0,
             time: 0.0,
             last_seen: 0,
@@ -377,7 +376,6 @@ impl GameState {
             ResourceKind::Wood => "wood",
             ResourceKind::Stone => "stone",
             ResourceKind::Iron => "iron",
-            ResourceKind::Clay => "clay",
             ResourceKind::Coal => "coal",
             ResourceKind::Gold => "gold",
         }
@@ -388,7 +386,6 @@ impl GameState {
             ResourceKind::Wood => self.active_amount("wood") as f64,
             ResourceKind::Stone => self.active_amount("stone") as f64,
             ResourceKind::Iron => self.active_amount("iron") as f64,
-            ResourceKind::Clay => self.active_amount("clay") as f64,
             ResourceKind::Coal => self.active_amount("coal") as f64,
             ResourceKind::Gold => self.gold,
         }
@@ -1013,6 +1010,14 @@ impl GameState {
             self.active_resources
                 .insert("coal".to_string(), self.coal as u32);
         }
+        // Глина переехала со склада в рюкзак, а зелье силы и легаси-руда удалены.
+        if let Some(clay) = self.active_resources.remove("clay") {
+            if clay > 0 && self.add_item("clay", clay) {
+                // Перенесено без потерь.
+            }
+        }
+        self.inventory.remove("strength_potion");
+        self.inventory.remove("iron_ore");
         self.ensure_markets();
         if self.active_set >= self.equipment_sets.len() {
             self.active_set = 0;

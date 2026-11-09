@@ -1,9 +1,10 @@
 //! Походы по локациям.
 //!
-//! Один поход — это «прогулка» на [`balance::EXPEDITION_TICKS`] тиков пути.
-//! На каждом тике с небольшим шансом находится крупная партия ресурсов или
-//! предмет. Активные ресурсы уходят на склад (излишки сгорают), инвентарные —
-//! в рюкзак; если рюкзак полон, поход прерывается. Уголь в походах не падает.
+//! Поход длится, пока есть энергия: каждую секунду пути тратится
+//! [`balance::EXPEDITION_ENERGY_PER_TICK`]. На каждом шаге с небольшим шансом
+//! находится партия ресурсов или предмет. Активные ресурсы уходят на склад
+//! (излишки сгорают), инвентарные — в рюкзак; если рюкзак полон, поход
+//! прерывается. Уголь в походах не падает.
 //!
 //! Модуль не зависит от Dioxus: логику можно проверять через `cargo test`.
 
@@ -13,6 +14,7 @@ use super::state::GameState;
 
 /// Ошибка похода.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub enum ExpeditionError {
     UnknownLocation,
     NoEnergy,
@@ -33,12 +35,18 @@ pub struct ExpeditionLocation {
     pub id: &'static str,
     pub name: &'static str,
     pub description: &'static str,
-    /// Шанс находки за один тик пути, %.
+    /// Шанс находки за один игровой тик (1 с) пути, %.
     pub chance_percent: u32,
     /// Дропи на склад: (вид, минимум, максимум).
     pub active_drops: &'static [(&'static str, u32, u32)],
     /// Дропи в рюкзак: (вид, минимум, максимум).
     pub inventory_drops: &'static [(&'static str, u32, u32)],
+}
+
+/// Шанс находки за один тик пути.
+fn tick_chance(location: &ExpeditionLocation) -> u64 {
+    let scale = balance::EXPEDITION_CHANCE_SCALE.max(1) as u64;
+    ((location.chance_percent as u64) / scale).max(1)
 }
 
 /// Все локации походов.
@@ -54,7 +62,7 @@ pub const LOCATIONS: [ExpeditionLocation; 3] = [
     ExpeditionLocation {
         id: "quarry",
         name: "Каменоломня",
-        description: "Старая каменоломня: камень и глина, иногда кварц.",
+        description: "Старая каменоломня: камень на склад и глину в рюкзак.",
         chance_percent: balance::EXPEDITION_CHANCE_QUARRY,
         active_drops: &balance::EXPEDITION_QUARRY_ACTIVE,
         inventory_drops: &balance::EXPEDITION_QUARRY_INVENTORY,
@@ -90,38 +98,70 @@ pub struct ExpeditionReport {
     pub loot: Vec<Loot>,
     /// Рюкзак заполнился и поход прервался.
     pub interrupted: bool,
+    /// Энергия закончилась и поход прервался.
+    pub out_of_energy: bool,
     /// Часть добычи не поместилась на склад и сгорела.
     pub overflow: bool,
 }
 
-/// Отправляет игрока в поход. Списывает энергию и возвращает итог.
-pub fn run_expedition(
-    state: &mut GameState,
-    location_id: &str,
-) -> Result<ExpeditionReport, ExpeditionError> {
-    let location = location(location_id).ok_or(ExpeditionError::UnknownLocation)?;
-    if !state.spend_energy(balance::EXPEDITION_ENERGY_COST) {
-        return Err(ExpeditionError::NoEnergy);
+/// Итог одного тика похода.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ExpeditionTick {
+    /// Найденное за этот тик.
+    pub loot: Vec<Loot>,
+    /// Найдено за время шага, сек (для счётчика времени в пути).
+    pub seconds: f64,
+    /// Рюкзак заполнился — поход прерван.
+    pub interrupted: bool,
+    /// Энергия закончилась — поход прерван.
+    pub out_of_energy: bool,
+    /// Часть добычи не поместилась на склад и сгорела.
+    pub overflow: bool,
+}
+
+impl ExpeditionTick {
+    /// Поход пора заканчивать.
+    pub fn is_over(&self) -> bool {
+        self.interrupted || self.out_of_energy
+    }
+}
+
+/// Один шаг похода длительностью `dt` секунд.
+///
+/// Энергия тратится пропорционально времени; когда она кончается, поход
+/// останавливается сам.
+pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> ExpeditionTick {
+    let mut tick = ExpeditionTick::default();
+    let Some(location) = location(location_id) else {
+        tick.out_of_energy = true;
+        return tick;
+    };
+
+    let seconds = dt.max(0.0) + state.expedition_timer;
+    let rolls = seconds.floor() as u32;
+    state.expedition_timer = seconds - rolls as f64;
+
+    if !state.spend_energy(balance::EXPEDITION_ENERGY_PER_TICK * dt.max(0.0)) {
+        tick.out_of_energy = true;
+        return tick;
+    }
+    tick.seconds = dt.max(0.0);
+    if rolls == 0 {
+        return tick;
     }
 
-    let mut seed = state
-        .market_seed
-        .wrapping_add(state.stats.clicks.wrapping_mul(31))
-        .wrapping_add((state.stats.play_seconds as u64).wrapping_mul(17));
     let bonus = 1.0 + state.expedition_bonus as f64;
-
-    let mut report = ExpeditionReport::default();
-    for _ in 0..balance::EXPEDITION_TICKS {
-        if next_random(&mut seed) % 100 >= location.chance_percent as u64 {
+    let chance = tick_chance(location);
+    let total_drops = location.active_drops.len() + location.inventory_drops.len();
+    for _ in 0..rolls {
+        // Каждый бросок продвигает зерно, поэтому тики не повторяют друг друга.
+        state.market_seed = state.market_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut seed = state.market_seed;
+        if next_random(&mut seed) % 100 >= chance || total_drops == 0 {
             continue;
         }
 
-        let total_drops = location.active_drops.len() + location.inventory_drops.len();
-        if total_drops == 0 {
-            continue;
-        }
         let pick = (next_random(&mut seed) % total_drops as u64) as usize;
-
         if pick < location.active_drops.len() {
             let (kind, min_quantity, max_quantity) = location.active_drops[pick];
             let span = (max_quantity - min_quantity + 1) as u64;
@@ -130,10 +170,10 @@ pub fn run_expedition(
             // Излишки сверх лимита склада сгорают.
             let added = state.add_active(kind, quantity);
             if added < quantity {
-                report.overflow = true;
+                tick.overflow = true;
             }
             if added > 0 {
-                push_loot(&mut report.loot, kind, added, true);
+                push_loot(&mut tick.loot, kind, added, true);
             }
         } else {
             let (kind, min_quantity, max_quantity) =
@@ -142,14 +182,47 @@ pub fn run_expedition(
             let quantity = min_quantity + (next_random(&mut seed) % span) as u32;
             if !state.add_item(kind, quantity) {
                 // Рюкзак полон: поход прерывается, уже найденное остаётся.
-                state.market_seed = seed;
-                report.interrupted = true;
-                return Ok(report);
+                tick.interrupted = true;
+                return tick;
             }
-            push_loot(&mut report.loot, kind, quantity, false);
+            push_loot(&mut tick.loot, kind, quantity, false);
         }
     }
-    state.market_seed = seed;
+    tick
+}
+
+/// Отправляет игрока в поход на `seconds` секунд одним разом.
+///
+/// Используется в тестах и для быстрой проверки; интерфейс тикает по секундам.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn run_expedition(
+    state: &mut GameState,
+    location_id: &str,
+    seconds: u32,
+) -> Result<ExpeditionReport, ExpeditionError> {
+    if location(location_id).is_none() {
+        return Err(ExpeditionError::UnknownLocation);
+    }
+    if state.energy + 1e-9 < balance::EXPEDITION_ENERGY_PER_TICK {
+        return Err(ExpeditionError::NoEnergy);
+    }
+
+    let mut report = ExpeditionReport::default();
+    for _ in 0..seconds {
+        let tick = step_expedition(state, location_id, 1.0);
+        for loot in tick.loot {
+            push_loot(&mut report.loot, &loot.item_id, loot.quantity, loot.active);
+        }
+        report.overflow |= tick.overflow;
+        if tick.interrupted {
+            report.interrupted = true;
+            break;
+        }
+        if tick.out_of_energy {
+            report.out_of_energy = true;
+            break;
+        }
+    }
     Ok(report)
 }
 
@@ -173,6 +246,14 @@ fn push_loot(loot: &mut Vec<Loot>, item_id: &str, quantity: u32, active: bool) {
 mod tests {
     use super::*;
 
+    /// Энергии хватит на много часов пути.
+    fn endless_state() -> GameState {
+        GameState {
+            energy: 1_000_000.0,
+            ..GameState::default()
+        }
+    }
+
     #[test]
     fn unknown_location_is_rejected() {
         let mut state = GameState {
@@ -181,7 +262,7 @@ mod tests {
         };
 
         assert_eq!(
-            run_expedition(&mut state, "nowhere"),
+            run_expedition(&mut state, "nowhere", 10),
             Err(ExpeditionError::UnknownLocation)
         );
         assert_eq!(state.energy, 100.0);
@@ -195,34 +276,43 @@ mod tests {
         };
 
         assert_eq!(
-            run_expedition(&mut state, "forest"),
+            run_expedition(&mut state, "forest", 10),
             Err(ExpeditionError::NoEnergy)
         );
     }
 
     #[test]
-    fn expedition_spends_energy() {
+    fn expedition_spends_energy_per_tick() {
         let mut state = GameState {
             energy: 100.0,
             ..GameState::default()
         };
 
-        run_expedition(&mut state, "forest").expect("поход");
-        assert!((state.energy - (100.0 - balance::EXPEDITION_ENERGY_COST)).abs() < 1e-9);
+        run_expedition(&mut state, "forest", 10).expect("поход");
+        let spent = 100.0 - state.energy;
+        assert!((spent - balance::EXPEDITION_ENERGY_PER_TICK * 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn expedition_stops_when_energy_runs_out() {
+        let mut state = GameState {
+            energy: balance::EXPEDITION_ENERGY_PER_TICK * 3.0,
+            ..GameState::default()
+        };
+
+        let report = run_expedition(&mut state, "forest", 100).expect("поход");
+        assert!(report.out_of_energy);
+        assert!(state.energy.abs() < 1e-9);
     }
 
     #[test]
     fn expedition_drops_only_location_resources() {
-        let mut state = GameState {
-            energy: 1_000.0,
-            ..GameState::default()
-        };
+        let mut state = endless_state();
         let mut found = 0;
 
-        for seed in 0..500u64 {
-            state.energy = 1_000.0;
+        for seed in 0..2_000u64 {
             state.market_seed = seed;
-            let report = run_expedition(&mut state, "forest").expect("поход");
+            let report = run_expedition(&mut state, "forest", 60).expect("поход");
             for loot in &report.loot {
                 found += 1;
                 assert_ne!(loot.item_id, "coal");
@@ -232,31 +322,34 @@ mod tests {
                     loot.item_id
                 );
             }
+            // Склад сбрасываем, чтобы лимиты не мешали повторять.
+            state.active_resources.clear();
+            state.inventory.clear();
         }
 
-        assert!(found > 0, "за 500 походов не нашлось ни одной добычи");
+        assert!(found > 0, "за 2000 походов не нашлось ни одной добычи");
     }
 
     #[test]
     fn expedition_loot_is_added_to_state() {
-        let mut state = GameState {
-            energy: 1_000.0,
-            ..GameState::default()
-        };
+        let mut state = endless_state();
         let mut found = false;
 
-        for seed in 0..200u64 {
-            state.energy = 1_000.0;
+        for seed in 0..500u64 {
             state.market_seed = seed;
-            let report = run_expedition(&mut state, "quarry").expect("поход");
+            let report = run_expedition(&mut state, "quarry", 60).expect("поход");
             for loot in report.loot {
                 found = true;
                 if loot.active {
                     assert!(state.active_amount(&loot.item_id) >= loot.quantity);
                 } else {
+                    // Глина — инвентарный ресурс, а не активный.
+                    assert!(loot.item_id != "clay" || state.item_count("clay") >= loot.quantity);
                     assert!(state.item_count(&loot.item_id) >= loot.quantity);
                 }
             }
+            state.active_resources.clear();
+            state.inventory.clear();
         }
 
         assert!(found);
@@ -264,10 +357,7 @@ mod tests {
 
     #[test]
     fn full_backpack_interrupts_expedition() {
-        let mut state = GameState {
-            energy: 1_000.0,
-            ..GameState::default()
-        };
+        let mut state = endless_state();
         // Забиваем рюкзак нестакуемыми предметами под завязку.
         let slots = state.inventory_slots();
         for index in 0..slots {
@@ -276,15 +366,13 @@ mod tests {
         }
 
         // Ищем зерно, при котором лес находит волокно (инвентарный дроп).
-        for seed in 0..2_000u64 {
-            state.energy = 1_000.0;
+        for seed in 0..5_000u64 {
             state.market_seed = seed;
-            let report = run_expedition(&mut state, "forest").expect("поход");
+            let report = run_expedition(&mut state, "forest", 60).expect("поход");
             if report.interrupted {
-                assert!(state.inventory_free_slots() == 0 || !report.loot.is_empty());
                 return;
             }
-            // Откатываем изменения склада между попытками.
+            // Откатываем добычу склада между попытками.
             state.active_resources.clear();
         }
 

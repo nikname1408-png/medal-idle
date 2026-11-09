@@ -16,6 +16,16 @@ static VIEW: GlobalSignal<GameState> = Signal::global(GameState::default);
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
+const ICON_BAG: Asset = asset!("/assets/icons/bag.png");
+const ICON_COAL: Asset = asset!("/assets/icons/coal.png");
+const ICON_FIELD: Asset = asset!("/assets/icons/field.png");
+const ICON_GEAR: Asset = asset!("/assets/icons/gear.png");
+const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
+const ICON_IRON: Asset = asset!("/assets/icons/iron.png");
+const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
+const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
+const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
+
 const TAB_FIELD: usize = 0;
 const TAB_STUDIES: usize = 1;
 const TAB_WORK: usize = 2;
@@ -37,12 +47,12 @@ const TABS: [(&str, &str); 8] = [
 ];
 
 /// Текстовая заглушка иконки ресурса.
+#[allow(dead_code)]
 fn resource_text_icon(kind: ResourceKind) -> &'static str {
     match kind {
         ResourceKind::Wood => "🪵",
         ResourceKind::Stone => "🪨",
         ResourceKind::Iron => "⛏",
-        ResourceKind::Clay => "🏺",
         ResourceKind::Coal => "🔥",
         ResourceKind::Gold => "🪙",
     }
@@ -206,8 +216,6 @@ pub fn App() -> Element {
                     view: snapshot.clone(),
                     back,
                     on_back: move |_| active_tab.set(TAB_FIELD),
-                    on_trade: move |_| trader_open.set(true),
-                    on_expedition: move |_| active_tab.set(TAB_EXPEDITION),
                 }
             },
             TAB_EXPEDITION => rsx! {
@@ -336,7 +344,6 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         "Провернуть {} с (−1 время)",
         format_num(balance::TIME_WARP_SECONDS)
     );
-
     let rest_info = format!(
         "+{} энергии за клик. Пассивно: +{:.2}/с.",
         format_num(snapshot.rest_energy()),
@@ -419,9 +426,6 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                     span { class: "goal-count",
                         "{format_num(snapshot.energy)} / {format_num(snapshot.max_energy())}"
                     }
-                }
-                div { class: "goal-text",
-                    "Отдых даёт +{format_num(snapshot.rest_energy())} за клик. Пассивно: +{format_num(snapshot.energy_regen())}/с."
                 }
             }
             BuildRow {
@@ -603,7 +607,6 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         if snapshot.time > 0.0 || snapshot.cycles > 0 {
             CollapsibleSection { title: "Время".to_string(),
                 div { class: "time-box",
-                    div { class: "time-value", "{format_num(snapshot.time)}" }
                     div { class: "time-note",
                         "Время копится, пока игра закрыта. Тратится на тайм-варп здесь и в изучениях."
                     }
@@ -612,7 +615,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                     class: if time_available { "forge-btn" } else { "forge-btn disabled" },
                     disabled: !time_available,
                     onclick: move |_| do_time_warp(state),
-                    "{time_warp_label}"
+                    "{time_warp_label} ▸"
                 }
             }
         }
@@ -624,28 +627,20 @@ fn StudiesScreen(state: Signal<GameState>, view: GameState) -> Element {
     let snapshot = view;
     let slots = snapshot.researcher_slots();
     let free = snapshot.researchers_free();
-    let all_done = ResearchKind::ALL
-        .iter()
-        .filter(|kind| snapshot.research_available(**kind))
-        .all(|kind| snapshot.research_done(*kind));
+    let research_house_cost = balance::research_house_cost(snapshot.research_house_level);
+    let research_house_affordable = snapshot.active_amount("wood")
+        >= research_house_cost.wood as u32
+        && snapshot.active_amount("stone") >= research_house_cost.stone as u32;
+    let research_house_description = if snapshot.research_house_level == 0 {
+        "Даёт 1 исследователя для изучения новых построек.".to_string()
+    } else {
+        format!(
+            "Сейчас исследователей: {}. Улучшение добавит ещё одного.",
+            snapshot.researcher_slots()
+        )
+    };
 
     rsx! {
-        section { class: "goal",
-            div { class: "goal-head",
-                span { class: "goal-label", "Исследователи" }
-                span { class: "goal-count", "{free} свободно из {slots}" }
-            }
-            div { class: "goal-text",
-                if slots == 0 {
-                    "Построй дом для изучения на вкладке «Поле»."
-                } else if all_done {
-                    "Все доступные изучения завершены."
-                } else {
-                    "Назначь исследователей на изучение или ускорь его временем."
-                }
-            }
-        }
-
         section { class: "section",
             div { class: "section-head static",
                 span { class: "section-title", "Изучения" }
@@ -661,6 +656,16 @@ fn StudiesScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                 }
             }
+        }
+
+        div { class: "count-note", "Исследователи: {free} / {slots}" }
+        BuildRow {
+            title: "Дом для изучения".to_string(),
+            level: snapshot.research_house_level,
+            description: research_house_description,
+            cost: research_house_cost,
+            affordable: research_house_affordable,
+            on_build: move |_| do_build_with(state, actions::build_research_house),
         }
     }
 }
@@ -775,20 +780,6 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
     );
 
     rsx! {
-        section { class: "goal",
-            div { class: "goal-head",
-                span { class: "goal-label", "Работники" }
-                span { class: "goal-count", "{free} свободно из {slots}" }
-            }
-            div { class: "goal-text",
-                if slots == 0 {
-                    "Построй дом для работников на вкладке «Поле»."
-                } else {
-                    "Назначай работников на лесопилку, шахту и угольную яму."
-                }
-            }
-        }
-
         section { class: "section",
             div { class: "section-head static",
                 span { class: "section-title", "Работы" }
@@ -872,6 +863,8 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
             }
         }
+
+        div { class: "count-note", "Работники: {free} / {slots}" }
     }
 }
 
@@ -1883,14 +1876,6 @@ fn ResourceBar(view: GameState) -> Element {
             state.cap(ResourceKind::Iron),
         ));
     }
-    if state.active_amount("clay") > 0 {
-        items.push((
-            ResourceKind::Clay,
-            "Глина",
-            state.active_amount("clay") as f64,
-            state.cap(ResourceKind::Clay),
-        ));
-    }
     if state.coal_seen || state.active_amount("coal") > 0 {
         items.push((
             ResourceKind::Coal,
@@ -1915,7 +1900,7 @@ fn ResourceBar(view: GameState) -> Element {
             } else {
                 for (kind, name, value, cap) in items {
                     div { class: "resource", key: "{name}",
-                        span { class: "resource-icon", "{resource_text_icon(kind)}" }
+                        img { class: "resource-icon icon", src: "{resource_icon(kind)}", alt: "" }
                         div { class: "resource-text",
                             span { class: "resource-name", "{name}" }
                             span {
@@ -1973,12 +1958,16 @@ fn TabBar(active: Signal<usize>) -> Element {
                 "<"
             }
             nav { class: "tabs",
-                for (i, (icon, label)) in TABS.iter().enumerate() {
+                for (i, (_icon, label)) in TABS.iter().enumerate() {
                     button {
                         key: "{i}",
                         class: if active() == i { "tab active" } else { "tab" },
                         onclick: move |_| active.set(i),
-                        span { class: "tab-icon", "{icon}" }
+                        if let Some(icon) = tab_icon(i) {
+                            img { class: "tab-icon icon", src: "{icon}", alt: "" }
+                        } else {
+                            span { class: "tab-icon", "{_icon}" }
+                        }
                         span { class: "tab-label", "{label}" }
                     }
                 }
@@ -2167,5 +2156,28 @@ pub(crate) fn format_num(value: f64) -> String {
         format!("{value:.0}")
     } else {
         format!("{value:.1}")
+    }
+}
+
+/// Загруженная PNG-иконка вкладки (`None` — рисуем эмодзи).
+fn tab_icon(index: usize) -> Option<Asset> {
+    match index {
+        TAB_FIELD => Some(ICON_FIELD),
+        TAB_STUDIES => Some(ICON_SCROLL),
+        TAB_WORK => Some(ICON_GEAR),
+        TAB_BAG => Some(ICON_BAG),
+        TAB_EXPEDITION => Some(ICON_FIELD),
+        _ => None,
+    }
+}
+
+/// Загруженная PNG-иконка ресурса.
+fn resource_icon(kind: ResourceKind) -> Asset {
+    match kind {
+        ResourceKind::Wood => ICON_WOOD,
+        ResourceKind::Stone => ICON_STONE,
+        ResourceKind::Iron => ICON_IRON,
+        ResourceKind::Coal => ICON_COAL,
+        ResourceKind::Gold => ICON_GOLD,
     }
 }

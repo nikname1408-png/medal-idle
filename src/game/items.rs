@@ -160,15 +160,6 @@ pub fn recipe(id: &str) -> Option<&'static Recipe> {
 fn build_catalog() -> Vec<Item> {
     vec![
         item_def(
-            "iron_ore",
-            "Железная руда",
-            Category::Material,
-            10,
-            true,
-            None,
-            "Кусок руды. Основа для слитков и снаряжения.",
-        ),
-        item_def(
             "wood",
             "Дерево",
             Category::Material,
@@ -233,13 +224,13 @@ fn build_catalog() -> Vec<Item> {
             "Обычная ткань. Ходовой товар на рынке.",
         ),
         item_def(
-            "strength_potion",
-            "Зелье силы",
-            Category::Consumable,
-            45,
+            "clay",
+            "Глина",
+            Category::Material,
+            6,
             true,
             None,
-            "Даёт силы в походе. Расходник.",
+            "Мягкая глина из каменоломни. Идёт на кирпич.",
         ),
         item_def(
             "backpack",
@@ -506,23 +497,6 @@ fn build_recipes() -> Vec<Recipe> {
             result_quantity: 1,
             fire_cost: 0,
         },
-        Recipe {
-            id: "strength_potion",
-            name: "Зелье силы",
-            ingredients: vec![
-                Ingredient {
-                    item_id: "quartz",
-                    quantity: 1,
-                },
-                Ingredient {
-                    item_id: "leather",
-                    quantity: 1,
-                },
-            ],
-            result_id: "strength_potion",
-            result_quantity: 1,
-            fire_cost: 0,
-        },
     ]
 }
 
@@ -549,10 +523,7 @@ mod tests {
             );
             for ingredient in &recipe.ingredients {
                 let exists = item(ingredient.item_id).is_some()
-                    || matches!(
-                        ingredient.item_id,
-                        "wood" | "stone" | "iron" | "clay" | "coal"
-                    );
+                    || matches!(ingredient.item_id, "wood" | "stone" | "iron" | "coal");
                 assert!(exists, "нет ингредиента {}", ingredient.item_id);
             }
         }

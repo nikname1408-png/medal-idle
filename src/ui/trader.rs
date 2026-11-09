@@ -86,15 +86,15 @@ pub fn TradeScreen(
                 div { class: "trade-book",
                     div { class: "trade-head",
                         span { class: "trade-title", "ТОРГОВЕЦ: {trader::trader_name(trader_now)}" }
-                        span { class: "trade-gold", "Золото: {format_money(view.gold)}" }
-                    }
-                    div { class: "trade-subhead",
-                        span { "Рынок живёт сам: спрос и предложение меняются каждые 5 секунд." }
                         button {
                             class: "trade-close",
                             onclick: move |_| on_close.call(()),
-                            "[ X ] Закрыть"
+                            "[ X ] Выйти"
                         }
+                    }
+                    div { class: "trade-subhead",
+                        span { "Рынок живёт сам: спрос и предложение меняются каждые 5 секунд." }
+                        span { class: "trade-subhead-gold", "Золото: {format_money(view.gold)}" }
                     }
 
                     div { class: "trade-trader-picker",

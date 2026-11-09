@@ -4,10 +4,19 @@ use dioxus::prelude::*;
 
 use crate::game::actions::{self, CraftError};
 use crate::game::items::{self, Category, EquipSlot, Item};
-use crate::game::state::{is_active_resource, EquipError, GameState};
+use crate::game::state::{EquipError, GameState};
 
-use super::app::{format_num, refresh_view};
-use super::trader::format_money;
+use super::app::refresh_view;
+
+const ICON_BAG: Asset = asset!("/assets/icons/bag.png");
+const ICON_COAL: Asset = asset!("/assets/icons/coal.png");
+const ICON_FIRE: Asset = asset!("/assets/icons/fire.png");
+const ICON_GEAR: Asset = asset!("/assets/icons/gear.png");
+const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
+const ICON_IRON: Asset = asset!("/assets/icons/iron.png");
+const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
+const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
+const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
 
 /// Полный экран инвентаря.
 #[component]
@@ -16,8 +25,6 @@ pub fn InventoryScreen(
     view: GameState,
     back: Signal<u32>,
     on_back: EventHandler<()>,
-    on_trade: EventHandler<()>,
-    on_expedition: EventHandler<()>,
 ) -> Element {
     let mut selected = use_signal(|| None::<String>);
     let mut craft_open = use_signal(|| false);
@@ -43,16 +50,20 @@ pub fn InventoryScreen(
     let selected_now = selected();
     let craft_now = craft_open();
     let message_text = message();
-    let trade_percent = (view.trade_bonus * 100.0).round() as i32;
-    // В сетке — только штучные предметы; активные ресурсы живут на складе.
-    let mut displayed: Vec<Item> = items::catalog()
+    // В сетке — только то, что реально лежит в сумке.
+    let mut displayed: Vec<Item> = view
+        .inventory
         .iter()
-        .filter(|item| !is_active_resource(&item.id))
-        .cloned()
+        .filter(|(_, quantity)| **quantity > 0)
+        .filter_map(|(item_id, _)| items::item(item_id).cloned())
         .collect();
     if sort_alpha() {
         displayed.sort_by(|left, right| left.name.cmp(&right.name));
     }
+    // Пустые ячейки до размера сумки: без рюкзака стандарт, с рюкзаком — больше.
+    let total_slots = view.inventory_slots() as usize;
+    let item_cells = displayed.len();
+    let empty_cells = total_slots.saturating_sub(item_cells);
 
     rsx! {
         section { class: "inv-head",
@@ -76,46 +87,42 @@ pub fn InventoryScreen(
                     }
                     button {
                         class: if craft_now { "inv-tool active" } else { "inv-tool" },
-                        onclick: move |_| craft_open.set(!craft_now),
+                        onclick: move |_| {
+                            craft_open.set(!craft_now);
+                            selected.set(None);
+                        },
                         "Создать предметы"
                     }
                 }
             }
-            div { class: "inv-stats",
-                span { class: "inv-stat", "Золото: {format_money(view.gold)}" }
-                span { class: "inv-stat",
-                    "Энергия: {format_num(view.energy)}/{format_num(view.max_energy())}"
-                }
-                span { class: "inv-stat",
-                    "Ячейки: {view.inventory_used_slots()}/{view.inventory_slots()}"
-                }
-                span { class: "inv-stat", "Торговля: +{trade_percent}%" }
-            }
         }
 
-        section { class: "inv-equipment",
-            div { class: "inv-subtitle", "Экипировка" }
-            for slot in EquipSlot::ALL {
-                EquipmentSlot {
-                    key: "{slot.label()}",
-                    slot,
-                    state,
-                    view: view.clone(),
+        // Во время крафта экипировка скрыта — только сетка предметов.
+        if !craft_now {
+            section { class: "inv-equipment",
+                div { class: "inv-subtitle", "Экипировка" }
+                for slot in EquipSlot::ALL {
+                    EquipmentSlot {
+                        key: "{slot.label()}",
+                        slot,
+                        state,
+                        view: view.clone(),
+                    }
                 }
-            }
-            div { class: "inv-sets",
-                for index in 0..4usize {
-                    button {
-                        key: "{index}",
-                        class: if view.active_set == index { "set-btn active" } else { "set-btn" },
-                        onclick: move |_| {
-                            {
-                                let mut guard = state.write();
-                                guard.switch_set(index);
-                            }
-                            refresh_view(state);
-                        },
-                        "Set {index + 1}"
+                div { class: "inv-sets",
+                    for index in 0..4usize {
+                        button {
+                            key: "{index}",
+                            class: if view.active_set == index { "set-btn active" } else { "set-btn" },
+                            onclick: move |_| {
+                                {
+                                    let mut guard = state.write();
+                                    guard.switch_set(index);
+                                }
+                                refresh_view(state);
+                            },
+                            "Set {index + 1}"
+                        }
                     }
                 }
             }
@@ -148,6 +155,9 @@ pub fn InventoryScreen(
                             },
                         }
                     }
+                    for index in 0..empty_cells {
+                        div { key: "empty-{index}", class: "inv-item empty" }
+                    }
                 }
             }
 
@@ -163,26 +173,8 @@ pub fn InventoryScreen(
                 }
             } else {
                 div { class: "inv-detail empty",
-                    "Выбери предмет, чтобы увидеть название, цену и описание."
+                    "Нажми на предмет, чтобы увидеть название, цену и описание."
                 }
-            }
-        }
-
-        div { class: "inv-actions",
-            button {
-                class: "inv-tool",
-                onclick: move |_| on_expedition.call(()),
-                "Походы"
-            }
-            button {
-                class: "inv-tool",
-                onclick: move |_| do_add_resources(state, message),
-                "+ Ресурсы"
-            }
-            button {
-                class: "inv-tool",
-                onclick: move |_| on_trade.call(()),
-                "Торговец"
             }
         }
     }
@@ -194,12 +186,18 @@ fn EquipmentSlot(slot: EquipSlot, state: Signal<GameState>, view: GameState) -> 
     let item = view.equipped_item(slot);
     let name = item.map(|item| item.name.as_str()).unwrap_or("Пусто");
     let bonus = item.map(|item| item.stats.summary()).unwrap_or_default();
-    let slot_icon = item.map(item_icon).unwrap_or_else(|| slot_short(slot));
+    let slot_icon = item.map(|item| item_icon(item).0);
     let can_unequip = item.is_some();
 
     rsx! {
         div { class: "equip-row",
-            div { class: "equip-slot", "{slot_icon}" }
+            div { class: "equip-slot",
+                if let Some(icon) = slot_icon {
+                    img { class: "icon", src: "{icon}", alt: "" }
+                } else {
+                    "{slot_short(slot)}"
+                }
+            }
             div { class: "equip-main",
                 span { class: "equip-label", "{slot.label()}" }
                 span { class: "equip-value", "{name}" }
@@ -226,10 +224,8 @@ fn EquipmentSlot(slot: EquipSlot, state: Signal<GameState>, view: GameState) -> 
 #[component]
 fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<String>) -> Element {
     let item_id = item.id.clone();
-    let icon = item_icon(&item);
-    let class = if count == 0 {
-        "inv-item empty"
-    } else if selected {
+    let icon = item_icon(&item).0;
+    let class = if selected {
         "inv-item selected"
     } else {
         "inv-item"
@@ -239,41 +235,44 @@ fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<Stri
         button {
             class: "{class}",
             onclick: move |_| on_select.call(item_id.clone()),
-            span { class: "inv-item-icon", "{icon}" }
-            if count > 0 {
+            img { class: "inv-item-icon icon", src: "{icon}", alt: "" }
+            if count > 1 {
                 span { class: "inv-badge", "{count}" }
             }
         }
     }
 }
 
-/// Текстовая заглушка иконки предмета.
-fn item_icon(item: &Item) -> &'static str {
-    match item.id.as_str() {
-        "iron_ore" => "⛏",
-        "wood" => "🪵",
-        "leather" => "🟫",
-        "fiber" => "🌾",
-        "silver" => "⚪",
-        "quartz" => "💎",
-        "iron_ingot" => "🔩",
-        "cloth" => "🧵",
-        "strength_potion" => "🧪",
-        "backpack" => "🎒",
-        "trader_ring" => "💍",
-        "iron_sword" => "🗡",
-        "iron_armor" => "🛡",
-        "coal_amulet" => "🔮",
-        "brick" => "🧱",
-        "board" => "🪵",
-        _ => match item.category {
-            Category::Material => "📦",
-            Category::Gear => "⚔",
-            Category::Jewelry => "💍",
-            Category::Goods => "🧵",
-            Category::Consumable => "🧪",
-        },
-    }
+/// Иконка предмета: загруженный PNG.
+struct ItemIcon(Asset);
+
+fn item_icon(item: &Item) -> ItemIcon {
+    let asset = match item.id.as_str() {
+        "wood" | "board" => ICON_WOOD,
+        "leather" => ICON_STONE,
+        "silver" | "cloth" => ICON_GOLD,
+        "quartz" => ICON_STONE,
+        "iron_ingot" => ICON_IRON,
+        "backpack" => ICON_BAG,
+        "trader_ring" => ICON_GOLD,
+        "iron_sword" => ICON_IRON,
+        "iron_armor" => ICON_GEAR,
+        "coal_amulet" => ICON_COAL,
+        "brick" => ICON_STONE,
+        "clay" | "fiber" => ICON_STONE,
+        _ => {
+            if item.category == Category::Gear {
+                ICON_GEAR
+            } else if item.fire_cost > 0 {
+                ICON_FIRE
+            } else if item.slot.is_some() {
+                ICON_SCROLL
+            } else {
+                ICON_COAL
+            }
+        }
+    };
+    ItemIcon(asset)
 }
 
 /// Название ингредиента: активный ресурс склада или предмет каталога.
@@ -306,9 +305,9 @@ pub fn CraftScreen(
                     "Назад"
                 }
             }
-            div { class: "craft-list",
+            div { class: "inv-grid",
                 for recipe in items::recipes() {
-                    RecipeRow {
+                    RecipeCell {
                         key: "{recipe.id}",
                         recipe: recipe.clone(),
                         state,
@@ -321,8 +320,9 @@ pub fn CraftScreen(
     }
 }
 
+/// Квадратик рецепта: иконка предмета, выпадающая карточка по тапу.
 #[component]
-fn RecipeRow(
+fn RecipeCell(
     recipe: items::Recipe,
     state: Signal<GameState>,
     view: GameState,
@@ -330,6 +330,7 @@ fn RecipeRow(
 ) -> Element {
     let mut state = state;
     let mut message = message;
+    let mut open = use_signal(|| false);
     let Some(result) = items::item(recipe.result_id) else {
         return rsx! {};
     };
@@ -355,45 +356,57 @@ fn RecipeRow(
     let available = enough && has_space && fire_ok;
     let recipe_id = recipe.id.to_string();
     let result_name = result.name.clone();
+    let result_description = result.description.clone();
     let fire_cost = recipe.fire_cost;
     let fire_now = view.current_fire;
+    let icon = item_icon(result).0;
     let fire_class = if fire_ok {
         "craft-fire"
     } else {
         "craft-fire poor"
     };
+    let open_now = open();
 
     rsx! {
-        div { class: "craft-row",
-            div { class: "craft-main",
-                div { class: "craft-name", "{result_name}" }
-                div { class: "craft-cost", "{ingredients}" }
-                if fire_cost > 0 {
-                    div { class: "{fire_class}",
-                        "Огонь: нужно {fire_cost} / в кузнице {fire_now}"
+        div { class: "craft-cell",
+            button {
+                class: if open_now { "inv-item selected" } else { "inv-item" },
+                onclick: move |_| open.set(!open_now),
+                img { class: "inv-item-icon icon", src: "{icon}", alt: "" }
+            }
+            if open_now {
+                div { class: "craft-card",
+                    div { class: "craft-name", "{result_name}" }
+                    div { class: "craft-desc", "{result_description}" }
+                    div { class: "craft-cost", "{ingredients}" }
+                    if fire_cost > 0 {
+                        div { class: "{fire_class}",
+                            "Огонь: нужно {fire_cost} / в кузнице {fire_now}"
+                        }
+                    }
+                    if !has_space {
+                        div { class: "craft-warning", "Нет места в сумке" }
+                    } else if !fire_ok {
+                        div { class: "craft-warning poor", "Недостаточно огня!" }
+                    }
+                    button {
+                        class: if available { "craft-btn" } else { "craft-btn disabled" },
+                        disabled: !available,
+                        onclick: move |_| {
+                            let result = {
+                                let mut guard = state.write();
+                                actions::craft(&mut guard, &recipe_id)
+                            };
+                            message.set(match result {
+                                Ok(()) => String::new(),
+                                Err(error) => craft_error_text(error).to_string(),
+                            });
+                            open.set(false);
+                            refresh_view(state);
+                        },
+                        "Создать"
                     }
                 }
-                if !has_space {
-                    div { class: "craft-warning", "Нет места в сумке" }
-                } else if !fire_ok {
-                    div { class: "craft-warning poor", "Недостаточно огня!" }
-                }
-            }
-            button {
-                class: if available { "craft-btn" } else { "craft-btn disabled" },
-                disabled: !available,
-                onclick: move |_| {
-                    let result = {
-                        let mut guard = state.write();
-                        actions::craft(&mut guard, &recipe_id)
-                    };
-                    message.set(match result {
-                        Ok(()) => String::new(),
-                        Err(error) => craft_error_text(error).to_string(),
-                    });
-                    refresh_view(state);
-                },
-                "Создать"
             }
         }
     }
@@ -423,13 +436,13 @@ fn InventoryCard(
     let stats = item.stats.summary();
     let base_price = item.base_price;
     let slot = item.slot;
-    let icon = item_icon(&item);
+    let icon = item_icon(&item).0;
     let message_now = message();
 
     rsx! {
         section { class: "inv-detail",
             div { class: "inv-detail-head",
-                span { class: "inv-detail-icon", "{icon}" }
+                img { class: "inv-detail-icon icon", src: "{icon}", alt: "" }
                 span { class: "inv-detail-name", "{item_name}" }
                 span { class: "inv-detail-price", "{base_price} зл." }
                 button {
@@ -493,19 +506,6 @@ fn InventoryCard(
             }
         }
     }
-}
-
-fn do_add_resources(mut state: Signal<GameState>, mut message: Signal<String>) {
-    let added = {
-        let mut guard = state.write();
-        actions::add_demo_resources(&mut guard)
-    };
-    message.set(if added == 0 {
-        "Сумка полна — освободи место.".to_string()
-    } else {
-        format!("Добавлено материалов: {added}.")
-    });
-    refresh_view(state);
 }
 
 fn slot_short(slot: EquipSlot) -> &'static str {

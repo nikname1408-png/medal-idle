@@ -30,17 +30,53 @@ pub const TRADERS: [TraderDef; 3] = [
     TraderDef {
         id: "marta",
         name: "Марта",
-        goods: &["iron_ingot", "strength_potion", "cloth"],
+        goods: &[
+            "iron_ingot",
+            "cloth",
+            "board",
+            "brick",
+            "leather",
+            "fiber",
+            "silver",
+            "quartz",
+            "backpack",
+            "iron_sword",
+            "iron_armor",
+        ],
     },
     TraderDef {
         id: "wanderer",
         name: "Странник",
-        goods: &["leather", "quartz", "backpack"],
+        goods: &[
+            "leather",
+            "fiber",
+            "quartz",
+            "silver",
+            "clay",
+            "cloth",
+            "backpack",
+            "trader_ring",
+            "coal_amulet",
+            "iron_ingot",
+            "iron_sword",
+        ],
     },
     TraderDef {
         id: "smith",
         name: "Кузнец",
-        goods: &["iron_ore", "wood", "silver", "iron_sword"],
+        goods: &[
+            "iron_sword",
+            "iron_armor",
+            "iron_ingot",
+            "brick",
+            "board",
+            "coal_amulet",
+            "trader_ring",
+            "cloth",
+            "leather",
+            "silver",
+            "backpack",
+        ],
     },
 ];
 
@@ -193,19 +229,42 @@ pub fn default_market(index: usize) -> TraderMarket {
     let goods = match index {
         0 => vec![
             good("iron_ingot", 5, 64, 38, 10),
-            good("strength_potion", 12, 72, 31, 10),
             good("cloth", 30, 20, 85, 20),
+            good("board", 24, 35, 60, 20),
+            good("brick", 18, 45, 55, 20),
+            good("leather", 12, 60, 40, 10),
+            good("fiber", 40, 25, 70, 30),
+            good("silver", 3, 80, 30, 3),
+            good("quartz", 4, 70, 35, 5),
+            good("backpack", 2, 75, 35, 3),
+            good("iron_sword", 1, 65, 40, 3),
+            good("iron_armor", 1, 85, 25, 2),
         ],
         1 => vec![
             good("leather", 18, 55, 45, 10),
             good("quartz", 6, 70, 40, 5),
             good("backpack", 2, 80, 30, 3),
+            good("fiber", 30, 30, 65, 30),
+            good("silver", 5, 78, 32, 5),
+            good("clay", 60, 40, 70, 40),
+            good("cloth", 25, 35, 70, 20),
+            good("trader_ring", 1, 82, 28, 2),
+            good("coal_amulet", 2, 70, 35, 3),
+            good("iron_ingot", 6, 55, 50, 10),
+            good("iron_sword", 1, 70, 35, 3),
         ],
         _ => vec![
-            good("iron_ore", 40, 45, 60, 20),
-            good("wood", 60, 40, 70, 20),
-            good("silver", 4, 75, 35, 5),
             good("iron_sword", 1, 65, 40, 3),
+            good("iron_armor", 1, 80, 30, 2),
+            good("iron_ingot", 12, 50, 55, 20),
+            good("brick", 30, 30, 70, 30),
+            good("board", 30, 30, 70, 30),
+            good("coal_amulet", 2, 75, 30, 3),
+            good("trader_ring", 1, 85, 25, 2),
+            good("cloth", 40, 20, 80, 30),
+            good("leather", 15, 55, 45, 10),
+            good("silver", 4, 75, 35, 5),
+            good("backpack", 3, 70, 35, 4),
         ],
     };
 
@@ -441,7 +500,7 @@ mod tests {
             Some(MarketStatus::Deficit)
         );
         assert_eq!(
-            market.good("strength_potion").map(GoodState::status),
+            market.good("silver").map(GoodState::status),
             Some(MarketStatus::Deficit)
         );
         assert_eq!(
@@ -485,7 +544,7 @@ mod tests {
         };
         let before = state
             .traders
-            .get(0)
+            .first()
             .and_then(|market| market.good("iron_ingot"))
             .map(|good| good.stock)
             .unwrap_or(0);
@@ -495,7 +554,7 @@ mod tests {
         assert_eq!(
             state
                 .traders
-                .get(0)
+                .first()
                 .and_then(|market| market.good("iron_ingot"))
                 .map(|good| good.stock),
             Some(before - 2)
@@ -536,7 +595,7 @@ mod tests {
         assert_eq!(
             state
                 .traders
-                .get(0)
+                .first()
                 .and_then(|market| market.good("iron_ingot"))
                 .map(|good| good.buy_limit),
             Some(8)
