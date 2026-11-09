@@ -100,6 +100,8 @@ pub struct Item {
     /// Слот экипировки. `None` — предмет нельзя надеть.
     pub slot: Option<EquipSlot>,
     pub description: String,
+    /// Стоимость огня кузницы, если предмет требует огонь при крафте.
+    pub fire_cost: u32,
 }
 
 impl Item {
@@ -129,6 +131,8 @@ pub struct Recipe {
     pub ingredients: Vec<Ingredient>,
     pub result_id: &'static str,
     pub result_quantity: u32,
+    /// Стоимость огня кузницы для крафта.
+    pub fire_cost: u32,
 }
 
 /// Каталог всех предметов.
@@ -201,6 +205,15 @@ fn build_catalog() -> Vec<Item> {
             "Прозрачный камень для украшений и зелий.",
         ),
         item_def(
+            "fiber",
+            "Волокно",
+            Category::Material,
+            8,
+            true,
+            None,
+            "Растительное волокно. Идёт на ткань и снаряжение.",
+        ),
+        item_def(
             "iron_ingot",
             "Железный слиток",
             Category::Material,
@@ -208,7 +221,8 @@ fn build_catalog() -> Vec<Item> {
             true,
             None,
             "Сплав руды и дерева. Заготовка для снаряжения.",
-        ),
+        )
+        .with_fire_cost(5),
         item_def(
             "cloth",
             "Ткань",
@@ -265,20 +279,22 @@ fn build_catalog() -> Vec<Item> {
         .with_stats(ItemStats {
             expedition_bonus: Some(0.10),
             ..ItemStats::default()
-        }),
+        })
+        .with_fire_cost(15),
         item_def(
             "iron_armor",
-            "Железная броня",
+            "Кольчуга",
             Category::Gear,
             150,
             false,
             Some(EquipSlot::Body),
-            "Тяжёлая броня. Позволяет нести больше энергии.",
+            "Плотная кольчуга из слитков. Позволяет нести больше энергии.",
         )
         .with_stats(ItemStats {
             max_energy: Some(25),
             ..ItemStats::default()
-        }),
+        })
+        .with_fire_cost(50),
         item_def(
             "coal_amulet",
             "Угольный амулет",
@@ -292,6 +308,25 @@ fn build_catalog() -> Vec<Item> {
             trade_bonus: Some(0.05),
             ..ItemStats::default()
         }),
+        item_def(
+            "brick",
+            "Кирпич",
+            Category::Goods,
+            25,
+            false,
+            None,
+            "Кирпич из глины и угля. Основной строительный материал.",
+        )
+        .with_fire_cost(3),
+        item_def(
+            "board",
+            "Доска",
+            Category::Goods,
+            12,
+            false,
+            None,
+            "Деревянная доска. Материал для мечей.",
+        ),
     ]
 }
 
@@ -313,6 +348,7 @@ fn item_def(
         stats: ItemStats::default(),
         slot,
         description: description.to_string(),
+        fire_cost: 0,
     }
 }
 
@@ -327,6 +363,13 @@ impl WithStats for Item {
     }
 }
 
+impl Item {
+    fn with_fire_cost(mut self, fire_cost: u32) -> Item {
+        self.fire_cost = fire_cost;
+        self
+    }
+}
+
 fn build_recipes() -> Vec<Recipe> {
     vec![
         Recipe {
@@ -334,16 +377,45 @@ fn build_recipes() -> Vec<Recipe> {
             name: "Железный слиток",
             ingredients: vec![
                 Ingredient {
-                    item_id: "iron_ore",
+                    item_id: "iron",
                     quantity: 2,
                 },
                 Ingredient {
-                    item_id: "wood",
+                    item_id: "coal",
                     quantity: 1,
                 },
             ],
             result_id: "iron_ingot",
             result_quantity: 1,
+            fire_cost: 5,
+        },
+        Recipe {
+            id: "brick",
+            name: "Кирпич",
+            ingredients: vec![
+                Ingredient {
+                    item_id: "clay",
+                    quantity: 2,
+                },
+                Ingredient {
+                    item_id: "coal",
+                    quantity: 1,
+                },
+            ],
+            result_id: "brick",
+            result_quantity: 1,
+            fire_cost: 3,
+        },
+        Recipe {
+            id: "board",
+            name: "Доска",
+            ingredients: vec![Ingredient {
+                item_id: "wood",
+                quantity: 2,
+            }],
+            result_id: "board",
+            result_quantity: 1,
+            fire_cost: 0,
         },
         Recipe {
             id: "backpack",
@@ -360,6 +432,7 @@ fn build_recipes() -> Vec<Recipe> {
             ],
             result_id: "backpack",
             result_quantity: 1,
+            fire_cost: 0,
         },
         Recipe {
             id: "trader_ring",
@@ -376,6 +449,7 @@ fn build_recipes() -> Vec<Recipe> {
             ],
             result_id: "trader_ring",
             result_quantity: 1,
+            fire_cost: 0,
         },
         Recipe {
             id: "iron_sword",
@@ -386,28 +460,34 @@ fn build_recipes() -> Vec<Recipe> {
                     quantity: 2,
                 },
                 Ingredient {
-                    item_id: "wood",
+                    item_id: "board",
                     quantity: 1,
-                },
-            ],
-            result_id: "iron_sword",
-            result_quantity: 1,
-        },
-        Recipe {
-            id: "iron_armor",
-            name: "Железная броня",
-            ingredients: vec![
-                Ingredient {
-                    item_id: "iron_ingot",
-                    quantity: 3,
                 },
                 Ingredient {
                     item_id: "leather",
                     quantity: 1,
                 },
             ],
+            result_id: "iron_sword",
+            result_quantity: 1,
+            fire_cost: 15,
+        },
+        Recipe {
+            id: "iron_armor",
+            name: "Кольчуга",
+            ingredients: vec![
+                Ingredient {
+                    item_id: "iron_ingot",
+                    quantity: 25,
+                },
+                Ingredient {
+                    item_id: "leather",
+                    quantity: 2,
+                },
+            ],
             result_id: "iron_armor",
             result_quantity: 1,
+            fire_cost: 50,
         },
         Recipe {
             id: "coal_amulet",
@@ -424,6 +504,7 @@ fn build_recipes() -> Vec<Recipe> {
             ],
             result_id: "coal_amulet",
             result_quantity: 1,
+            fire_cost: 0,
         },
         Recipe {
             id: "strength_potion",
@@ -440,6 +521,7 @@ fn build_recipes() -> Vec<Recipe> {
             ],
             result_id: "strength_potion",
             result_quantity: 1,
+            fire_cost: 0,
         },
     ]
 }
@@ -466,11 +548,12 @@ mod tests {
                 recipe.id
             );
             for ingredient in &recipe.ingredients {
-                assert!(
-                    item(ingredient.item_id).is_some(),
-                    "нет ингредиента {}",
-                    ingredient.item_id
-                );
+                let exists = item(ingredient.item_id).is_some()
+                    || matches!(
+                        ingredient.item_id,
+                        "wood" | "stone" | "iron" | "clay" | "coal"
+                    );
+                assert!(exists, "нет ингредиента {}", ingredient.item_id);
             }
         }
     }

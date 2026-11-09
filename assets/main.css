@@ -1815,6 +1815,17 @@ button {
     color: var(--muted);
 }
 
+.craft-fire {
+    margin-top: 1px;
+    font-size: 10px;
+    color: var(--muted);
+}
+
+.craft-fire.poor {
+    color: var(--danger);
+    font-weight: 600;
+}
+
 .craft-btn {
     padding: 4px 8px;
     border: 0;
@@ -2113,6 +2124,11 @@ button {
     margin-top: 2px;
     font-size: 10px;
     color: var(--unavailable-text);
+}
+
+.craft-warning.poor {
+    color: var(--danger);
+    font-weight: 600;
 }
 
 .item-card-overlay {

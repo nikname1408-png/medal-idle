@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 
 use crate::game::actions::{self, CraftError, ExpeditionError};
 use crate::game::items::{self, Category, EquipSlot, Item};
-use crate::game::state::{EquipError, GameState};
+use crate::game::state::{is_active_resource, EquipError, GameState};
 
 use super::app::{format_num, refresh_view};
 use super::trader::format_money;
@@ -43,7 +43,12 @@ pub fn InventoryScreen(
     let craft_now = craft_open();
     let message_text = message();
     let trade_percent = (view.trade_bonus * 100.0).round() as i32;
-    let mut displayed = items::catalog().to_vec();
+    // В сетке — только штучные предметы; активные ресурсы живут на складе.
+    let mut displayed: Vec<Item> = items::catalog()
+        .iter()
+        .filter(|item| !is_active_resource(&item.id))
+        .cloned()
+        .collect();
     if sort_alpha() {
         displayed.sort_by(|left, right| left.name.cmp(&right.name));
     }
@@ -247,6 +252,7 @@ fn item_icon(item: &Item) -> &'static str {
         "iron_ore" => "⛏",
         "wood" => "🪵",
         "leather" => "🟫",
+        "fiber" => "🌾",
         "silver" => "⚪",
         "quartz" => "💎",
         "iron_ingot" => "🔩",
@@ -257,6 +263,8 @@ fn item_icon(item: &Item) -> &'static str {
         "iron_sword" => "🗡",
         "iron_armor" => "🛡",
         "coal_amulet" => "🔮",
+        "brick" => "🧱",
+        "board" => "🪵",
         _ => match item.category {
             Category::Material => "📦",
             Category::Gear => "⚔",
@@ -264,6 +272,18 @@ fn item_icon(item: &Item) -> &'static str {
             Category::Goods => "🧵",
             Category::Consumable => "🧪",
         },
+    }
+}
+
+/// Название ингредиента: активный ресурс склада или предмет каталога.
+fn ingredient_name(id: &str) -> &str {
+    match id {
+        "wood" => "Дерево",
+        "stone" => "Камень",
+        "iron" => "Руда",
+        "clay" => "Глина",
+        "coal" => "Уголь",
+        _ => items::item(id).map(|item| item.name.as_str()).unwrap_or(id),
     }
 }
 
@@ -317,10 +337,8 @@ fn RecipeRow(
         .ingredients
         .iter()
         .map(|ingredient| {
-            let name = items::item(ingredient.item_id)
-                .map(|item| item.name.as_str())
-                .unwrap_or(ingredient.item_id);
-            let owned = view.item_count(ingredient.item_id);
+            let name = ingredient_name(ingredient.item_id);
+            let owned = view.ingredient_amount(ingredient.item_id);
             format!("{name} {owned}/{}", ingredient.quantity)
         })
         .collect::<Vec<_>>()
@@ -329,19 +347,35 @@ fn RecipeRow(
     let enough = recipe
         .ingredients
         .iter()
-        .all(|ingredient| view.item_count(ingredient.item_id) >= ingredient.quantity);
+        .all(|ingredient| view.ingredient_amount(ingredient.item_id) >= ingredient.quantity);
     let has_space = view.can_add_item(recipe.result_id, recipe.result_quantity);
-    let available = enough && has_space;
+    let has_forge = recipe.fire_cost == 0 || view.forge_level > 0;
+    let fire_ok = has_forge && view.current_fire >= recipe.fire_cost;
+    let available = enough && has_space && fire_ok;
     let recipe_id = recipe.id.to_string();
     let result_name = result.name.clone();
+    let fire_cost = recipe.fire_cost;
+    let fire_now = view.current_fire;
+    let fire_class = if fire_ok {
+        "craft-fire"
+    } else {
+        "craft-fire poor"
+    };
 
     rsx! {
         div { class: "craft-row",
             div { class: "craft-main",
                 div { class: "craft-name", "{result_name}" }
                 div { class: "craft-cost", "{ingredients}" }
+                if fire_cost > 0 {
+                    div { class: "{fire_class}",
+                        "Огонь: нужно {fire_cost} / в кузнице {fire_now}"
+                    }
+                }
                 if !has_space {
                     div { class: "craft-warning", "Нет места в сумке" }
+                } else if !fire_ok {
+                    div { class: "craft-warning poor", "Недостаточно огня!" }
                 }
             }
             button {
@@ -469,9 +503,7 @@ fn do_expedition(mut state: Signal<GameState>, mut message: Signal<String>) {
         Ok(loot) => loot
             .into_iter()
             .map(|(item_id, quantity)| {
-                let name = items::item(&item_id)
-                    .map(|item| item.name.as_str())
-                    .unwrap_or(item_id.as_str());
+                let name = ingredient_name(&item_id);
                 format!("Поход: +{quantity} × {name}")
             })
             .collect::<Vec<_>>()

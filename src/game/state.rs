@@ -12,6 +12,7 @@ pub enum ResourceKind {
     Wood,
     Stone,
     Iron,
+    Clay,
     Coal,
     Gold,
 }
@@ -24,10 +25,16 @@ impl ResourceKind {
             Self::Wood => "дерево",
             Self::Stone => "камень",
             Self::Iron => "железо",
+            Self::Clay => "глина",
             Self::Coal => "уголь",
             Self::Gold => "золото",
         }
     }
+}
+
+/// Ключ относится к активным ресурсам склада (а не к предметам рюкзака).
+pub fn is_active_resource(key: &str) -> bool {
+    matches!(key, "wood" | "stone" | "iron" | "clay" | "coal")
 }
 
 /// Направления изучения.
@@ -185,6 +192,9 @@ pub struct GameState {
     pub coal: f64,
     pub gold: f64,
 
+    /// Активные ресурсы (склад): ID вида -> количество.
+    pub active_resources: HashMap<String, u32>,
+
     /// Сколько раз игрок нажимал «Отдых».
     pub rest_clicks: u32,
     /// Уровень своего дома (0 — ещё не построен).
@@ -214,8 +224,8 @@ pub struct GameState {
     pub forge_researchers: u32,
     /// Уровень кузницы (0 — ещё не построена).
     pub forge_level: u32,
-    /// Сколько секунд ещё горит огонь кузницы.
-    pub forge_fire: f64,
+    /// Текущий огонь кузницы в секундах.
+    pub current_fire: u32,
     /// Автоматически подбрасывать уголь, когда огонь гаснет.
     pub forge_auto_feed: bool,
 
@@ -288,7 +298,6 @@ impl Default for GameState {
     fn default() -> Self {
         let mut inventory = HashMap::new();
         inventory.insert("iron_ore".to_string(), 5);
-        inventory.insert("wood".to_string(), 3);
         inventory.insert("leather".to_string(), 2);
         inventory.insert("silver".to_string(), 1);
         inventory.insert("quartz".to_string(), 1);
@@ -303,6 +312,14 @@ impl Default for GameState {
             iron: 0.0,
             coal: 0.0,
             gold: balance::DEMO_START_GOLD,
+            active_resources: {
+                let mut map = HashMap::new();
+                map.insert("wood".to_string(), 0);
+                map.insert("stone".to_string(), 0);
+                map.insert("iron".to_string(), 0);
+                map.insert("coal".to_string(), 0);
+                map
+            },
             rest_clicks: 0,
             house_level: 0,
             comfort_level: 0,
@@ -317,7 +334,7 @@ impl Default for GameState {
             forge_research: 0.0,
             forge_researchers: 0,
             forge_level: 0,
-            forge_fire: 0.0,
+            current_fire: 0,
             forge_auto_feed: false,
             trader_researched: false,
             trader_research: 0.0,
@@ -354,12 +371,25 @@ impl Default for GameState {
 }
 
 impl GameState {
+    /// Ключ вида ресурса в карте активных складов.
+    fn resource_key(kind: ResourceKind) -> &'static str {
+        match kind {
+            ResourceKind::Wood => "wood",
+            ResourceKind::Stone => "stone",
+            ResourceKind::Iron => "iron",
+            ResourceKind::Clay => "clay",
+            ResourceKind::Coal => "coal",
+            ResourceKind::Gold => "gold",
+        }
+    }
+
     pub fn amount(&self, kind: ResourceKind) -> f64 {
         match kind {
-            ResourceKind::Wood => self.wood,
-            ResourceKind::Stone => self.stone,
-            ResourceKind::Iron => self.iron,
-            ResourceKind::Coal => self.coal,
+            ResourceKind::Wood => self.active_amount("wood") as f64,
+            ResourceKind::Stone => self.active_amount("stone") as f64,
+            ResourceKind::Iron => self.active_amount("iron") as f64,
+            ResourceKind::Clay => self.active_amount("clay") as f64,
+            ResourceKind::Coal => self.active_amount("coal") as f64,
             ResourceKind::Gold => self.gold,
         }
     }
@@ -571,9 +601,43 @@ impl GameState {
     }
 
     /// Максимальный запас огня кузницы с учётом уровня.
-    pub fn fire_max(&self) -> f64 {
-        let levels = self.forge_level.saturating_sub(1) as f64;
+    pub fn fire_max(&self) -> u32 {
+        let levels = self.forge_level.saturating_sub(1);
         balance::FORGE_FIRE_MAX_SECONDS + levels * balance::FORGE_FIRE_PER_LEVEL
+    }
+
+    /// Активный ресурс «X» из склада.
+    pub fn active_amount(&self, kind: &str) -> u32 {
+        self.active_resources.get(kind).copied().unwrap_or(0)
+    }
+
+    /// Лимит активного ресурса.
+    pub fn active_cap(&self, _kind: &str) -> u32 {
+        balance::BASE_STORAGE_CAP as u32
+            + self.storage_level * balance::STORAGE_CAP_PER_LEVEL as u32
+    }
+
+    /// Добавляет активный ресурс с проверкой лимита. Возвращает добавленное.
+    pub fn add_active(&mut self, kind: &str, amount: u32) -> u32 {
+        let room = self
+            .active_cap(kind)
+            .saturating_sub(self.active_amount(kind));
+        let added = room.min(amount);
+        *self.active_resources.entry(kind.to_string()).or_insert(0) += added;
+        added
+    }
+
+    /// Списывает активный ресурс. `false`, если не хватает.
+    pub fn spend_active(&mut self, kind: &str, amount: u32) -> bool {
+        if self.active_amount(kind) < amount {
+            return false;
+        }
+        let current = self.active_resources.get_mut(kind).unwrap();
+        *current -= amount;
+        if *current == 0 {
+            self.active_resources.remove(kind);
+        }
+        true
     }
 
     /// Постоянный множитель производства за пройденные циклы.
@@ -584,6 +648,26 @@ impl GameState {
     /// Сколько предметов данного вида в сумке.
     pub fn item_count(&self, item_id: &str) -> u32 {
         self.inventory.get(item_id).copied().unwrap_or(0)
+    }
+
+    /// Стоимость ингредиента: активный ресурс склада или предмет из сумки.
+    pub fn ingredient_amount(&self, key: &str) -> u32 {
+        if is_active_resource(key) {
+            self.active_amount(key)
+        } else {
+            self.item_count(key)
+        }
+    }
+
+    /// Списывает ингредиент: активный ресурс склада или предмет из сумки.
+    pub fn spend_ingredient(&mut self, key: &str, quantity: u32) -> bool {
+        if quantity == 0 {
+            return true;
+        }
+        if is_active_resource(key) {
+            return self.spend_active(key, quantity);
+        }
+        self.remove_item(key, quantity)
     }
 
     /// Сколько ячеек занято. Стакающиеся предметы занимают одну ячейку.
@@ -873,14 +957,15 @@ impl GameState {
         let room = (self.cap(kind) - self.amount(kind)).max(0.0);
         let added = room.min(amount.max(0.0));
 
-        match kind {
-            ResourceKind::Wood => self.wood += added,
-            ResourceKind::Stone => self.stone += added,
-            ResourceKind::Iron => self.iron += added,
-            ResourceKind::Coal => self.coal += added,
-            ResourceKind::Gold => self.gold += added,
+        if kind == ResourceKind::Gold {
+            self.gold = (self.gold + added).min(self.gold_cap());
+            return added;
         }
 
+        let added_u32 = added.max(0.0) as u32;
+        if added_u32 > 0 {
+            self.add_active(Self::resource_key(kind), added_u32);
+        }
         added
     }
 
@@ -917,6 +1002,17 @@ impl GameState {
             self.gold = self.gold.max(balance::DEMO_START_GOLD);
             self.version = balance::SAVE_VERSION;
         }
+        if self.active_resources.is_empty() {
+            // Сохранения старого формата хранили ресурсы в плоских полях.
+            self.active_resources
+                .insert("wood".to_string(), self.wood as u32);
+            self.active_resources
+                .insert("stone".to_string(), self.stone as u32);
+            self.active_resources
+                .insert("iron".to_string(), self.iron as u32);
+            self.active_resources
+                .insert("coal".to_string(), self.coal as u32);
+        }
         self.ensure_markets();
         if self.active_set >= self.equipment_sets.len() {
             self.active_set = 0;
@@ -940,13 +1036,13 @@ impl GameState {
 
     /// Обновляет флаги открытия по текущим ресурсам. Флаги не откатываются.
     pub fn refresh_unlocks(&mut self) {
-        if self.wood >= balance::WOOD_VISIBLE_FROM {
+        if self.amount(ResourceKind::Wood) >= balance::WOOD_VISIBLE_FROM {
             self.wood_seen = true;
         }
-        if self.wood >= balance::STONE_UNLOCK_WOOD {
+        if self.amount(ResourceKind::Wood) >= balance::STONE_UNLOCK_WOOD {
             self.stone_seen = true;
         }
-        if self.coal > 0.0 {
+        if self.amount(ResourceKind::Coal) > 0.0 {
             self.coal_seen = true;
         }
     }

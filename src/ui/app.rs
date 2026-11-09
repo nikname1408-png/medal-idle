@@ -40,6 +40,7 @@ fn resource_text_icon(kind: ResourceKind) -> &'static str {
         ResourceKind::Wood => "🪵",
         ResourceKind::Stone => "🪨",
         ResourceKind::Iron => "⛏",
+        ResourceKind::Clay => "🏺",
         ResourceKind::Coal => "🔥",
         ResourceKind::Gold => "🪙",
     }
@@ -286,8 +287,10 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let house_cost = balance::house_cost(snapshot.house_level);
     let comfort_cost = balance::comfort_cost(snapshot.comfort_level);
 
-    let affordable =
-        |cost: balance::Cost| snapshot.wood >= cost.wood && snapshot.stone >= cost.stone;
+    let affordable = |cost: balance::Cost| {
+        snapshot.active_amount("wood") >= cost.wood as u32
+            && snapshot.active_amount("stone") >= cost.stone as u32
+    };
     let storage_affordable = affordable(storage_cost);
     let worker_house_affordable = affordable(worker_house_cost);
     let research_house_affordable = affordable(research_house_cost);
@@ -303,18 +306,19 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         (balance::CLICK_YIELD + snapshot.dev.gather_yield) * snapshot.production_multiplier();
     let rest_available = snapshot.energy < snapshot.max_energy();
     let wood_available = snapshot.energy >= balance::CLICK_ENERGY_COST
-        && snapshot.wood < snapshot.cap(ResourceKind::Wood);
+        && (snapshot.active_amount("wood") as f64) < snapshot.cap(ResourceKind::Wood);
     let stone_available = snapshot.energy >= balance::CLICK_ENERGY_COST
-        && snapshot.stone < snapshot.cap(ResourceKind::Stone);
+        && (snapshot.active_amount("stone") as f64) < snapshot.cap(ResourceKind::Stone);
 
     let fire_max = snapshot.fire_max();
-    let fire_ratio = if fire_max > 0.0 {
-        (snapshot.forge_fire / fire_max).clamp(0.0, 1.0)
+    let fire_ratio = if fire_max > 0 {
+        (snapshot.current_fire as f64 / fire_max as f64).clamp(0.0, 1.0)
     } else {
         0.0
     };
     let fire_fill = format!("width: {:.1}%", fire_ratio * 100.0);
-    let can_feed = snapshot.coal >= 1.0 && snapshot.forge_fire < fire_max - 0.01;
+    let can_feed =
+        snapshot.active_amount("coal") >= 1 && (snapshot.current_fire as f64) < fire_max as f64;
     let auto_class = if snapshot.forge_auto_feed {
         "toggle-btn on"
     } else {
@@ -375,7 +379,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
 
     let forge_description = format!(
         "Огонь из угля нужен для крафта предметов. Один уголь — {} с огня. Уровень повышает запас огня.",
-        format_num(balance::FIRE_SECONDS_PER_COAL)
+        format_num(balance::FIRE_SECONDS_PER_COAL as f64)
     );
 
     let bank_description = format!(
@@ -543,7 +547,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                         div { class: "forge-head",
                             span { "Огонь" }
                             span { class: "forge-fire-value",
-                                "{format_num(snapshot.forge_fire)} / {format_num(fire_max)} с"
+                                "{format_num(snapshot.current_fire as f64)} / {format_num(fire_max as f64)} с"
                             }
                         }
                         div { class: "fire-track",
@@ -569,7 +573,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                             }
                         }
                         div { class: "forge-info",
-                            "Крафт предметов тратит огонь. Сейчас: {format_num(snapshot.forge_fire)} с."
+                            "Крафт предметов тратит огонь. Сейчас: {format_num(snapshot.current_fire as f64)} с."
                         }
                     }
                 }
@@ -908,14 +912,15 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut armed = use_signal(|| false);
     let cycles = snapshot.cycles;
     let bonus = cycles as f64 * balance::CYCLE_BONUS_PER_CYCLE * 100.0;
-    let ready = snapshot.forge_level > 0 && snapshot.iron >= balance::CYCLE_IRON_REQUIREMENT;
+    let ready = snapshot.forge_level > 0
+        && snapshot.active_amount("iron") as f64 >= balance::CYCLE_IRON_REQUIREMENT;
     let requirement = if snapshot.forge_level == 0 {
         "Построй кузницу.".to_string()
-    } else if snapshot.iron < balance::CYCLE_IRON_REQUIREMENT {
+    } else if (snapshot.active_amount("iron") as f64) < balance::CYCLE_IRON_REQUIREMENT {
         format!(
             "Нужно {} железа (сейчас {}).",
             format_num(balance::CYCLE_IRON_REQUIREMENT),
-            format_num(snapshot.iron)
+            format_num(snapshot.active_amount("iron") as f64)
         )
     } else {
         "Всё готово для нового цикла.".to_string()
@@ -1370,11 +1375,11 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                     }
                     DevNumberRow {
                         label: "Огонь кузницы, с".to_string(),
-                        value: snapshot.forge_fire,
+                        value: snapshot.current_fire as f64,
                         step: "5".to_string(),
                         on_change: move |value: f64| {
                             let max = state.peek().fire_max();
-                            state.write().forge_fire = value.clamp(0.0, max);
+                            state.write().current_fire = value.clamp(0.0, max as f64) as u32;
                         },
                     }
                     DevNumberRow {
@@ -1464,11 +1469,13 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                     DevResourceRow {
                         icon: "🌲".to_string(),
                         name: "Дерево".to_string(),
-                        value: snapshot.wood,
+                        value: snapshot.active_amount("wood") as f64,
                         speed: dev.wood_per_sec,
                         on_value: move |value: f64| {
                             let mut guard = state.write();
-                            guard.wood = value.max(0.0);
+                            guard
+                                .active_resources
+                                .insert("wood".to_string(), value.max(0.0) as u32);
                             guard.refresh_unlocks();
                         },
                         on_speed: move |value: f64| {
@@ -1478,10 +1485,14 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                     DevResourceRow {
                         icon: "🪨".to_string(),
                         name: "Камень".to_string(),
-                        value: snapshot.stone,
+                        value: snapshot.active_amount("stone") as f64,
                         speed: dev.stone_per_sec,
                         on_value: move |value: f64| {
-                            state.write().stone = value.max(0.0);
+                            let mut guard = state.write();
+                            guard
+                                .active_resources
+                                .insert("stone".to_string(), value.max(0.0) as u32);
+                            guard.refresh_unlocks();
                         },
                         on_speed: move |value: f64| {
                             state.write().dev.stone_per_sec = value.max(0.0);
@@ -1490,10 +1501,14 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                     DevResourceRow {
                         icon: "⛏️".to_string(),
                         name: "Железо".to_string(),
-                        value: snapshot.iron,
+                        value: snapshot.active_amount("iron") as f64,
                         speed: dev.iron_per_sec,
                         on_value: move |value: f64| {
-                            state.write().iron = value.max(0.0);
+                            let mut guard = state.write();
+                            guard
+                                .active_resources
+                                .insert("iron".to_string(), value.max(0.0) as u32);
+                            guard.refresh_unlocks();
                         },
                         on_speed: move |value: f64| {
                             state.write().dev.iron_per_sec = value.max(0.0);
@@ -1502,10 +1517,14 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                     DevResourceRow {
                         icon: "🪙".to_string(),
                         name: "Уголь".to_string(),
-                        value: snapshot.coal,
+                        value: snapshot.active_amount("coal") as f64,
                         speed: dev.coal_per_sec,
                         on_value: move |value: f64| {
-                            state.write().coal = value.max(0.0);
+                            let mut guard = state.write();
+                            guard
+                                .active_resources
+                                .insert("coal".to_string(), value.max(0.0) as u32);
+                            guard.refresh_unlocks();
                         },
                         on_speed: move |value: f64| {
                             state.write().dev.coal_per_sec = value.max(0.0);
@@ -1787,8 +1806,8 @@ fn CurrentGoal(state: GameState) -> Element {
             None,
             None,
         )
-    } else if state.wood >= state.cap(ResourceKind::Wood)
-        || state.stone >= state.cap(ResourceKind::Stone)
+    } else if state.active_amount("wood") as f64 >= state.cap(ResourceKind::Wood)
+        || state.active_amount("stone") as f64 >= state.cap(ResourceKind::Stone)
     {
         (
             "Склад полон. Улучши склад, чтобы добывать дальше.".to_string(),
@@ -1833,35 +1852,43 @@ fn ResourceBar(view: GameState) -> Element {
     let state = view;
     let mut items: Vec<(ResourceKind, &str, f64, f64)> = Vec::new();
 
-    if state.wood_seen || state.wood > 0.0 {
+    if state.wood_seen || state.active_amount("wood") > 0 {
         items.push((
             ResourceKind::Wood,
             "Дерево",
-            state.wood,
+            state.active_amount("wood") as f64,
             state.cap(ResourceKind::Wood),
         ));
     }
-    if state.stone_seen || state.stone > 0.0 {
+    if state.stone_seen || state.active_amount("stone") > 0 {
         items.push((
             ResourceKind::Stone,
             "Камень",
-            state.stone,
+            state.active_amount("stone") as f64,
             state.cap(ResourceKind::Stone),
         ));
     }
-    if state.iron > 0.0 || state.forge_researched || state.mine_level > 0 {
+    if state.forge_researched || state.mine_level > 0 || state.active_amount("iron") > 0 {
         items.push((
             ResourceKind::Iron,
-            "Железо",
-            state.iron,
+            "Руда",
+            state.active_amount("iron") as f64,
             state.cap(ResourceKind::Iron),
         ));
     }
-    if state.coal_seen || state.coal > 0.0 {
+    if state.active_amount("clay") > 0 {
+        items.push((
+            ResourceKind::Clay,
+            "Глина",
+            state.active_amount("clay") as f64,
+            state.cap(ResourceKind::Clay),
+        ));
+    }
+    if state.coal_seen || state.active_amount("coal") > 0 {
         items.push((
             ResourceKind::Coal,
             "Уголь",
-            state.coal,
+            state.active_amount("coal") as f64,
             state.cap(ResourceKind::Coal),
         ));
     }

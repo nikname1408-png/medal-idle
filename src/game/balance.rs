@@ -168,11 +168,11 @@ pub const FORGE_RESEARCH_COST: f64 = 120.0;
 pub const TRADER_RESEARCH_COST: f64 = 200.0;
 
 /// Максимальный запас огня кузницы без амулета.
-pub const FORGE_FIRE_MAX_SECONDS: f64 = 60.0;
+pub const FORGE_FIRE_MAX_SECONDS: u32 = 60;
 /// Сколько секунд огня даёт один уголь.
-pub const FIRE_SECONDS_PER_COAL: f64 = 20.0;
+pub const FIRE_SECONDS_PER_COAL: u32 = 20;
 /// Прибавка к запасу огня за каждый уровень кузницы выше первого.
-pub const FORGE_FIRE_PER_LEVEL: f64 = 10.0;
+pub const FORGE_FIRE_PER_LEVEL: u32 = 10;
 
 /// Сколько железа в секунду даёт один работник шахты.
 pub const MINE_IRON_PER_WORKER_PER_SEC: f64 = 0.2;
@@ -203,6 +203,21 @@ pub const RESEARCH_TIME_WARP: f64 = 15.0;
 
 /// Сколько энергии тратит один поход.
 pub const EXPEDITION_ENERGY_COST: f64 = 10.0;
+
+/// Дропи походов: активные ресурсы (вид, минимум, максимум).
+pub const EXPEDITION_ACTIVE_DROPS: [(&str, u32, u32); 4] = [
+    ("wood", 50, 350),
+    ("stone", 30, 220),
+    ("iron", 20, 180),
+    ("clay", 10, 120),
+];
+/// Дропи походов: инвентарные предметы (вид, минимум, максимум).
+pub const EXPEDITION_INVENTORY_DROPS: [(&str, u32, u32); 4] = [
+    ("leather", 1, 3),
+    ("fiber", 1, 3),
+    ("quartz", 1, 3),
+    ("silver", 1, 3),
+];
 
 /// Стоимость предметов в кузнице.
 pub const ITEM_SWORD_IRON: f64 = 5.0;
