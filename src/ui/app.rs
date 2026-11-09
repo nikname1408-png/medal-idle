@@ -420,14 +420,6 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
 
     rsx! {
         CollapsibleSection { title: "Энергия".to_string(),
-            div { class: "goal",
-                div { class: "goal-head",
-                    span { class: "goal-label", "Энергия" }
-                    span { class: "goal-count",
-                        "{format_num(snapshot.energy)} / {format_num(snapshot.max_energy())}"
-                    }
-                }
-            }
             BuildRow {
                 title: "Свой дом".to_string(),
                 level: snapshot.house_level,
@@ -2164,9 +2156,10 @@ fn tab_icon(index: usize) -> Option<Asset> {
     match index {
         TAB_FIELD => Some(ICON_FIELD),
         TAB_STUDIES => Some(ICON_SCROLL),
-        TAB_WORK => Some(ICON_GEAR),
+        TAB_WORK => None,
         TAB_BAG => Some(ICON_BAG),
-        TAB_EXPEDITION => Some(ICON_FIELD),
+        TAB_EXPEDITION => None,
+        TAB_SETTINGS => Some(ICON_GEAR),
         _ => None,
     }
 }

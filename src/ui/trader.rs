@@ -239,14 +239,21 @@ fn TradeRow(
         good.status().short().to_string()
     };
     let reason = row_reason(&view, mode, &item, &good);
+    let unavailable = reason.is_some();
     let item_id = item.id.clone();
+    let class = if unavailable {
+        "trade-row locked"
+    } else if selected {
+        "trade-row selected"
+    } else {
+        "trade-row"
+    };
 
     rsx! {
         button {
-            class: if selected { "trade-row selected" } else { "trade-row" },
+            class: "{class}",
             onclick: move |_| on_select.call(item_id.clone()),
             span { class: "trade-name",
-                span { class: "trade-cursor", if selected { ">" } else { " " } }
                 span { "{item.name}" }
                 if let Some(reason) = reason {
                     span { class: "trade-reason", " · {reason}" }
@@ -437,7 +444,7 @@ fn ItemCard(
                 span { class: "trade-line-muted", "Золото после: {format_money(gold_after)}" }
             }
 
-            if let Some(error) = error {
+            if let Some(error) = error.clone() {
                 div { class: "trade-error", "{error}" }
             }
             if !message_now.is_empty() {
@@ -447,7 +454,13 @@ fn ItemCard(
             div { class: "trade-actions",
                 if mode == Mode::Buy {
                     button {
-                        class: if can_primary { "trade-btn primary" } else { "trade-btn" },
+                        class: if can_primary {
+                            "trade-btn primary"
+                        } else if error.is_some() {
+                            "trade-btn blocked"
+                        } else {
+                            "trade-btn"
+                        },
                         disabled: !can_primary,
                         onclick: move |_| {
                             let result = {
@@ -482,7 +495,13 @@ fn ItemCard(
                     }
                 } else {
                     button {
-                        class: if can_primary { "trade-btn primary" } else { "trade-btn" },
+                        class: if can_primary {
+                            "trade-btn primary"
+                        } else if error.is_some() {
+                            "trade-btn blocked"
+                        } else {
+                            "trade-btn"
+                        },
                         disabled: !can_primary,
                         onclick: move |_| {
                             let result = {

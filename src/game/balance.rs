@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 /// Версия формата сохранения. Меняется при несовместимых правках.
-pub const SAVE_VERSION: u32 = 5;
+pub const SAVE_VERSION: u32 = 6;
 
 /// Демо-капитал для проверки торговца. Убрать перед релизом.
 pub const DEMO_START_GOLD: f64 = 1240.0;

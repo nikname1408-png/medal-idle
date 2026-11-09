@@ -31,17 +31,17 @@ pub const TRADERS: [TraderDef; 3] = [
         id: "marta",
         name: "Марта",
         goods: &[
-            "iron_ingot",
+            "jug",
+            "candle",
             "cloth",
             "board",
             "brick",
-            "leather",
-            "fiber",
-            "silver",
-            "quartz",
-            "backpack",
-            "iron_sword",
-            "iron_armor",
+            "horseshoe",
+            "iron_dagger",
+            "silver_ring",
+            "trader_ring",
+            "wanderer_pendant",
+            "whetstone",
         ],
     },
     TraderDef {
@@ -50,32 +50,32 @@ pub const TRADERS: [TraderDef; 3] = [
         goods: &[
             "leather",
             "fiber",
+            "clay",
             "quartz",
             "silver",
-            "clay",
-            "cloth",
+            "gems",
             "backpack",
-            "trader_ring",
-            "coal_amulet",
-            "iron_ingot",
-            "iron_sword",
+            "wooden_bucket",
+            "sickle",
+            "scythe",
+            "candle",
         ],
     },
     TraderDef {
         id: "smith",
         name: "Кузнец",
         goods: &[
-            "iron_sword",
-            "iron_armor",
             "iron_ingot",
-            "brick",
+            "gold_ingot",
+            "nails",
             "board",
-            "coal_amulet",
-            "trader_ring",
-            "cloth",
-            "leather",
-            "silver",
-            "backpack",
+            "iron_bucket",
+            "hoe",
+            "pickaxe",
+            "axe",
+            "iron_sword",
+            "chainmail",
+            "iron_bracers",
         ],
     },
 ];
@@ -227,44 +227,47 @@ fn good(item_id: &str, stock: u32, demand: u8, supply: u8, buy_limit: u32) -> Go
 /// Демо-ассортимент торговца по индексу.
 pub fn default_market(index: usize) -> TraderMarket {
     let goods = match index {
+        // Марта: товары на продажу и бижутерия.
         0 => vec![
-            good("iron_ingot", 5, 64, 38, 10),
+            good("jug", 20, 55, 40, 20),
+            good("candle", 40, 30, 70, 30),
             good("cloth", 30, 20, 85, 20),
-            good("board", 24, 35, 60, 20),
-            good("brick", 18, 45, 55, 20),
-            good("leather", 12, 60, 40, 10),
-            good("fiber", 40, 25, 70, 30),
-            good("silver", 3, 80, 30, 3),
-            good("quartz", 4, 70, 35, 5),
-            good("backpack", 2, 75, 35, 3),
-            good("iron_sword", 1, 65, 40, 3),
-            good("iron_armor", 1, 85, 25, 2),
+            good("board", 30, 35, 60, 20),
+            good("brick", 24, 45, 55, 20),
+            good("horseshoe", 8, 60, 40, 8),
+            good("iron_dagger", 3, 70, 35, 4),
+            good("silver_ring", 2, 75, 30, 3),
+            good("trader_ring", 1, 80, 25, 2),
+            good("wanderer_pendant", 1, 78, 28, 2),
+            good("whetstone", 6, 65, 40, 6),
         ],
+        // Странник: ремесло, ферма и редкие находки.
         1 => vec![
             good("leather", 18, 55, 45, 10),
-            good("quartz", 6, 70, 40, 5),
-            good("backpack", 2, 80, 30, 3),
-            good("fiber", 30, 30, 65, 30),
-            good("silver", 5, 78, 32, 5),
+            good("fiber", 40, 25, 70, 30),
             good("clay", 60, 40, 70, 40),
-            good("cloth", 25, 35, 70, 20),
-            good("trader_ring", 1, 82, 28, 2),
-            good("coal_amulet", 2, 70, 35, 3),
-            good("iron_ingot", 6, 55, 50, 10),
-            good("iron_sword", 1, 70, 35, 3),
+            good("quartz", 6, 70, 40, 5),
+            good("silver", 5, 78, 32, 5),
+            good("gems", 2, 85, 25, 2),
+            good("backpack", 2, 80, 30, 3),
+            good("wooden_bucket", 4, 50, 55, 5),
+            good("sickle", 2, 60, 45, 3),
+            good("scythe", 1, 65, 40, 2),
+            good("candle", 30, 35, 65, 20),
         ],
+        // Кузнец: металл, инструменты и оружие.
         _ => vec![
-            good("iron_sword", 1, 65, 40, 3),
-            good("iron_armor", 1, 80, 30, 2),
-            good("iron_ingot", 12, 50, 55, 20),
-            good("brick", 30, 30, 70, 30),
+            good("iron_ingot", 12, 50, 55, 8),
+            good("gold_ingot", 1, 85, 25, 2),
+            good("nails", 15, 45, 60, 15),
             good("board", 30, 30, 70, 30),
-            good("coal_amulet", 2, 75, 30, 3),
-            good("trader_ring", 1, 85, 25, 2),
-            good("cloth", 40, 20, 80, 30),
-            good("leather", 15, 55, 45, 10),
-            good("silver", 4, 75, 35, 5),
-            good("backpack", 3, 70, 35, 4),
+            good("iron_bucket", 4, 50, 55, 5),
+            good("hoe", 2, 60, 45, 3),
+            good("pickaxe", 2, 65, 40, 3),
+            good("axe", 2, 60, 40, 3),
+            good("iron_sword", 1, 65, 40, 3),
+            good("chainmail", 1, 85, 25, 2),
+            good("iron_bracers", 1, 70, 35, 2),
         ],
     };
 
@@ -496,11 +499,15 @@ mod tests {
     fn demo_goods_cover_all_market_statuses() {
         let market = default_market(0);
         assert_eq!(
-            market.good("iron_ingot").map(GoodState::status),
+            market.good("jug").map(GoodState::status),
+            Some(MarketStatus::Balance)
+        );
+        assert_eq!(
+            market.good("horseshoe").map(GoodState::status),
             Some(MarketStatus::Deficit)
         );
         assert_eq!(
-            market.good("silver").map(GoodState::status),
+            market.good("silver_ring").map(GoodState::status),
             Some(MarketStatus::Deficit)
         );
         assert_eq!(
@@ -544,17 +551,17 @@ mod tests {
         };
         let before = state
             .traders
-            .first()
+            .get(2)
             .and_then(|market| market.good("iron_ingot"))
             .map(|good| good.stock)
             .unwrap_or(0);
 
-        assert_eq!(buy(&mut state, 0, "iron_ingot", 2), Ok(()));
+        assert_eq!(buy(&mut state, 2, "iron_ingot", 2), Ok(()));
         assert_eq!(state.item_count("iron_ingot"), 2);
         assert_eq!(
             state
                 .traders
-                .first()
+                .get(2)
                 .and_then(|market| market.good("iron_ingot"))
                 .map(|good| good.stock),
             Some(before - 2)
@@ -569,15 +576,15 @@ mod tests {
             ..GameState::default()
         };
         assert_eq!(
-            buy(&mut state, 0, "iron_ingot", 0),
+            buy(&mut state, 2, "iron_ingot", 0),
             Err(TradeError::InvalidQuantity)
         );
         assert_eq!(
-            buy(&mut state, 0, "iron_ingot", 999),
+            buy(&mut state, 2, "iron_ingot", 999),
             Err(TradeError::OutOfStock)
         );
         assert_eq!(
-            buy(&mut state, 0, "iron_ingot", 1),
+            buy(&mut state, 2, "iron_ingot", 1),
             Err(TradeError::NotEnoughGold)
         );
     }
@@ -590,15 +597,15 @@ mod tests {
         };
         state.add_item("iron_ingot", 3);
 
-        assert_eq!(sell(&mut state, 0, "iron_ingot", 2), Ok(()));
+        assert_eq!(sell(&mut state, 2, "iron_ingot", 2), Ok(()));
         assert_eq!(state.item_count("iron_ingot"), 1);
         assert_eq!(
             state
                 .traders
-                .first()
+                .get(2)
                 .and_then(|market| market.good("iron_ingot"))
                 .map(|good| good.buy_limit),
-            Some(8)
+            Some(6)
         );
         assert!(state.gold > 0.0);
     }
@@ -610,24 +617,24 @@ mod tests {
             ..GameState::default()
         };
         assert_eq!(
-            sell(&mut state, 0, "iron_ingot", 0),
+            sell(&mut state, 2, "iron_ingot", 0),
             Err(TradeError::InvalidQuantity)
         );
         assert_eq!(
-            sell(&mut state, 0, "iron_ingot", 99),
+            sell(&mut state, 2, "iron_ingot", 99),
             Err(TradeError::NothingToSell)
         );
 
         state.add_item("iron_ingot", 3);
         if let Some(good) = state
             .traders
-            .get_mut(0)
+            .get_mut(2)
             .and_then(|market| market.good_mut("iron_ingot"))
         {
             good.buy_limit = 1;
         }
         assert_eq!(
-            sell(&mut state, 0, "iron_ingot", 2),
+            sell(&mut state, 2, "iron_ingot", 2),
             Err(TradeError::LimitReached)
         );
     }

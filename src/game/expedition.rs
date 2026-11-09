@@ -10,6 +10,7 @@
 
 use super::actions::next_random;
 use super::balance;
+use super::items::EquipSlot;
 use super::state::GameState;
 
 /// Ошибка похода.
@@ -141,7 +142,10 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
     let rolls = seconds.floor() as u32;
     state.expedition_timer = seconds - rolls as f64;
 
-    if !state.spend_energy(balance::EXPEDITION_ENERGY_PER_TICK * dt.max(0.0)) {
+    // Зимние перчатки и куртка снижают расход энергии в пути.
+    let energy_discount = state.expedition_energy_discount.clamp(0.0, 0.9) as f64;
+    let energy_cost = balance::EXPEDITION_ENERGY_PER_TICK * (1.0 - energy_discount);
+    if !state.spend_energy(energy_cost * dt.max(0.0)) {
         tick.out_of_energy = true;
         return tick;
     }
@@ -186,6 +190,22 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
                 return tick;
             }
             push_loot(&mut tick.loot, kind, quantity, false);
+        }
+    }
+
+    // Золотая подвеска повышает шанс найти драгоценные камни.
+    let gems_bonus = EquipSlot::ALL
+        .iter()
+        .filter_map(|slot| state.equipped_item(*slot))
+        .filter_map(|item| item.stats.gems_bonus)
+        .fold(0.0f32, |sum, bonus| sum + bonus)
+        / 100.0;
+    let rare_chance = 1 + (gems_bonus.max(0.0) as f64 * 5.0).round() as u32;
+    for _ in 0..rolls {
+        state.market_seed = state.market_seed.wrapping_add(0x2545_f491_4f6c_dd1d);
+        let mut seed = state.market_seed;
+        if next_random(&mut seed) % 100 < rare_chance as u64 && state.add_item("gems", 1) {
+            push_loot(&mut tick.loot, "gems", 1, false);
         }
     }
     tick
@@ -317,7 +337,7 @@ mod tests {
                 found += 1;
                 assert_ne!(loot.item_id, "coal");
                 assert!(
-                    loot.item_id == "wood" || loot.item_id == "fiber",
+                    matches!(loot.item_id.as_str(), "wood" | "fiber" | "gems"),
                     "неожиданный дроп: {}",
                     loot.item_id
                 );

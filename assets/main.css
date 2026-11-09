@@ -1412,6 +1412,11 @@ button {
     flex-direction: column;
 }
 
+/* Таблица товаров: черта между строками. */
+.trade-table .trade-row + .trade-row {
+    border-top: 1px solid var(--line);
+}
+
 .trade-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 32px 44px 44px 42px 38px;
@@ -1426,6 +1431,17 @@ button {
     font-size: 12px;
     text-align: left;
     cursor: pointer;
+}
+
+/* Сделку сделать нельзя — вся карточка горит красным. */
+.trade-row.locked {
+    border-left: 2px solid var(--danger);
+    background: rgba(200, 96, 78, 0.12);
+    color: var(--danger);
+}
+
+.trade-row.locked .trade-name {
+    color: var(--danger);
 }
 
 .trade-head-row {
@@ -1633,6 +1649,11 @@ button {
     color: var(--muted);
 }
 
+.trade-btn.blocked {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
 .trade-btn:disabled {
     border-color: var(--line);
     background: var(--unavailable-bg);
@@ -1788,38 +1809,114 @@ button {
     margin-top: 4px;
 }
 
-/* Квадратик рецепта: иконка, карточка открывается по тапу. */
+/* Квадратик рецепта: смайлик в сетке, описание — отдельным блоком снизу. */
 .craft-cell {
     position: relative;
     display: flex;
     flex-direction: column;
 }
 
-.craft-card {
-    position: absolute;
-    z-index: 6;
-    top: calc(100% + 2px);
-    left: 0;
-    width: 200px;
-    max-width: 80vw;
+/* Блок выбранного рецепта: слева данные, справа иконка и ресурсы. */
+.craft-panel {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    padding: 6px;
+    gap: 5px;
+    margin-top: 6px;
+    padding: 7px;
     border: 1px solid var(--energy);
     border-radius: 4px;
     background: var(--panel);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+}
+
+.craft-panel-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.craft-panel-left {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.craft-panel-name {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.craft-panel-type {
+    font-size: 10.5px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.craft-panel-stats {
+    font-size: 10.5px;
+    line-height: 1.3;
+    color: var(--muted);
+}
+
+.craft-panel-owned {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.craft-panel-icon {
+    font-size: 26px;
+    line-height: 1;
+}
+
+.craft-panel-bottom {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.craft-panel-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.craft-panel-cost {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+    font-size: 10.5px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.craft-need {
+    color: var(--text);
+}
+
+.craft-need.lack {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.craft-panel-blocked {
+    color: var(--danger);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.craft-panel-hint {
+    color: var(--muted);
+    font-size: 10.5px;
 }
 
 .craft-desc {
     font-size: 10.5px;
     line-height: 1.3;
     color: var(--muted);
-}
-
-.craft-card .craft-btn {
-    align-self: flex-start;
 }
 
 .craft-row {

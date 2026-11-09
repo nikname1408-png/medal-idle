@@ -244,8 +244,14 @@ pub struct GameState {
     pub active_set: usize,
     /// Бонус к цене продажи от экипировки.
     pub trade_bonus: f32,
-    /// Бонус к добыче в походах от экипировки.
+    /// Бонус к добыче в походах от экипировки (задел на будущее).
     pub expedition_bonus: f32,
+    /// +% ресурсов от экипировки.
+    pub gather_bonus: f32,
+    /// −% расход огня кузницы от экипировки.
+    pub fire_discount: f32,
+    /// −% расход энергии в походах от экипировки.
+    pub expedition_energy_discount: f32,
     /// Рынки всех торговцев.
     pub traders: Vec<TraderMarket>,
     /// Накопленное время до следующего шага рынка.
@@ -343,6 +349,9 @@ impl Default for GameState {
             active_set: 0,
             trade_bonus: 0.0,
             expedition_bonus: 0.0,
+            gather_bonus: 0.0,
+            fire_discount: 0.0,
+            expedition_energy_discount: 0.0,
             traders: trader::default_markets(),
             market_timer: 0.0,
             market_seed: 0x9e37_79b9_7f4a_7c15,
@@ -793,14 +802,33 @@ impl GameState {
     pub fn recalculate_stats(&mut self) {
         let mut trade_bonus = 0.0;
         let mut expedition_bonus = 0.0;
+        let mut gather_bonus = 0.0;
+        let mut fire_discount = 0.0;
+        let mut expedition_energy_discount = 0.0;
         for slot in EquipSlot::ALL {
             if let Some(item) = self.equipped_item(slot) {
-                trade_bonus += item.stats.trade_bonus.unwrap_or(0.0);
-                expedition_bonus += item.stats.expedition_bonus.unwrap_or(0.0);
+                let stats = &item.stats;
+                trade_bonus += stats.trade_bonus.unwrap_or(0.0) / 100.0;
+                trade_bonus += stats.gold_bonus.unwrap_or(0.0) / 100.0;
+                expedition_bonus += stats.expedition_bonus.unwrap_or(0.0) / 100.0;
+                gather_bonus += stats.wood_bonus.unwrap_or(0.0) / 100.0;
+                gather_bonus += stats.stone_bonus.unwrap_or(0.0) / 100.0;
+                gather_bonus += stats.ore_bonus.unwrap_or(0.0) / 100.0;
+                gather_bonus += stats.fiber_bonus.unwrap_or(0.0) / 100.0;
+                trade_bonus += stats
+                    .trade_bonus
+                    .map(|_| stats.gold_bonus.unwrap_or(0.0) / 100.0)
+                    .unwrap_or(0.0);
+                fire_discount += stats.fire_discount.unwrap_or(0.0) / 100.0;
+                expedition_energy_discount +=
+                    stats.expedition_energy_discount.unwrap_or(0.0) / 100.0;
             }
         }
-        self.trade_bonus = trade_bonus;
-        self.expedition_bonus = expedition_bonus;
+        self.trade_bonus = trade_bonus.clamp(0.0, 5.0);
+        self.expedition_bonus = expedition_bonus.clamp(0.0, 5.0);
+        self.gather_bonus = gather_bonus.clamp(0.0, 5.0);
+        self.fire_discount = fire_discount.clamp(0.0, 0.9);
+        self.expedition_energy_discount = expedition_energy_discount.clamp(0.0, 0.9);
     }
 
     /// Снимает экипировку, которой больше нет в сумке.
@@ -1018,6 +1046,10 @@ impl GameState {
         }
         self.inventory.remove("strength_potion");
         self.inventory.remove("iron_ore");
+        // Предметы, которых больше нет в новой экономике.
+        for removed in ["coal_amulet", "iron_armor"] {
+            self.inventory.remove(removed);
+        }
         self.ensure_markets();
         if self.active_set >= self.equipment_sets.len() {
             self.active_set = 0;

@@ -79,8 +79,9 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
         return GatherResult::NoEnergy;
     }
 
-    let yield_amount =
-        (balance::CLICK_YIELD + state.dev.gather_yield) * state.production_multiplier();
+    let yield_amount = (balance::CLICK_YIELD + state.dev.gather_yield)
+        * state.production_multiplier()
+        * (1.0 + state.gather_bonus as f64);
     let added = state.add_resource(kind, yield_amount);
     state.stats.clicks = state.stats.clicks.saturating_add(1);
     match kind {
@@ -472,34 +473,88 @@ pub fn toggle_forge_auto_feed(state: &mut GameState) {
     state.forge_auto_feed = !state.forge_auto_feed;
 }
 
-/// Создаёт предмет по рецепту.
-pub fn craft(state: &mut GameState, recipe_id: &str) -> Result<(), CraftError> {
-    let recipe = items::recipe(recipe_id).ok_or(CraftError::UnknownRecipe)?;
+/// Огонь, который реально потратит рецепт: с учётом скидки наручей.
+pub fn fire_cost(state: &GameState, recipe: &items::Recipe) -> u32 {
+    if recipe.fire_cost == 0 {
+        return 0;
+    }
+    let discount = state.fire_discount.clamp(0.0, 0.9) as f64;
+    (recipe.fire_cost as f64 * (1.0 - discount)).ceil() as u32
+}
 
+/// Сколько раз рецепт можно повторить подряд.
+///
+/// Ограничение — ингредиенты, место в сумке (для нестакуемых предметов)
+/// и огонь кузницы.
+pub fn affordable_crafts(state: &GameState, recipe: &items::Recipe) -> u32 {
+    if recipe.fire_cost > 0 && state.forge_level == 0 {
+        return 0;
+    }
+    let mut limit = u32::MAX;
+    for ingredient in &recipe.ingredients {
+        let available = state.ingredient_amount(ingredient.item_id);
+        limit = limit.min(available / ingredient.quantity.max(1));
+    }
+    let fire = fire_cost(state, recipe);
+    if fire > 0 {
+        limit = limit.min(state.current_fire.checked_div(fire).unwrap_or(0));
+    }
+    if !items::item(recipe.result_id)
+        .map(|item| item.stackable && state.item_count(recipe.result_id) > 0)
+        .unwrap_or(true)
+    {
+        let per_item = recipe.result_quantity.max(1);
+        limit = limit.min(state.inventory_free_slots() / per_item);
+    }
+    limit
+}
+
+/// Создаёт предмет по рецепту один раз.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn craft(state: &mut GameState, recipe_id: &str) -> Result<(), CraftError> {
+    craft_times(state, recipe_id, 1).map(|_| ())
+}
+
+/// Создаёт предмет по рецепту `times` раз подряд.
+///
+/// Если на все повторы не хватает, не делает ничего.
+pub fn craft_times(state: &mut GameState, recipe_id: &str, times: u32) -> Result<u32, CraftError> {
+    let recipe = items::recipe(recipe_id).ok_or(CraftError::UnknownRecipe)?;
+    if times == 0 {
+        return Ok(0);
+    }
     if recipe.fire_cost > 0 && state.forge_level == 0 {
         return Err(CraftError::NoFire);
     }
-    if state.current_fire < recipe.fire_cost {
-        return Err(CraftError::NoFire);
-    }
+    let fire = fire_cost(state, recipe);
 
-    for ingredient in &recipe.ingredients {
-        if state.ingredient_amount(ingredient.item_id) < ingredient.quantity {
-            return Err(CraftError::NotEnough);
+    // Сколько повторов реально хватает по всем ограничениям.
+    let available = affordable_crafts(state, recipe);
+    let times = times.min(available);
+    if times == 0 {
+        if fire > state.current_fire {
+            return Err(CraftError::NoFire);
         }
-    }
-    if !state.can_add_item(recipe.result_id, recipe.result_quantity) {
+        for ingredient in &recipe.ingredients {
+            if state.ingredient_amount(ingredient.item_id) < ingredient.quantity {
+                return Err(CraftError::NotEnough);
+            }
+        }
         return Err(CraftError::NoSpace);
     }
 
-    for ingredient in &recipe.ingredients {
-        if !state.spend_ingredient(ingredient.item_id, ingredient.quantity) {
-            return Err(CraftError::NotEnough);
+    for _ in 0..times {
+        for ingredient in &recipe.ingredients {
+            if !state.spend_ingredient(ingredient.item_id, ingredient.quantity) {
+                return Err(CraftError::NotEnough);
+            }
+        }
+        state.current_fire = state.current_fire.saturating_sub(fire);
+        if !state.add_item(recipe.result_id, recipe.result_quantity) {
+            return Err(CraftError::NoSpace);
         }
     }
-    state.current_fire -= recipe.fire_cost;
-    state.add_item(recipe.result_id, recipe.result_quantity);
-    Ok(())
+    Ok(times)
 }
 
 /// Надевает предмет из сумки.
@@ -878,9 +933,10 @@ mod tests {
         state.current_fire = balance::FIRE_SECONDS_PER_COAL;
 
         assert_eq!(craft(&mut state, "iron_ingot"), Ok(()));
+        let spent_fire = balance::FIRE_SECONDS_PER_COAL - state.current_fire;
         assert_eq!(state.active_amount("iron"), 3);
         assert_eq!(state.active_amount("coal"), 0);
-        assert_eq!(state.current_fire, balance::FIRE_SECONDS_PER_COAL - 5);
+        assert_eq!(spent_fire, 15);
         assert_eq!(state.item_count("iron_ingot"), 1);
     }
 
@@ -909,15 +965,33 @@ mod tests {
         );
         assert!((state.trade_bonus - 0.10).abs() < 1e-6);
 
-        state.add_item("coal_amulet", 1);
+        state.add_item("miner_amulet", 1);
         assert_eq!(
-            equip_item(&mut state, "coal_amulet"),
+            equip_item(&mut state, "miner_amulet"),
             Err(EquipError::SlotOccupied)
         );
 
         unequip_slot(&mut state, items::EquipSlot::Accessory);
-        assert_eq!(equip_item(&mut state, "coal_amulet"), Ok(()));
-        assert!((state.trade_bonus - 0.05).abs() < 1e-6);
+        assert_eq!(equip_item(&mut state, "miner_amulet"), Ok(()));
+        assert!((state.trade_bonus).abs() < 1e-6);
+        assert!((state.gather_bonus - 0.30).abs() < 1e-6);
+    }
+
+    #[test]
+    fn craft_times_is_limited_by_ingredients_and_fire() {
+        let mut state = GameState {
+            forge_level: 1,
+            ..GameState::default()
+        };
+        state.add_active("iron", 5);
+        state.add_active("coal", 1);
+        state.current_fire = 100;
+        let recipe = items::recipe("iron_ingot").unwrap();
+
+        // Хватает только на два слитка: 4 руды и 2 угля нет — хватит на 1.
+        assert_eq!(affordable_crafts(&state, recipe), 1);
+        assert_eq!(craft_times(&mut state, "iron_ingot", 10), Ok(1));
+        assert_eq!(state.item_count("iron_ingot"), 1);
     }
 
     #[test]

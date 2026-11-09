@@ -8,15 +8,61 @@ use crate::game::state::{EquipError, GameState};
 
 use super::app::refresh_view;
 
-const ICON_BAG: Asset = asset!("/assets/icons/bag.png");
-const ICON_COAL: Asset = asset!("/assets/icons/coal.png");
-const ICON_FIRE: Asset = asset!("/assets/icons/fire.png");
-const ICON_GEAR: Asset = asset!("/assets/icons/gear.png");
-const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
-const ICON_IRON: Asset = asset!("/assets/icons/iron.png");
-const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
-const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
-const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
+/// Смайлик предмета по смыслу. PNG-спрайтов предметов пока нет.
+pub(crate) fn item_icon(item: &Item) -> &'static str {
+    match item.id.as_str() {
+        "wood" => "🪵",
+        "stone" => "🥌",
+        "iron" => "⛏",
+        "coal" => "⚫",
+        "clay" => "🧱",
+        "leather" => "🥾",
+        "fiber" => "🌾",
+        "quartz" => "🔷",
+        "silver" => "⚪",
+        "gold_ore" => "🪙",
+        "gems" => "💎",
+        "board" => "🪵",
+        "cloth" => "🧵",
+        "whetstone" => "🔪",
+        "brick" => "🧱",
+        "iron_ingot" => "🔩",
+        "nails" => "📌",
+        "gold_ingot" => "🟡",
+        "backpack" => "🎒",
+        "pickaxe" => "⛏",
+        "axe" => "🪓",
+        "robe" => "👘",
+        "leather_gloves" => "🧤",
+        "iron_bracers" => "🦾",
+        "winter_gloves" => "🧤",
+        "jacket" => "🧥",
+        "wooden_bucket" => "🪣",
+        "iron_bucket" => "🪣",
+        "hoe" => "🧑‍🌾",
+        "sickle" => "🌙",
+        "scythe" => "🌾",
+        "jug" => "🏺",
+        "candle" => "🕯",
+        "horseshoe" => "🐴",
+        "iron_dagger" => "🗡",
+        "iron_sword" => "⚔",
+        "chainmail" => "🛡",
+        "silver_ring" => "💍",
+        "trader_ring" => "💍",
+        "miner_amulet" => "📿",
+        "wanderer_pendant" => "📿",
+        "gold_ring" => "💍",
+        "gold_pendant" => "📿",
+        _ => match item.category {
+            Category::Gear => "🎽",
+            Category::Jewelry => "💍",
+            Category::Goods => "📦",
+            Category::Consumable => "🧪",
+            Category::Material => "📦",
+        },
+    }
+}
 
 /// Полный экран инвентаря.
 #[component]
@@ -186,14 +232,14 @@ fn EquipmentSlot(slot: EquipSlot, state: Signal<GameState>, view: GameState) -> 
     let item = view.equipped_item(slot);
     let name = item.map(|item| item.name.as_str()).unwrap_or("Пусто");
     let bonus = item.map(|item| item.stats.summary()).unwrap_or_default();
-    let slot_icon = item.map(|item| item_icon(item).0);
+    let slot_icon = item.map(item_icon);
     let can_unequip = item.is_some();
 
     rsx! {
         div { class: "equip-row",
             div { class: "equip-slot",
                 if let Some(icon) = slot_icon {
-                    img { class: "icon", src: "{icon}", alt: "" }
+                    "{icon}"
                 } else {
                     "{slot_short(slot)}"
                 }
@@ -224,7 +270,7 @@ fn EquipmentSlot(slot: EquipSlot, state: Signal<GameState>, view: GameState) -> 
 #[component]
 fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<String>) -> Element {
     let item_id = item.id.clone();
-    let icon = item_icon(&item).0;
+    let icon = item_icon(&item);
     let class = if selected {
         "inv-item selected"
     } else {
@@ -235,44 +281,12 @@ fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<Stri
         button {
             class: "{class}",
             onclick: move |_| on_select.call(item_id.clone()),
-            img { class: "inv-item-icon icon", src: "{icon}", alt: "" }
+            span { class: "inv-item-icon", "{icon}" }
             if count > 1 {
                 span { class: "inv-badge", "{count}" }
             }
         }
     }
-}
-
-/// Иконка предмета: загруженный PNG.
-struct ItemIcon(Asset);
-
-fn item_icon(item: &Item) -> ItemIcon {
-    let asset = match item.id.as_str() {
-        "wood" | "board" => ICON_WOOD,
-        "leather" => ICON_STONE,
-        "silver" | "cloth" => ICON_GOLD,
-        "quartz" => ICON_STONE,
-        "iron_ingot" => ICON_IRON,
-        "backpack" => ICON_BAG,
-        "trader_ring" => ICON_GOLD,
-        "iron_sword" => ICON_IRON,
-        "iron_armor" => ICON_GEAR,
-        "coal_amulet" => ICON_COAL,
-        "brick" => ICON_STONE,
-        "clay" | "fiber" => ICON_STONE,
-        _ => {
-            if item.category == Category::Gear {
-                ICON_GEAR
-            } else if item.fire_cost > 0 {
-                ICON_FIRE
-            } else if item.slot.is_some() {
-                ICON_SCROLL
-            } else {
-                ICON_COAL
-            }
-        }
-    };
-    ItemIcon(asset)
 }
 
 /// Название ингредиента: активный ресурс склада или предмет каталога.
@@ -295,6 +309,31 @@ pub fn CraftScreen(
     message: Signal<String>,
     on_close: EventHandler<()>,
 ) -> Element {
+    // Выбран только один рецепт: карточка живёт снизу сетки, без наслоений.
+    let mut open = use_signal(|| None::<&'static str>);
+
+    let open_now = open();
+    let blocked = open_now.and_then(|recipe_id| {
+        let recipe = items::recipe(recipe_id)?;
+        let fire = actions::fire_cost(&view, recipe);
+        if recipe.fire_cost > 0 && view.forge_level == 0 {
+            Some("Нужна кузница".to_string())
+        } else if view.current_fire < fire {
+            Some(format!(
+                "Недостаточно огня! Нужно {fire}, есть {}",
+                view.current_fire
+            ))
+        } else if !view.can_add_item(recipe.result_id, recipe.result_quantity) {
+            Some("Нет места в сумке".to_string())
+        } else {
+            None
+        }
+    });
+    let crafts_now = open_now
+        .and_then(items::recipe)
+        .map(|recipe| actions::affordable_crafts(&view, recipe))
+        .unwrap_or(0);
+
     rsx! {
         section { class: "inv-craft",
             div { class: "inv-title-row",
@@ -309,9 +348,24 @@ pub fn CraftScreen(
                 for recipe in items::recipes() {
                     RecipeCell {
                         key: "{recipe.id}",
-                        recipe: recipe.clone(),
+                        recipe_id: recipe.id,
                         state,
                         view: view.clone(),
+                        selected: open_now == Some(recipe.id),
+                        on_select: move |recipe_id: &'static str| {
+                            open.set(if open_now == Some(recipe_id) { None } else { Some(recipe_id) });
+                        },
+                    }
+                }
+            }
+            if let Some(recipe_id) = open_now {
+                if let Some(recipe) = items::recipe(recipe_id) {
+                    CraftPanel {
+                        recipe: recipe.clone(),
+                        view: view.clone(),
+                        crafts_now,
+                        blocked,
+                        state,
                         message,
                     }
                 }
@@ -320,92 +374,177 @@ pub fn CraftScreen(
     }
 }
 
-/// Квадратик рецепта: иконка предмета, выпадающая карточка по тапу.
+/// Квадратик рецепта в сетке.
 #[component]
 fn RecipeCell(
-    recipe: items::Recipe,
+    recipe_id: &'static str,
     state: Signal<GameState>,
     view: GameState,
+    selected: bool,
+    on_select: EventHandler<&'static str>,
+) -> Element {
+    let _ = state;
+    let Some(recipe) = items::recipe(recipe_id) else {
+        return rsx! {};
+    };
+    let Some(result) = items::item(recipe.result_id) else {
+        return rsx! {};
+    };
+    let icon = item_icon(result);
+    let class = if selected {
+        "inv-item selected"
+    } else {
+        "inv-item"
+    };
+
+    rsx! {
+        button {
+            class: "{class}",
+            onclick: move |_| on_select.call(recipe_id),
+            span { class: "inv-item-icon", "{icon}" }
+            if let Some(crafts) = crafts_badge(&view, recipe) {
+                span { class: "inv-badge", "{crafts}" }
+            }
+        }
+    }
+}
+
+/// Значок «сколько раз можно скрафтить прямо сейчас».
+fn crafts_badge(view: &GameState, recipe: &items::Recipe) -> Option<u32> {
+    let crafts = actions::affordable_crafts(view, recipe);
+    (crafts > 0).then_some(crafts.min(99))
+}
+
+/// Описание выбранного рецепта: слева данные, справа иконка и ресурсы.
+#[component]
+fn CraftPanel(
+    recipe: items::Recipe,
+    view: GameState,
+    crafts_now: u32,
+    blocked: Option<String>,
+    state: Signal<GameState>,
     message: Signal<String>,
 ) -> Element {
     let mut state = state;
     let mut message = message;
-    let mut open = use_signal(|| false);
     let Some(result) = items::item(recipe.result_id) else {
         return rsx! {};
     };
 
-    let ingredients = recipe
+    let icon = item_icon(result);
+    let name = result.name.clone();
+    let category = result.category.label();
+    let stats = result.stats.summary();
+    let owned = view.item_count(result.id.as_str());
+    let result_id = result.id.clone();
+    let fire = actions::fire_cost(&view, &recipe);
+
+    let mut missing = false;
+    let ingredients: Vec<(String, u32, u32, bool)> = recipe
         .ingredients
         .iter()
         .map(|ingredient| {
-            let name = ingredient_name(ingredient.item_id);
-            let owned = view.ingredient_amount(ingredient.item_id);
-            format!("{name} {owned}/{}", ingredient.quantity)
+            let need = ingredient.quantity;
+            let have = view.ingredient_amount(ingredient.item_id);
+            let lack = have < need;
+            missing |= lack;
+            (
+                ingredient_name(ingredient.item_id).to_string(),
+                have,
+                need,
+                lack,
+            )
         })
-        .collect::<Vec<_>>()
-        .join(" · ");
+        .collect();
 
-    let enough = recipe
-        .ingredients
-        .iter()
-        .all(|ingredient| view.ingredient_amount(ingredient.item_id) >= ingredient.quantity);
-    let has_space = view.can_add_item(recipe.result_id, recipe.result_quantity);
-    let has_forge = recipe.fire_cost == 0 || view.forge_level > 0;
-    let fire_ok = has_forge && view.current_fire >= recipe.fire_cost;
-    let available = enough && has_space && fire_ok;
+    let can_one = crafts_now > 0 && blocked.is_none() && !missing;
+    let can_ten = can_one && crafts_now >= 10;
+    let can_hundred = can_one && crafts_now >= 100;
     let recipe_id = recipe.id.to_string();
-    let result_name = result.name.clone();
-    let result_description = result.description.clone();
-    let fire_cost = recipe.fire_cost;
-    let fire_now = view.current_fire;
-    let icon = item_icon(result).0;
-    let fire_class = if fire_ok {
-        "craft-fire"
-    } else {
-        "craft-fire poor"
+    let result_quantity = recipe.result_quantity;
+    let make_button = move |times: u32| -> Element {
+        let recipe_id = recipe_id.clone();
+        let enabled = match times {
+            1 => can_one,
+            10 => can_ten,
+            _ => can_hundred,
+        };
+        let label = match times {
+            1 => "Крафт".to_string(),
+            other => format!("Крафт {other}"),
+        };
+        rsx! {
+            button {
+                class: if enabled { "craft-btn" } else { "craft-btn disabled" },
+                disabled: !enabled,
+                onclick: move |_| {
+                    let result = {
+                        let mut guard = state.write();
+                        actions::craft_times(&mut guard, &recipe_id, times)
+                    };
+                    message.set(match result {
+                        Ok(_) => String::new(),
+                        Err(error) => craft_error_text(error).to_string(),
+                    });
+                    refresh_view(state);
+                },
+                "{label}"
+            }
+        }
     };
-    let open_now = open();
 
     rsx! {
-        div { class: "craft-cell",
-            button {
-                class: if open_now { "inv-item selected" } else { "inv-item" },
-                onclick: move |_| open.set(!open_now),
-                img { class: "inv-item-icon icon", src: "{icon}", alt: "" }
+        section { class: "craft-panel",
+            div { class: "craft-panel-top",
+                div { class: "craft-panel-left",
+                    div { class: "craft-panel-name", "{name}" }
+                    div { class: "craft-panel-type", "{category}" }
+                    div { class: "craft-panel-stats", "{stats}" }
+                    div { class: "craft-panel-owned", "У меня: {owned}" }
+                }
+                div { class: "craft-panel-icon", "{icon}" }
             }
-            if open_now {
-                div { class: "craft-card",
-                    div { class: "craft-name", "{result_name}" }
-                    div { class: "craft-desc", "{result_description}" }
-                    div { class: "craft-cost", "{ingredients}" }
-                    if fire_cost > 0 {
-                        div { class: "{fire_class}",
-                            "Огонь: нужно {fire_cost} / в кузнице {fire_now}"
+
+            div { class: "craft-panel-bottom",
+                div { class: "craft-panel-buttons",
+                    {make_button(1)}
+                    if can_ten {
+                        {make_button(10)}
+                    }
+                    if can_hundred {
+                        {make_button(100)}
+                    }
+                }
+                div { class: "craft-panel-cost",
+                    for (ingredient, have, need, lack) in ingredients.iter() {
+                        div {
+                            key: "{ingredient}",
+                            class: if *lack { "craft-need lack" } else { "craft-need" },
+                            "{ingredient}: {have}/{need}"
                         }
                     }
-                    if !has_space {
-                        div { class: "craft-warning", "Нет места в сумке" }
-                    } else if !fire_ok {
-                        div { class: "craft-warning poor", "Недостаточно огня!" }
+                    if fire > 0 {
+                        div {
+                            class: if blocked.as_deref().map(|text| text.starts_with("Недостаточно огня")).unwrap_or(false) {
+                                "craft-need lack"
+                            } else {
+                                "craft-need"
+                            },
+                            "Огонь: {view.current_fire}/{fire}"
+                        }
                     }
-                    button {
-                        class: if available { "craft-btn" } else { "craft-btn disabled" },
-                        disabled: !available,
-                        onclick: move |_| {
-                            let result = {
-                                let mut guard = state.write();
-                                actions::craft(&mut guard, &recipe_id)
-                            };
-                            message.set(match result {
-                                Ok(()) => String::new(),
-                                Err(error) => craft_error_text(error).to_string(),
-                            });
-                            open.set(false);
-                            refresh_view(state);
-                        },
-                        "Создать"
+                    if result_quantity > 1 {
+                        div { class: "craft-need", "Выход: ×{result_quantity}" }
                     }
+                }
+            }
+
+            if let Some(text) = blocked {
+                div { class: "craft-panel-blocked", "{text}" }
+            }
+            if !result_id.is_empty() {
+                div { class: "craft-panel-hint",
+                    if missing { "Красным отмечены недостающие ресурсы." }
                 }
             }
         }
@@ -436,13 +575,13 @@ fn InventoryCard(
     let stats = item.stats.summary();
     let base_price = item.base_price;
     let slot = item.slot;
-    let icon = item_icon(&item).0;
+    let icon = item_icon(&item);
     let message_now = message();
 
     rsx! {
         section { class: "inv-detail",
             div { class: "inv-detail-head",
-                img { class: "inv-detail-icon icon", src: "{icon}", alt: "" }
+                span { class: "inv-detail-icon", "{icon}" }
                 span { class: "inv-detail-name", "{item_name}" }
                 span { class: "inv-detail-price", "{base_price} зл." }
                 button {
