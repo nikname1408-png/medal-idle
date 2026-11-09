@@ -59,6 +59,8 @@ pub const TRADERS: [TraderDef; 3] = [
             "sickle",
             "scythe",
             "candle",
+            "map_forest",
+            "map_mines",
         ],
     },
     TraderDef {
@@ -254,6 +256,8 @@ pub fn default_market(index: usize) -> TraderMarket {
             good("sickle", 2, 60, 45, 3),
             good("scythe", 1, 65, 40, 2),
             good("candle", 30, 35, 65, 20),
+            good("map_forest", 1, 90, 20, 1),
+            good("map_mines", 1, 92, 18, 1),
         ],
         // Кузнец: металл, инструменты и оружие.
         _ => vec![

@@ -18,11 +18,9 @@ static VIEW: GlobalSignal<GameState> = Signal::global(GameState::default);
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 const ICON_BAG: Asset = asset!("/assets/icons/bag.png");
-const ICON_COAL: Asset = asset!("/assets/icons/coal.png");
 const ICON_FIELD: Asset = asset!("/assets/icons/field.png");
 const ICON_GEAR: Asset = asset!("/assets/icons/gear.png");
 const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
-const ICON_IRON: Asset = asset!("/assets/icons/iron.png");
 const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
 const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
 const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
@@ -53,8 +51,7 @@ fn resource_text_icon(kind: ResourceKind) -> &'static str {
     match kind {
         ResourceKind::Wood => "🪵",
         ResourceKind::Stone => "🪨",
-        ResourceKind::Iron => "⛏",
-        ResourceKind::Coal => "🔥",
+        ResourceKind::Fire => "🔥",
         ResourceKind::Gold => "🪙",
     }
 }
@@ -571,7 +568,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                                 class: if can_feed { "forge-btn" } else { "forge-btn disabled" },
                                 disabled: !can_feed,
                                 onclick: move |_| do_forge_feed(state),
-                                "Подбросить уголь"
+                                "Подбросить уголь (+{snapshot.fire_per_coal()} с)"
                             }
                             button {
                                 class: "{auto_class}",
@@ -915,14 +912,14 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
     let cycles = snapshot.cycles;
     let bonus = cycles as f64 * balance::CYCLE_BONUS_PER_CYCLE * 100.0;
     let ready = snapshot.forge_level > 0
-        && snapshot.active_amount("iron") as f64 >= balance::CYCLE_IRON_REQUIREMENT;
+        && snapshot.ingredient_amount("iron") as f64 >= balance::CYCLE_IRON_REQUIREMENT;
     let requirement = if snapshot.forge_level == 0 {
         "Построй кузницу.".to_string()
-    } else if (snapshot.active_amount("iron") as f64) < balance::CYCLE_IRON_REQUIREMENT {
+    } else if (snapshot.ingredient_amount("iron") as f64) < balance::CYCLE_IRON_REQUIREMENT {
         format!(
-            "Нужно {} железа (сейчас {}).",
+            "Нужно {} железной руды (сейчас {}).",
             format_num(balance::CYCLE_IRON_REQUIREMENT),
-            format_num(snapshot.active_amount("iron") as f64)
+            format_num(snapshot.ingredient_amount("iron") as f64)
         )
     } else {
         "Всё готово для нового цикла.".to_string()
@@ -990,7 +987,7 @@ fn StatsScreen(view: GameState) -> Element {
             StatRow { label: "Добыто дерева".to_string(), value: format_num(stats.wood_gathered) }
             StatRow { label: "Добыто камня".to_string(), value: format_num(stats.stone_gathered) }
             StatRow { label: "Получено угля".to_string(), value: format_num(stats.coal_produced) }
-            StatRow { label: "Добыто железа".to_string(), value: format_num(stats.iron_mined) }
+            StatRow { label: "Добыто железной руды".to_string(), value: format_num(stats.iron_mined) }
             StatRow { label: "Заработано золота".to_string(), value: format_num(stats.gold_earned) }
             StatRow { label: "Пройдено циклов".to_string(), value: format_num(snapshot.cycles as f64) }
         }
@@ -1511,15 +1508,12 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                     }
                     DevResourceRow {
                         icon: "⛏️".to_string(),
-                        name: "Руда".to_string(),
-                        value: snapshot.active_amount("iron") as f64,
+                        name: "Железная руда".to_string(),
+                        value: snapshot.item_count("iron") as f64,
                         speed: dev.iron_per_sec,
                         on_value: move |value: f64| {
                             let mut guard = state.write();
-                            guard
-                                .active_resources
-                                .insert("iron".to_string(), value.max(0.0) as u32);
-                            guard.refresh_unlocks();
+                            let _ = guard.add_item("iron", value.max(0.0) as u32);
                         },
                         on_speed: move |value: f64| {
                             state.write().dev.iron_per_sec = value.max(0.0);
@@ -1931,20 +1925,12 @@ fn ResourceBar(view: GameState) -> Element {
             state.cap(ResourceKind::Stone),
         ));
     }
-    if state.forge_researched || state.mine_level > 0 || state.active_amount("iron") > 0 {
+    if state.forge_researched || state.forge_level > 0 {
         items.push((
-            ResourceKind::Iron,
-            "Руда",
-            state.active_amount("iron") as f64,
-            state.cap(ResourceKind::Iron),
-        ));
-    }
-    if state.coal_seen || state.active_amount("coal") > 0 {
-        items.push((
-            ResourceKind::Coal,
-            "Уголь",
-            state.active_amount("coal") as f64,
-            state.cap(ResourceKind::Coal),
+            ResourceKind::Fire,
+            "Огонь",
+            state.current_fire as f64,
+            state.cap(ResourceKind::Fire),
         ));
     }
     if state.gold > 0.0 || state.trader_researched {
@@ -1963,7 +1949,11 @@ fn ResourceBar(view: GameState) -> Element {
             } else {
                 for (kind, name, value, cap) in items {
                     div { class: "resource", key: "{name}",
-                        img { class: "resource-icon icon", src: "{resource_icon(kind)}", alt: "" }
+                        if let Some(icon) = resource_icon(kind) {
+                            img { class: "resource-icon icon", src: "{icon}", alt: "" }
+                        } else {
+                            span { class: "resource-icon", "{resource_text_icon(kind)}" }
+                        }
                         div { class: "resource-text",
                             span { class: "resource-name", "{name}" }
                             span {
@@ -2235,13 +2225,12 @@ fn tab_icon(index: usize) -> Option<Asset> {
     }
 }
 
-/// Загруженная PNG-иконка ресурса.
-fn resource_icon(kind: ResourceKind) -> Asset {
+/// Загруженная PNG-иконка ресурса. У огня своего спрайта нет — эмодзи.
+fn resource_icon(kind: ResourceKind) -> Option<Asset> {
     match kind {
-        ResourceKind::Wood => ICON_WOOD,
-        ResourceKind::Stone => ICON_STONE,
-        ResourceKind::Iron => ICON_IRON,
-        ResourceKind::Coal => ICON_COAL,
-        ResourceKind::Gold => ICON_GOLD,
+        ResourceKind::Wood => Some(ICON_WOOD),
+        ResourceKind::Stone => Some(ICON_STONE),
+        ResourceKind::Fire => None,
+        ResourceKind::Gold => Some(ICON_GOLD),
     }
 }

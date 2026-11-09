@@ -85,7 +85,7 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
     if kind == ResourceKind::Stone && !state.stone_unlocked() {
         return GatherResult::Locked;
     }
-    if kind == ResourceKind::Iron || kind == ResourceKind::Coal {
+    if kind == ResourceKind::Fire {
         return GatherResult::Locked;
     }
 
@@ -105,9 +105,8 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
     match kind {
         ResourceKind::Wood => state.stats.wood_gathered += added,
         ResourceKind::Stone => state.stats.stone_gathered += added,
-        ResourceKind::Coal => state.stats.coal_produced += added,
-        ResourceKind::Iron => state.stats.iron_mined += added,
         ResourceKind::Gold => state.stats.gold_earned += added,
+        ResourceKind::Fire => {}
     }
     state.refresh_unlocks();
     GatherResult::Gathered(added)
@@ -139,9 +138,18 @@ pub fn tick(state: &mut GameState, dt_seconds: f64) {
 
     state.add_resource(ResourceKind::Wood, wood * dt);
     state.add_resource(ResourceKind::Stone, stone * dt);
-    state.add_resource(ResourceKind::Iron, iron * dt);
-    state.add_resource(ResourceKind::Coal, coal * dt);
     state.add_resource(ResourceKind::Gold, gold * dt);
+    // Руда и уголь — инвентарные предметы, а не активные склады.
+    if iron > 0.0 {
+        let added = state.add_item("iron", (iron * dt).round().max(0.0) as u32);
+        if added {
+            state.stats.iron_mined += iron * dt;
+        }
+    }
+    if coal > 0.0 {
+        let added = state.add_active("coal", (coal * dt).round().max(0.0) as u32);
+        state.stats.coal_produced += added as f64;
+    }
 
     let sawmill = state.sawmill_wood_per_sec() * state.production_multiplier() * dt;
     if sawmill > 0.0 {
@@ -189,7 +197,7 @@ fn tick_coal_pit(state: &mut GameState, dt: f64) {
         return;
     }
 
-    let coal_cap = state.cap(ResourceKind::Coal);
+    let coal_cap = state.active_cap("coal") as f64;
     if state.active_amount("coal") as f64 >= coal_cap {
         state.coal_pit_progress = 0.0;
         return;
@@ -205,7 +213,7 @@ fn tick_coal_pit(state: &mut GameState, dt: f64) {
         state.coal_pit_progress -= 1.0;
 
         if state.active_amount("wood") as f64 + 1e-9 < balance::COAL_PIT_WOOD_PER_BATCH
-            || state.active_amount("coal") as f64 >= state.cap(ResourceKind::Coal)
+            || state.active_amount("coal") as f64 >= state.active_cap("coal") as f64
         {
             state.coal_pit_progress = 0.0;
             break;
@@ -213,8 +221,8 @@ fn tick_coal_pit(state: &mut GameState, dt: f64) {
 
         state.spend_active("wood", balance::COAL_PIT_WOOD_PER_BATCH as u32);
         let output = balance::COAL_PIT_COAL_PER_BATCH * state.production_multiplier();
-        let added = state.add_resource(ResourceKind::Coal, output);
-        state.stats.coal_produced += added;
+        let added = state.add_active("coal", output.round().max(0.0) as u32);
+        state.stats.coal_produced += added as f64;
         state.coal_seen = true;
     }
 }
@@ -229,7 +237,7 @@ fn tick_forge_fire(state: &mut GameState, dt: f64) {
     // Автоподкидка: один уголь, когда огонь полностью погас.
     if state.forge_auto_feed && state.current_fire == 0 && state.active_amount("coal") >= 1 {
         state.spend_active("coal", 1);
-        state.current_fire = balance::FIRE_SECONDS_PER_COAL.min(state.fire_max());
+        state.current_fire = state.fire_per_coal().min(state.fire_max());
     }
 
     state.current_fire = (state.current_fire as f64 - dt).max(0.0) as u32;
@@ -432,7 +440,7 @@ pub fn add_coal_to_fire(state: &mut GameState) -> bool {
     }
 
     state.spend_active("coal", 1);
-    state.current_fire = (state.current_fire + balance::FIRE_SECONDS_PER_COAL).min(max);
+    state.current_fire = (state.current_fire + state.fire_per_coal()).min(max);
     true
 }
 
@@ -459,13 +467,10 @@ pub fn affordable_crafts(state: &GameState, recipe: &items::Recipe) -> u32 {
         return 0;
     }
     let mut limit = u32::MAX;
+    // Огонь уже входит в ингредиенты рецепта и берётся из `current_fire`.
     for ingredient in &recipe.ingredients {
         let available = state.ingredient_amount(ingredient.item_id);
         limit = limit.min(available / ingredient.quantity.max(1));
-    }
-    let fire = fire_cost(state, recipe);
-    if fire > 0 {
-        limit = limit.min(state.current_fire.checked_div(fire).unwrap_or(0));
     }
     // Каждый вид предмета — одна ячейка; второй вид требует свободной ячейки,
     // а количество в ячейке ограничено лимитом стака.
@@ -501,13 +506,12 @@ pub fn craft_times(state: &mut GameState, recipe_id: &str, times: u32) -> Result
     if recipe.fire_cost > 0 && state.forge_level == 0 {
         return Err(CraftError::NoFire);
     }
-    let fire = fire_cost(state, recipe);
 
     // Сколько повторов реально хватает по всем ограничениям.
     let available = affordable_crafts(state, recipe);
     let times = times.min(available);
     if times == 0 {
-        if fire > state.current_fire {
+        if fire_cost(state, recipe) > state.current_fire {
             return Err(CraftError::NoFire);
         }
         for ingredient in &recipe.ingredients {
@@ -524,7 +528,6 @@ pub fn craft_times(state: &mut GameState, recipe_id: &str, times: u32) -> Result
                 return Err(CraftError::NotEnough);
             }
         }
-        state.current_fire = state.current_fire.saturating_sub(fire);
         if !state.add_item(recipe.result_id, recipe.result_quantity) {
             return Err(CraftError::NoSpace);
         }
@@ -580,7 +583,7 @@ pub fn prestige(state: &mut GameState) -> PrestigeResult {
     if state.forge_level == 0 {
         return PrestigeResult::Locked;
     }
-    if state.active_amount("iron") as f64 + 1e-9 < balance::CYCLE_IRON_REQUIREMENT {
+    if state.ingredient_amount("iron") as f64 + 1e-9 < balance::CYCLE_IRON_REQUIREMENT {
         return PrestigeResult::NotEnough;
     }
 
@@ -907,13 +910,13 @@ mod tests {
             forge_level: 1,
             ..GameState::default()
         };
-        state.add_active("iron", 5);
+        state.add_item("iron", 5);
         state.add_active("coal", 1);
         state.current_fire = balance::FIRE_SECONDS_PER_COAL;
 
         assert_eq!(craft(&mut state, "iron_ingot"), Ok(()));
         let spent_fire = balance::FIRE_SECONDS_PER_COAL - state.current_fire;
-        assert_eq!(state.active_amount("iron"), 3);
+        assert_eq!(state.item_count("iron"), 3);
         assert_eq!(state.active_amount("coal"), 0);
         assert_eq!(spent_fire, 15);
         assert_eq!(state.item_count("iron_ingot"), 1);
@@ -962,7 +965,7 @@ mod tests {
             forge_level: 1,
             ..GameState::default()
         };
-        state.add_active("iron", 5);
+        state.add_item("iron", 5);
         state.add_active("coal", 1);
         state.current_fire = 100;
         let recipe = items::recipe("iron_ingot").unwrap();
@@ -1010,13 +1013,13 @@ mod tests {
             forge_level: 1,
             ..GameState::default()
         };
-        state.add_active("iron", balance::CYCLE_IRON_REQUIREMENT as u32);
+        state.add_item("iron", balance::CYCLE_IRON_REQUIREMENT as u32);
         state.time = 5.0;
 
         assert_eq!(prestige(&mut state), PrestigeResult::Done(1));
         assert_eq!(state.cycles, 1);
         assert_eq!(state.forge_level, 0);
-        assert_eq!(state.active_amount("iron"), 0);
+        assert_eq!(state.item_count("iron"), 0);
         assert_eq!(state.time, 5.0);
         assert!((state.production_multiplier() - 1.1).abs() < 1e-9);
     }

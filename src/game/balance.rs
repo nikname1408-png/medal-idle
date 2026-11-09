@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 /// Версия формата сохранения. Меняется при несовместимых правках.
-pub const SAVE_VERSION: u32 = 7;
+pub const SAVE_VERSION: u32 = 8;
 
 /// Стартовый капитал новой игры. Ноль: всё добывается и зарабатывается.
 pub const START_GOLD: f64 = 0.0;
@@ -183,8 +183,10 @@ pub const BANK_RESEARCH_COST: f64 = 200.0;
 pub const FORGE_FIRE_MAX_SECONDS: u32 = 60;
 /// Сколько секунд огня даёт один уголь.
 pub const FIRE_SECONDS_PER_COAL: u32 = 20;
+/// Прибавка к огню с одного угля за каждый уровень кузницы выше первого.
+pub const FIRE_PER_COAL_PER_LEVEL: u32 = 10;
 /// Прибавка к запасу огня за каждый уровень кузницы выше первого.
-pub const FORGE_FIRE_PER_LEVEL: u32 = 10;
+pub const FORGE_FIRE_PER_LEVEL: u32 = 50;
 
 /// Сколько камня в секунду даёт один работник шахты.
 pub const MINE_STONE_PER_WORKER_PER_SEC: f64 = 0.5;
@@ -212,30 +214,25 @@ pub const RESEARCH_TIME_WARP: f64 = 15.0;
 
 /// Сколько энергии тратит один поход.
 pub const EXPEDITION_ENERGY_COST: f64 = 10.0;
-/// Сколько энергии тратится за каждый тик пути (в секунду), пока идёт поход.
-pub const EXPEDITION_ENERGY_PER_TICK: f64 = 0.2;
-/// Доля шанса находки от базового шанса локации за один тик пути.
-pub const EXPEDITION_CHANCE_SCALE: u32 = 4;
 
-/// Базовый шанс находки за 10 секунд пути, %.
-pub const EXPEDITION_CHANCE_FOREST: u32 = 3;
-pub const EXPEDITION_CHANCE_QUARRY: u32 = 2;
-pub const EXPEDITION_CHANCE_RUINS: u32 = 1;
+/// Шанс найти лут за один тик пути (1 с), %.
+pub const EXPEDITION_LOOT_CHANCE: u32 = 15;
+/// Шансы редкости лута при сработавшем броске, в промилле (0..1000).
+/// Обычный 70%, необычный 20%, редкий 8%, эпический 1.9%, легендарный 0.1%.
+pub const EXPEDITION_COMMON_WEIGHT: u32 = 700;
+pub const EXPEDITION_UNCOMMON_WEIGHT: u32 = 200;
+pub const EXPEDITION_RARE_WEIGHT: u32 = 80;
+pub const EXPEDITION_EPIC_WEIGHT: u32 = 19;
+pub const EXPEDITION_LEGENDARY_WEIGHT: u32 = 1;
 
-/// Дропи леса: активные ресурсы (вид, минимум, максимум).
-pub const EXPEDITION_FOREST_ACTIVE: [(&str, u32, u32); 1] = [("wood", 50, 350)];
-/// Дропи леса: инвентарные предметы (вид, минимум, максимум).
-pub const EXPEDITION_FOREST_INVENTORY: [(&str, u32, u32); 1] = [("fiber", 1, 3)];
+/// Отдельная проверка чертежа паровой машины в Древних руинах: 1% в секунду.
+pub const EXPEDITION_STEAM_BLUEPRINT_CHANCE: u32 = 1;
 
-/// Дропи каменоломни: активные ресурсы.
-pub const EXPEDITION_QUARRY_ACTIVE: [(&str, u32, u32); 1] = [("stone", 30, 220)];
-/// Дропи каменоломни: инвентарные предметы.
-pub const EXPEDITION_QUARRY_INVENTORY: [(&str, u32, u32); 1] = [("clay", 10, 120)];
-
-/// Дропи руин: активные ресурсы.
-pub const EXPEDITION_RUINS_ACTIVE: [(&str, u32, u32); 1] = [("iron", 20, 180)];
-/// Дропи руин: инвентарные предметы.
-pub const EXPEDITION_RUINS_INVENTORY: [(&str, u32, u32); 2] = [("leather", 1, 3), ("silver", 1, 3)];
+/// Какая доля редких находок в текущей локации превращается в карту, %.
+///
+/// Карта не должна сыпаться пачками: при 15% лута, 8% редкого и 4% здесь
+/// выходит одна карта примерно раз в 2000 секунд пути.
+pub const EXPEDITION_MAP_CHANCE: u32 = 4;
 
 /// Стоимость предметов в кузнице.
 pub const ITEM_SWORD_IRON: f64 = 5.0;

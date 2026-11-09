@@ -6,13 +6,13 @@ use super::balance;
 use super::items::{self, EquipSlot};
 use super::trader::{self, TraderMarket};
 
-/// Виды ресурсов.
+/// Виды ресурсов в баре: дерево, камень, огонь, золото. Руда и прочие
+/// находки живут в рюкзаке.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResourceKind {
     Wood,
     Stone,
-    Iron,
-    Coal,
+    Fire,
     Gold,
 }
 
@@ -23,8 +23,7 @@ impl ResourceKind {
         match self {
             Self::Wood => "дерево",
             Self::Stone => "камень",
-            Self::Iron => "железо",
-            Self::Coal => "уголь",
+            Self::Fire => "огонь",
             Self::Gold => "золото",
         }
     }
@@ -32,7 +31,7 @@ impl ResourceKind {
 
 /// Ключ относится к активным ресурсам склада (а не к предметам рюкзака).
 pub fn is_active_resource(key: &str) -> bool {
-    matches!(key, "wood" | "stone" | "iron" | "coal")
+    matches!(key, "wood" | "stone" | "coal")
 }
 
 /// Направления изучения.
@@ -305,6 +304,8 @@ pub struct GameState {
     /// Активный поход: `None` — игрок не в пути. Хранится в состоянии, чтобы
     /// поход шёл и при закрытой вкладке.
     pub active_expedition: Option<ActiveExpedition>,
+    /// Открытые картами локации походов (кроме стартовых поля и оврага).
+    pub unlocked_locations: Vec<String>,
 
     /// Сколько циклов (перерождений) пройдено.
     pub cycles: u32,
@@ -400,6 +401,7 @@ impl Default for GameState {
             market_seed: 0x9e37_79b9_7f4a_7c15,
             expedition_timer: 0.0,
             active_expedition: None,
+            unlocked_locations: Vec::new(),
             cycles: 0,
             time: 0.0,
             last_seen: 0,
@@ -428,8 +430,7 @@ impl GameState {
         match kind {
             ResourceKind::Wood => "wood",
             ResourceKind::Stone => "stone",
-            ResourceKind::Iron => "iron",
-            ResourceKind::Coal => "coal",
+            ResourceKind::Fire => "fire",
             ResourceKind::Gold => "gold",
         }
     }
@@ -438,18 +439,20 @@ impl GameState {
         match kind {
             ResourceKind::Wood => self.active_amount("wood") as f64,
             ResourceKind::Stone => self.active_amount("stone") as f64,
-            ResourceKind::Iron => self.active_amount("iron") as f64,
-            ResourceKind::Coal => self.active_amount("coal") as f64,
+            ResourceKind::Fire => self.current_fire as f64,
             ResourceKind::Gold => self.gold,
         }
     }
 
-    /// Лимит ресурса с учётом склада. Для золота действует банк.
+    /// Лимит ресурса с учётом склада. Для огня — запас кузницы, для золота — банк.
     pub fn cap(&self, kind: ResourceKind) -> f64 {
-        if kind == ResourceKind::Gold {
-            self.gold_cap()
-        } else {
-            balance::BASE_STORAGE_CAP + self.storage_level as f64 * balance::STORAGE_CAP_PER_LEVEL
+        match kind {
+            ResourceKind::Fire => self.fire_max() as f64,
+            ResourceKind::Gold => self.gold_cap(),
+            _ => {
+                balance::BASE_STORAGE_CAP
+                    + self.storage_level as f64 * balance::STORAGE_CAP_PER_LEVEL
+            }
         }
     }
 
@@ -660,6 +663,12 @@ impl GameState {
         balance::FORGE_FIRE_MAX_SECONDS + levels * balance::FORGE_FIRE_PER_LEVEL
     }
 
+    /// Сколько секунд огня даёт один уголь: растёт с уровнем кузницы.
+    pub fn fire_per_coal(&self) -> u32 {
+        let levels = self.forge_level.saturating_sub(1);
+        balance::FIRE_SECONDS_PER_COAL + levels * balance::FIRE_PER_COAL_PER_LEVEL
+    }
+
     /// Активный ресурс «X» из склада.
     pub fn active_amount(&self, kind: &str) -> u32 {
         self.active_resources.get(kind).copied().unwrap_or(0)
@@ -704,18 +713,27 @@ impl GameState {
         self.inventory.get(item_id).copied().unwrap_or(0)
     }
 
-    /// Стоимость ингредиента: активный ресурс склада или предмет из сумки.
+    /// Стоимость ингредиента: активный ресурс склада, огонь кузницы или предмет.
     pub fn ingredient_amount(&self, key: &str) -> u32 {
-        if is_active_resource(key) {
+        if key == "fire" {
+            self.current_fire
+        } else if is_active_resource(key) {
             self.active_amount(key)
         } else {
             self.item_count(key)
         }
     }
 
-    /// Списывает ингредиент: активный ресурс склада или предмет из сумки.
+    /// Списывает ингредиент: активный ресурс склада, огонь кузницы или предмет.
     pub fn spend_ingredient(&mut self, key: &str, quantity: u32) -> bool {
         if quantity == 0 {
+            return true;
+        }
+        if key == "fire" {
+            if self.current_fire < quantity {
+                return false;
+            }
+            self.current_fire -= quantity;
             return true;
         }
         if is_active_resource(key) {
@@ -1044,14 +1062,19 @@ impl GameState {
         let room = (self.cap(kind) - self.amount(kind)).max(0.0);
         let added = room.min(amount.max(0.0));
 
-        if kind == ResourceKind::Gold {
-            self.gold = (self.gold + added).min(self.gold_cap());
-            return added;
-        }
-
-        let added_u32 = added.max(0.0) as u32;
-        if added_u32 > 0 {
-            self.add_active(Self::resource_key(kind), added_u32);
+        match kind {
+            ResourceKind::Gold => {
+                self.gold = (self.gold + added).min(self.gold_cap());
+            }
+            ResourceKind::Fire => {
+                self.current_fire = (self.current_fire as f64 + added).min(self.cap(kind)) as u32;
+            }
+            _ => {
+                let added_u32 = added.max(0.0) as u32;
+                if added_u32 > 0 {
+                    self.add_active(Self::resource_key(kind), added_u32);
+                }
+            }
         }
         added
     }
@@ -1086,9 +1109,9 @@ impl GameState {
     /// Обновляет сохранение старого формата: демо-капитал, версия и рынки.
     pub fn migrate(&mut self) {
         if self.version < balance::SAVE_VERSION {
-            // Старые версии получали демо-капитал: убираем его, игра стартует с нуля.
-            self.gold = 0.0;
-            self.inventory.clear();
+            // Снос условий выживания: чужие сохранения переводятся на новую
+            // экономику. С v7 демо-капитал больше не выдаётся, поэтому старая
+            // ветка «обнулить золото и сумку» больше не нужна.
             self.version = balance::SAVE_VERSION;
         }
         if self.active_resources.is_empty() {
@@ -1101,6 +1124,12 @@ impl GameState {
                 .insert("iron".to_string(), self.iron as u32);
             self.active_resources
                 .insert("coal".to_string(), self.coal as u32);
+        }
+        // Руда больше не живёт на складе: переносим её в рюкзак.
+        if let Some(iron) = self.active_resources.remove("iron") {
+            if iron > 0 && !self.add_item("iron", iron) {
+                // Часть не поместилась — теряем остаток, как излишки склада.
+            }
         }
         // Глина переехала со склада в рюкзак, а зелье силы и легаси-руда удалены.
         if let Some(clay) = self.active_resources.remove("clay") {
@@ -1149,8 +1178,56 @@ impl GameState {
         if self.amount(ResourceKind::Wood) >= balance::STONE_UNLOCK_WOOD {
             self.stone_seen = true;
         }
-        if self.amount(ResourceKind::Coal) > 0.0 {
+        if self.active_amount("coal") > 0 {
             self.coal_seen = true;
+        }
+    }
+
+    /// Открыта ли локация похода.
+    pub fn location_unlocked(&self, location_id: &str) -> bool {
+        super::expedition::STARTING_LOCATIONS.contains(&location_id)
+            || self.unlocked_locations.iter().any(|id| id == location_id)
+    }
+
+    /// Открывает локацию. Возвращает `true`, если она была закрыта.
+    pub fn unlock_location(&mut self, location_id: &str) -> bool {
+        if self.location_unlocked(location_id) {
+            return false;
+        }
+        if super::expedition::location(location_id).is_none() {
+            return false;
+        }
+        self.unlocked_locations.push(location_id.to_string());
+        true
+    }
+
+    /// Последняя открытая картой локация — только в ней падают карты.
+    ///
+    /// Стартовые локации не считаются «открытыми картой»: цепочка идёт
+    /// со шахт — в них выпадает карта Забытой каменоломни.
+    pub fn current_location(&self) -> &'static str {
+        for location_id in self.unlocked_locations.iter().rev() {
+            let Some(location) = super::expedition::location(location_id) else {
+                continue;
+            };
+            return location.id;
+        }
+        "deep_mines"
+    }
+
+    /// `true`, если это последняя открытая локация.
+    pub fn is_current_location(&self, location_id: &str) -> bool {
+        self.current_location() == location_id
+    }
+
+    /// Есть ли у игрока требуемый локации предмет (кирка, свеча).
+    pub fn meets_location_requirement(
+        &self,
+        requirement: Option<(&'static str, &'static str)>,
+    ) -> bool {
+        match requirement {
+            None => true,
+            Some((item_id, _)) => self.item_count(item_id) > 0,
         }
     }
 }
@@ -1166,7 +1243,7 @@ mod tests {
         assert!(state.inventory.is_empty());
         assert_eq!(state.active_amount("wood"), 0);
         assert_eq!(state.active_amount("stone"), 0);
-        assert_eq!(state.active_amount("iron"), 0);
+        assert_eq!(state.item_count("iron"), 0);
         assert_eq!(state.active_amount("coal"), 0);
         assert_eq!(state.energy, balance::START_ENERGY);
     }
@@ -1194,15 +1271,50 @@ mod tests {
     }
 
     #[test]
-    fn migration_drops_demo_gold_and_backpack() {
+    fn migration_moves_ore_from_storage_to_backpack() {
         let mut state = GameState {
-            version: 6,
+            version: 7,
             gold: 1_240.0,
             ..GameState::default()
         };
         state.inventory.insert("leather".to_string(), 2);
+        state.active_resources.insert("iron".to_string(), 40);
         state.migrate();
-        assert_eq!(state.gold, 0.0);
-        assert!(state.inventory.is_empty());
+        // Золото и сумку больше не обнуляем: демо-капитал не выдаётся с v7.
+        assert_eq!(state.gold, 1_240.0);
+        assert_eq!(state.item_count("leather"), 2);
+        assert_eq!(state.item_count("iron"), 40);
+        assert!(!state.active_resources.contains_key("iron"));
+    }
+
+    #[test]
+    fn location_chain_unlocks_by_map() {
+        let state = GameState::default();
+        assert!(state.location_unlocked("field"));
+        assert!(state.location_unlocked("ravine"));
+        assert!(state.location_unlocked("deep_forest"));
+        assert!(state.location_unlocked("deep_mines"));
+        assert!(!state.location_unlocked("forgotten_quarry"));
+        assert!(!state.location_unlocked("ancient_ruins"));
+        assert_eq!(state.current_location(), "deep_mines");
+    }
+
+    #[test]
+    fn fire_goes_green_with_forge_level() {
+        let mut state = GameState {
+            forge_level: 1,
+            ..GameState::default()
+        };
+        let base_max = state.fire_max();
+        let base_coal = state.fire_per_coal();
+        state.forge_level = 3;
+        assert_eq!(
+            state.fire_max(),
+            base_max + 2 * balance::FORGE_FIRE_PER_LEVEL
+        );
+        assert_eq!(
+            state.fire_per_coal(),
+            base_coal + 2 * balance::FIRE_PER_COAL_PER_LEVEL
+        );
     }
 }

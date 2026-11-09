@@ -303,6 +303,47 @@ fn build_catalog() -> Vec<Item> {
             None,
             "Огранённые камни для дорогих украшений.",
         ),
+        // ---------- Карты локаций ----------
+        item_def(
+            "map_forest",
+            "Карта Дремучего леса",
+            Category::Material,
+            500,
+            None,
+            "Открывает поход в Дремучий лес. Покупается у торговца или падает в поле и овраге.",
+        ),
+        item_def(
+            "map_mines",
+            "Карта Глубоких шахт",
+            Category::Material,
+            1500,
+            None,
+            "Открывает поход в Глубокие шахты. Нужна кирка.",
+        ),
+        item_def(
+            "map_quarry",
+            "Карта Забытой каменоломни",
+            Category::Material,
+            5000,
+            None,
+            "Открывает поход в Забытую каменоломню. Нужна кирка.",
+        ),
+        item_def(
+            "map_ruins",
+            "Карта Древних руин",
+            Category::Material,
+            10000,
+            None,
+            "Открывает поход в Древние руины. Нужен факел или свеча.",
+        ),
+        item_def(
+            "steam_blueprint",
+            "Чертёж паровой машины",
+            Category::Material,
+            5000,
+            None,
+            "Особая находка Древних руин. Пригодится в будущих эпохах.",
+        ),
         // ---------- Промежуточные материалы ----------
         item_def(
             "board",
@@ -706,6 +747,17 @@ fn make_recipe(
     fire_cost: u32,
     ingredients: Vec<Ingredient>,
 ) -> Recipe {
+    let mut ingredients = ingredients;
+    // Крафт с огнём прямо указывает, сколько огня он тратит: в ресурсах карточки
+    // горит тот же огонь, что и в реальной стоимости. Огонь ставим после
+    // угля, чтобы список читался «уголь, огонь».
+    if fire_cost > 0
+        && !ingredients
+            .iter()
+            .any(|ingredient| ingredient.item_id == "fire")
+    {
+        ingredients.push(need("fire", fire_cost));
+    }
     Recipe {
         id,
         name,
@@ -977,7 +1029,7 @@ mod tests {
             );
             for ingredient in &recipe.ingredients {
                 assert!(
-                    item(ingredient.item_id).is_some(),
+                    item(ingredient.item_id).is_some() || ingredient.item_id == "fire",
                     "нет ингредиента {}",
                     ingredient.item_id
                 );

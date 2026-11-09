@@ -1,4 +1,4 @@
-//! Экран походов: локации, длительный поход и найденное.
+//! Экран походов: локации по цепочке, редкости лута и найденное.
 
 use dioxus::prelude::*;
 
@@ -44,6 +44,7 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                 .join("\n")
         })
         .unwrap_or_default();
+    let current_id = view.current_location();
 
     rsx! {
         section { class: "exp-screen",
@@ -55,13 +56,12 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                 }
                 p { class: "exp-hint",
-                    "Поход идёт, пока есть энергия ({format_num(balance::EXPEDITION_ENERGY_PER_TICK)}/с) — даже если закрыть эту вкладку. Нажми «Закончить поход», чтобы вернуться."
+                    "Каждую секунду пути есть {balance::EXPEDITION_LOOT_CHANCE}% шанс находки — поход идёт даже с закрытой вкладкой. Карты новых локаций падают только в последней открытой."
                 }
                 div { class: "exp-stats",
                     span { class: "exp-stat",
                         "Рюкзак: {view.inventory_used_slots()}/{view.inventory_slots()}"
                     }
-                    span { class: "exp-stat", "Шанс указан за 10 с пути." }
                 }
                 if view.inventory_free_slots() == 0 {
                     div { class: "exp-warning",
@@ -117,6 +117,9 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                         key: "{location.id}",
                         location,
                         energy,
+                        unlocked: view.location_unlocked(location.id),
+                        meets_requirement: view.meets_location_requirement(location.requires_item),
+                        is_current: current_id == location.id,
                         busy: active_id.is_some(),
                         current: active_id.as_deref() == Some(location.id),
                         on_go: move |_| {
@@ -139,33 +142,68 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
 fn ExpeditionCard(
     location: ExpeditionLocation,
     energy: f64,
+    unlocked: bool,
+    meets_requirement: bool,
+    is_current: bool,
     busy: bool,
     current: bool,
     on_go: EventHandler<()>,
 ) -> Element {
-    let can_go = !busy && energy + 1e-9 >= balance::EXPEDITION_ENERGY_PER_TICK;
-    let active = drop_list(location.active_drops);
-    let inventory = drop_list(location.inventory_drops);
-    let button_label = if current {
+    let can_go =
+        unlocked && meets_requirement && !busy && energy + 1e-9 >= location.energy_per_second;
+    let button_label = if !unlocked {
+        "Закрыто"
+    } else if !meets_requirement {
+        "Нужен предмет"
+    } else if current {
         "Идёт поход"
     } else if busy {
         "Занят"
     } else {
         "В поход"
     };
+    let unlock_text = expedition::unlock_map(location.id)
+        .map(|map_id| format!("Карта: {} (дроп или торговец)", ingredient_name(map_id)))
+        .unwrap_or_default();
 
     rsx! {
-        div { class: if current { "exp-card current" } else { "exp-card" },
+        div {
+            class: if !unlocked { "exp-card locked" } else if current { "exp-card current" } else { "exp-card" },
             div { class: "exp-card-head",
                 span { class: "exp-card-name", "{location.name}" }
-                span { class: "exp-card-chance", "{location.chance_percent}% / 10 с" }
+                if is_current && unlocked {
+                    span { class: "exp-card-chance", "текущая" }
+                }
             }
             div { class: "exp-card-desc", "{location.description}" }
-            div { class: "exp-card-drops", "Склад: {active}" }
-            div { class: "exp-card-drops", "Рюкзак: {inventory}" }
+            if !unlocked {
+                div { class: "exp-card-desc", "{unlock_text}" }
+            }
+            if let Some((item_id, label)) = location.requires_item {
+                div {
+                    class: if meets_requirement { "exp-card-desc" } else { "exp-card-desc poor" },
+                    "Требуется: {label} ({ingredient_name(item_id)})"
+                }
+            }
+            div { class: "exp-card-loot",
+                for entry in location.loot.iter() {
+                    div { class: "exp-loot-row", key: "{entry.item_id}",
+                        span { class: "exp-loot-rarity", style: "color: {entry.rarity.color()}",
+                            "{entry.rarity.name()}"
+                        }
+                        span { class: "exp-loot-name", "{ingredient_name(entry.item_id)}" }
+                        span { class: "exp-loot-qty", "{entry.min_quantity}–{entry.max_quantity}" }
+                    }
+                }
+            }
+            if location.id == "ancient_ruins" {
+                div { class: "exp-card-desc",
+                    "Особый лут: Чертёж паровой машины — {balance::EXPEDITION_STEAM_BLUEPRINT_CHANCE}% в секунду"
+                }
+            }
             div { class: "exp-card-foot",
                 span { class: "exp-card-cost",
-                    "−{format_num(balance::EXPEDITION_ENERGY_PER_TICK)}/с"
+                    "−{format_num(location.energy_per_second)} энергии/с"
                 }
                 button {
                     class: if can_go { "exp-go" } else { "exp-go disabled" },
@@ -176,13 +214,4 @@ fn ExpeditionCard(
             }
         }
     }
-}
-
-/// Строка с дропами локации.
-fn drop_list(drops: &[(&str, u32, u32)]) -> String {
-    drops
-        .iter()
-        .map(|(id, min, max)| format!("{} {min}–{max}", ingredient_name(id)))
-        .collect::<Vec<_>>()
-        .join(", ")
 }

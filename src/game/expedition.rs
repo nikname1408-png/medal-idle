@@ -1,16 +1,17 @@
 //! Походы по локациям.
 //!
-//! Поход длится, пока есть энергия: каждую секунду пути тратится
-//! [`balance::EXPEDITION_ENERGY_PER_TICK`]. На каждом шаге с небольшим шансом
-//! находится партия ресурсов или предмет. Активные ресурсы уходят на склад
-//! (излишки сгорают), инвентарные — в рюкзак; если рюкзак полон, поход
-//! прерывается. Уголь в походах не падает.
+//! Поход длится, пока есть энергия: каждую секунду пути тратится расход
+//! локации. Каждую секунду с шансом [`balance::EXPEDITION_LOOT_CHANCE`]
+//! находится лут; затем разыгрывается редкость (обычный/необычный/редкий/
+//! эпический/легендарный). Если нужной редкости в локации нет, она понижается
+//! до максимально доступной. Карты новых локаций падают только в последней
+//! открытой локации. Ресурсы склада (дерево, камень) уходят на склад, остальное
+//! — в рюкзак; если рюкзак полон, поход прерывается.
 //!
 //! Модуль не зависит от Dioxus: логику можно проверять через `cargo test`.
 
 use super::actions::next_random;
 use super::balance;
-use super::items::EquipSlot;
 use super::state::GameState;
 
 /// Ошибка похода.
@@ -21,14 +22,58 @@ pub enum ExpeditionError {
     NoEnergy,
 }
 
-impl ExpeditionError {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn text(self) -> &'static str {
+/// Редкость лута.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Rarity {
+    Common,
+    Uncommon,
+    Rare,
+    Epic,
+    Legendary,
+}
+
+impl Rarity {
+    /// Вес редкости в промилле.
+    pub fn weight(self) -> u32 {
         match self {
-            Self::UnknownLocation => "Такой локации нет.",
-            Self::NoEnergy => "Не хватает энергии на поход.",
+            Self::Common => balance::EXPEDITION_COMMON_WEIGHT,
+            Self::Uncommon => balance::EXPEDITION_UNCOMMON_WEIGHT,
+            Self::Rare => balance::EXPEDITION_RARE_WEIGHT,
+            Self::Epic => balance::EXPEDITION_EPIC_WEIGHT,
+            Self::Legendary => balance::EXPEDITION_LEGENDARY_WEIGHT,
         }
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Common => "Обычный",
+            Self::Uncommon => "Необычный",
+            Self::Rare => "Редкий",
+            Self::Epic => "Эпический",
+            Self::Legendary => "Легендарный",
+        }
+    }
+
+    /// Цвет в интерфейсе.
+    pub fn color(self) -> &'static str {
+        match self {
+            Self::Common => "#cfc7b0",
+            Self::Uncommon => "#7fcf7a",
+            Self::Rare => "#5aa8e6",
+            Self::Epic => "#b777e8",
+            Self::Legendary => "#e6a53f",
+        }
+    }
+}
+
+/// Одна строка таблицы лута локации.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LootEntry {
+    /// ID ресурса или предмета.
+    pub item_id: &'static str,
+    pub rarity: Rarity,
+    pub min_quantity: u32,
+    pub max_quantity: u32,
 }
 
 /// Описание локации похода.
@@ -37,51 +82,201 @@ pub struct ExpeditionLocation {
     pub id: &'static str,
     pub name: &'static str,
     pub description: &'static str,
-    /// Шанс находки за один игровой тик (1 с) пути, %.
-    pub chance_percent: u32,
-    /// Дропи на склад: (вид, минимум, максимум).
-    pub active_drops: &'static [(&'static str, u32, u32)],
-    /// Дропи в рюкзак: (вид, минимум, максимум).
-    pub inventory_drops: &'static [(&'static str, u32, u32)],
+    /// Расход энергии в секунду.
+    pub energy_per_second: f64,
+    /// Требуемый предмет (кирка/свеча); `None` — без требования.
+    pub requires_item: Option<(&'static str, &'static str)>,
+    /// Таблица лута с редкостями.
+    pub loot: &'static [LootEntry],
+    /// Карта, которая падает в этой локации как обычный лут (`None` — нет).
+    pub map_reward: Option<&'static str>,
 }
 
-/// Шанс находки за один тик пути.
-fn tick_chance(location: &ExpeditionLocation) -> u64 {
-    let scale = balance::EXPEDITION_CHANCE_SCALE.max(1) as u64;
-    ((location.chance_percent as u64) / scale).max(1)
+impl ExpeditionLocation {
+    /// Таблица лута с учётом карты: карта — редкий лут локации.
+    pub fn table(&self) -> Vec<LootEntry> {
+        let mut loot = self.loot.to_vec();
+        if let Some(map_id) = self.map_reward {
+            loot.push(LootEntry {
+                item_id: map_id,
+                rarity: Rarity::Rare,
+                min_quantity: 1,
+                max_quantity: 1,
+            });
+        }
+        loot
+    }
+
+    /// Есть ли в локации лут заданной редкости.
+    pub fn has_rarity(&self, rarity: Rarity) -> bool {
+        self.loot.iter().any(|entry| entry.rarity == rarity)
+            || (self.map_reward.is_some() && rarity == Rarity::Rare)
+    }
+
+    /// Понижает редкость до максимально доступной в локации.
+    fn downgrade(&self, rarity: Rarity) -> Option<Rarity> {
+        let mut candidate = rarity;
+        loop {
+            if self.has_rarity(candidate) {
+                return Some(candidate);
+            }
+            candidate = match candidate {
+                Rarity::Legendary => Rarity::Epic,
+                Rarity::Epic => Rarity::Rare,
+                Rarity::Rare => Rarity::Uncommon,
+                Rarity::Uncommon => Rarity::Common,
+                Rarity::Common => return None,
+            };
+        }
+    }
 }
 
-/// Все локации походов.
-pub const LOCATIONS: [ExpeditionLocation; 3] = [
+const fn entry(
+    item_id: &'static str,
+    rarity: Rarity,
+    min_quantity: u32,
+    max_quantity: u32,
+) -> LootEntry {
+    LootEntry {
+        item_id,
+        rarity,
+        min_quantity,
+        max_quantity,
+    }
+}
+
+/// Таблица лута «Заброшенного поля».
+const FIELD_LOOT: [LootEntry; 3] = [
+    entry("wood", Rarity::Common, 10, 70),
+    entry("clay", Rarity::Common, 3, 8),
+    entry("fiber", Rarity::Uncommon, 2, 5),
+];
+
+/// Таблица лута «Скалистого оврага».
+const RAVINE_LOOT: [LootEntry; 3] = [
+    entry("stone", Rarity::Common, 10, 70),
+    entry("iron", Rarity::Common, 5, 15),
+    entry("quartz", Rarity::Uncommon, 1, 3),
+];
+
+/// Таблица лута «Дремучего леса».
+const DEEP_FOREST_LOOT: [LootEntry; 3] = [
+    entry("wood", Rarity::Common, 80, 230),
+    entry("leather", Rarity::Uncommon, 2, 6),
+    entry("fiber", Rarity::Uncommon, 5, 15),
+];
+
+/// Таблица лута «Глубоких шахт».
+const DEEP_MINES_LOOT: [LootEntry; 3] = [
+    entry("stone", Rarity::Common, 150, 250),
+    entry("iron", Rarity::Common, 10, 25),
+    entry("quartz", Rarity::Uncommon, 2, 5),
+];
+
+/// Таблица лута «Забытой каменоломни».
+const FORGOTTEN_QUARRY_LOOT: [LootEntry; 2] = [
+    entry("stone", Rarity::Common, 180, 300),
+    entry("iron", Rarity::Common, 15, 35),
+];
+
+/// Таблица лута «Древних руин».
+const ANCIENT_RUINS_LOOT: [LootEntry; 6] = [
+    entry("stone", Rarity::Common, 50, 100),
+    entry("iron", Rarity::Common, 15, 35),
+    entry("quartz", Rarity::Uncommon, 5, 10),
+    entry("silver", Rarity::Rare, 1, 3),
+    entry("gold_ore", Rarity::Epic, 1, 2),
+    entry("gems", Rarity::Legendary, 1, 1),
+];
+
+/// Все локации походов по цепочке открытия.
+pub const LOCATIONS: [ExpeditionLocation; 6] = [
     ExpeditionLocation {
-        id: "forest",
-        name: "Лес",
-        description: "Ближний лес: древесина и волокно. Ходить близко и безопасно.",
-        chance_percent: balance::EXPEDITION_CHANCE_FOREST,
-        active_drops: &balance::EXPEDITION_FOREST_ACTIVE,
-        inventory_drops: &balance::EXPEDITION_FOREST_INVENTORY,
+        id: "field",
+        name: "Заброшенное поле",
+        description: "Бывшее крестьянское поле: дерево, глина и волокно.",
+        energy_per_second: 5.0,
+        requires_item: None,
+        loot: &FIELD_LOOT,
+        map_reward: Some("map_forest"),
     },
     ExpeditionLocation {
-        id: "quarry",
-        name: "Каменоломня",
-        description: "Старая каменоломня: камень на склад и глину в рюкзак.",
-        chance_percent: balance::EXPEDITION_CHANCE_QUARRY,
-        active_drops: &balance::EXPEDITION_QUARRY_ACTIVE,
-        inventory_drops: &balance::EXPEDITION_QUARRY_INVENTORY,
+        id: "ravine",
+        name: "Скалистый овраг",
+        description: "Каменистый овраг: камень, железная руда и кварц.",
+        energy_per_second: 7.5,
+        requires_item: None,
+        loot: &RAVINE_LOOT,
+        map_reward: Some("map_forest"),
     },
     ExpeditionLocation {
-        id: "ruins",
-        name: "Руины",
-        description: "Дальние руины: руда, кожа и серебро. Дорога опаснее, зато добыча богаче.",
-        chance_percent: balance::EXPEDITION_CHANCE_RUINS,
-        active_drops: &balance::EXPEDITION_RUINS_ACTIVE,
-        inventory_drops: &balance::EXPEDITION_RUINS_INVENTORY,
+        id: "deep_forest",
+        name: "Дремучий лес",
+        description: "Дальний лес: много дерева, кожа и волокно.",
+        energy_per_second: 10.0,
+        requires_item: None,
+        loot: &DEEP_FOREST_LOOT,
+        map_reward: Some("map_mines"),
+    },
+    ExpeditionLocation {
+        id: "deep_mines",
+        name: "Глубокие шахты",
+        description: "Глубокие штольни: камень, железная руда и кварц. Нужна кирка.",
+        energy_per_second: 15.0,
+        requires_item: Some(("pickaxe", "Кирка")),
+        loot: &DEEP_MINES_LOOT,
+        map_reward: Some("map_quarry"),
+    },
+    ExpeditionLocation {
+        id: "forgotten_quarry",
+        name: "Забытая каменоломня",
+        description: "Старая каменоломня: камень и железная руда. Нужна кирка.",
+        energy_per_second: 17.5,
+        requires_item: Some(("pickaxe", "Кирка")),
+        loot: &FORGOTTEN_QUARRY_LOOT,
+        map_reward: Some("map_ruins"),
+    },
+    ExpeditionLocation {
+        id: "ancient_ruins",
+        name: "Древние руины",
+        description: "Разрушенный город: кварц, серебро и золотая руда. Нужен факел или свеча.",
+        energy_per_second: 20.0,
+        requires_item: Some(("candle", "Факел или свеча")),
+        loot: &ANCIENT_RUINS_LOOT,
+        map_reward: None,
     },
 ];
+
+/// Точка входа похода. Лес и шахты открыты с начала: цепочка карт — для
+/// каменоломни и руин.
+pub const STARTING_LOCATIONS: [&str; 4] = ["field", "ravine", "deep_forest", "deep_mines"];
 
 /// Находит локацию по идентификатору.
 pub fn location(id: &str) -> Option<&'static ExpeditionLocation> {
     LOCATIONS.iter().find(|location| location.id == id)
+}
+
+/// Карта, которой открывается локация.
+pub fn unlock_map(location_id: &str) -> Option<&'static str> {
+    match location_id {
+        "field" | "ravine" => None,
+        "deep_forest" => Some("map_forest"),
+        "deep_mines" => Some("map_mines"),
+        "forgotten_quarry" => Some("map_quarry"),
+        "ancient_ruins" => Some("map_ruins"),
+        _ => None,
+    }
+}
+
+/// Локация, карту которой даёт предмет.
+pub fn location_for_map(map_id: &str) -> Option<&'static str> {
+    match map_id {
+        "map_forest" => Some("deep_forest"),
+        "map_mines" => Some("deep_mines"),
+        "map_quarry" => Some("forgotten_quarry"),
+        "map_ruins" => Some("ancient_ruins"),
+        _ => None,
+    }
 }
 
 /// Одна находка за поход.
@@ -104,6 +299,8 @@ pub struct ExpeditionReport {
     pub out_of_energy: bool,
     /// Часть добычи не поместилась на склад и сгорела.
     pub overflow: bool,
+    /// Карты новых локаций, выпавшие и открывшие новые локации.
+    pub unlocked: Vec<&'static str>,
 }
 
 /// Итог одного тика похода.
@@ -111,6 +308,8 @@ pub struct ExpeditionReport {
 pub struct ExpeditionTick {
     /// Найденное за этот тик.
     pub loot: Vec<Loot>,
+    /// Открытые этим тиком локации.
+    pub unlocked: Vec<&'static str>,
     /// Найдено за время шага, сек (для счётчика времени в пути).
     pub seconds: f64,
     /// Рюкзак заполнился — поход прерван.
@@ -125,6 +324,62 @@ impl ExpeditionTick {
     /// Поход пора заканчивать.
     pub fn is_over(&self) -> bool {
         self.interrupted || self.out_of_energy
+    }
+}
+
+/// Бросок `0..modulo`. Берём старшие биты: у ЛКГ младшие сильно коррелируют,
+/// и на них шансы «плывут» (карта выпадала в 1.3 раза чаще задуманного).
+fn roll(seed: &mut u64, modulo: u64) -> u64 {
+    (next_random(seed) >> 33) % modulo
+}
+
+/// Разбрасывает броски по редкости и возвращает выпавшую.
+fn roll_rarity(seed: &mut u64) -> Rarity {
+    let mut pick = roll(seed, 1000);
+    for rarity in [
+        Rarity::Common,
+        Rarity::Uncommon,
+        Rarity::Rare,
+        Rarity::Epic,
+        Rarity::Legendary,
+    ] {
+        let weight = rarity.weight() as u64;
+        if pick < weight {
+            return rarity;
+        }
+        pick -= weight;
+    }
+    Rarity::Common
+}
+
+/// Случайная строка таблицы лута нужной редкости.
+fn roll_loot_entry(
+    location: &ExpeditionLocation,
+    rarity: Rarity,
+    seed: &mut u64,
+) -> Option<LootEntry> {
+    let candidates: Vec<LootEntry> = location
+        .table()
+        .into_iter()
+        .filter(|entry| entry.rarity == rarity)
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let index = roll(seed, candidates.len() as u64) as usize;
+    Some(candidates[index])
+}
+
+/// Карта открывает локацию и попадает в рюкзак.
+fn grant_map(state: &mut GameState, tick: &mut ExpeditionTick, map_id: &'static str) {
+    if !state.add_item(map_id, 1) {
+        return;
+    }
+    push_loot(&mut tick.loot, map_id, 1, false);
+    if let Some(location_id) = location_for_map(map_id) {
+        if state.unlock_location(location_id) {
+            tick.unlocked.push(location_id);
+        }
     }
 }
 
@@ -145,7 +400,7 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
 
     // Зимние перчатки и куртка снижают расход энергии в пути.
     let energy_discount = state.expedition_energy_discount.clamp(0.0, 0.9) as f64;
-    let energy_cost = balance::EXPEDITION_ENERGY_PER_TICK * (1.0 - energy_discount);
+    let energy_cost = location.energy_per_second * (1.0 - energy_discount);
     if !state.spend_energy(energy_cost * dt.max(0.0)) {
         tick.out_of_energy = true;
         return tick;
@@ -156,64 +411,88 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
     }
 
     let bonus = 1.0 + state.expedition_bonus as f64;
-    let chance = tick_chance(location);
-    let total_drops = location.active_drops.len() + location.inventory_drops.len();
+    let loot_chance = balance::EXPEDITION_LOOT_CHANCE as u64;
+    // Карта падает только в последней открытой локации.
+    let is_current = state.is_current_location(location.id);
+
     for _ in 0..rolls {
         // Каждый бросок продвигает зерно, поэтому тики не повторяют друг друга.
         state.market_seed = state.market_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut seed = state.market_seed;
-        if next_random(&mut seed) % 100 >= chance || total_drops == 0 {
+
+        // Особый лут Древних руин: отдельная проверка 1% в секунду.
+        if location.id == "ancient_ruins"
+            && roll(&mut seed, 100) < balance::EXPEDITION_STEAM_BLUEPRINT_CHANCE as u64
+        {
+            if !state.add_item("steam_blueprint", 1) {
+                tick.interrupted = true;
+                return tick;
+            }
+            push_loot(&mut tick.loot, "steam_blueprint", 1, false);
+        }
+
+        if roll(&mut seed, 100) >= loot_chance {
             continue;
         }
 
-        let pick = (next_random(&mut seed) % total_drops as u64) as usize;
-        if pick < location.active_drops.len() {
-            let (kind, min_quantity, max_quantity) = location.active_drops[pick];
-            let span = (max_quantity - min_quantity + 1) as u64;
-            let base = min_quantity as f64 + (next_random(&mut seed) % span) as f64;
-            let quantity = (base * bonus).round() as u32;
+        let rarity = roll_rarity(&mut seed);
+        let Some(rarity) = location.downgrade(rarity) else {
+            continue;
+        };
+
+        let Some(entry) = roll_loot_entry(location, rarity, &mut seed) else {
+            continue;
+        };
+
+        // Карта локации падает только в последней открытой локации и редко:
+        // карта — лишь малая доля редких находок, остальное заменяется
+        // обычным лутом той же редкости.
+        let is_map = location.map_reward == Some(entry.item_id);
+        if is_map && (!is_current || roll(&mut seed, 100) >= balance::EXPEDITION_MAP_CHANCE as u64)
+        {
+            continue;
+        }
+        let span = (entry.max_quantity - entry.min_quantity + 1) as u64;
+        let base = entry.min_quantity as f64 + roll(&mut seed, span) as f64;
+        let quantity = (base * bonus).round() as u32;
+
+        if is_map {
+            let Some(map_id) = location.map_reward else {
+                continue;
+            };
+            // Карта — одна штука, а не стак ресурса.
+            grant_map(state, &mut tick, map_id);
+            continue;
+        }
+
+        if super::state::is_active_resource(entry.item_id) {
             // Излишки сверх лимита склада сгорают.
-            let added = state.add_active(kind, quantity);
+            let added = state.add_active(entry.item_id, quantity);
             if added < quantity {
                 tick.overflow = true;
             }
             if added > 0 {
-                push_loot(&mut tick.loot, kind, added, true);
+                push_loot(&mut tick.loot, entry.item_id, added, true);
             }
         } else {
-            let (kind, min_quantity, max_quantity) =
-                location.inventory_drops[pick - location.active_drops.len()];
-            let span = (max_quantity - min_quantity + 1) as u64;
-            let quantity = min_quantity + (next_random(&mut seed) % span) as u32;
-            if !state.add_item(kind, quantity) {
+            let added = state.item_capacity_left(entry.item_id).min(quantity);
+            if added == 0 {
                 // Рюкзак полон: поход прерывается, уже найденное остаётся.
                 tick.interrupted = true;
                 return tick;
             }
-            push_loot(&mut tick.loot, kind, quantity, false);
+            if !state.add_item(entry.item_id, added) {
+                tick.overflow = true;
+            }
+            push_loot(&mut tick.loot, entry.item_id, added, false);
         }
     }
 
-    // Золотая подвеска повышает шанс найти драгоценные камни.
-    let gems_bonus = EquipSlot::ALL
-        .iter()
-        .filter_map(|slot| state.equipped_item(*slot))
-        .filter_map(|item| item.stats.gems_bonus)
-        .fold(0.0f32, |sum, bonus| sum + bonus)
-        / 100.0;
-    let rare_chance = 1 + (gems_bonus.max(0.0) as f64 * 5.0).round() as u32;
-    for _ in 0..rolls {
-        state.market_seed = state.market_seed.wrapping_add(0x2545_f491_4f6c_dd1d);
-        let mut seed = state.market_seed;
-        if next_random(&mut seed) % 100 < rare_chance as u64 && state.add_item("gems", 1) {
-            push_loot(&mut tick.loot, "gems", 1, false);
-        }
-    }
     tick
 }
 
 /// Продвигает активный поход в игровом тике. Возвращает `true`, если что-то
-/// изменилось (нашлась добыча, поход закончился).
+/// изменилось (нашлась добыча, открылась локация, поход закончился).
 pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
     let Some(location_id) = state
         .active_expedition
@@ -230,6 +509,15 @@ pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
             for loot in &tick.loot {
                 active.push_found(&loot.item_id, loot.quantity, loot.active);
             }
+            changed = true;
+        }
+        if !tick.unlocked.is_empty() {
+            let names: Vec<&str> = tick
+                .unlocked
+                .iter()
+                .filter_map(|id| location(id).map(|location| location.name))
+                .collect();
+            active.notice = Some(format!("Открыта новая локация: {}.", names.join(", ")));
             changed = true;
         }
         if tick.overflow {
@@ -261,10 +549,10 @@ pub fn run_expedition(
     location_id: &str,
     seconds: u32,
 ) -> Result<ExpeditionReport, ExpeditionError> {
-    if location(location_id).is_none() {
+    let Some(location) = location(location_id) else {
         return Err(ExpeditionError::UnknownLocation);
-    }
-    if state.energy + 1e-9 < balance::EXPEDITION_ENERGY_PER_TICK {
+    };
+    if state.energy + 1e-9 < location.energy_per_second {
         return Err(ExpeditionError::NoEnergy);
     }
 
@@ -274,6 +562,7 @@ pub fn run_expedition(
         for loot in tick.loot {
             push_loot(&mut report.loot, &loot.item_id, loot.quantity, loot.active);
         }
+        report.unlocked.extend(tick.unlocked);
         report.overflow |= tick.overflow;
         if tick.interrupted {
             report.interrupted = true;
@@ -315,12 +604,21 @@ mod tests {
         }
     }
 
+    /// Энергии и места на складе хватит на долгий поход.
+    fn endlessly_rich() -> GameState {
+        GameState {
+            energy: 1_000_000.0,
+            storage_level: 100,
+            ..GameState::default()
+        }
+    }
+
     #[test]
     fn active_expedition_runs_in_game_tick() {
         use crate::game::state::ActiveExpedition;
 
         let mut state = endless_state();
-        state.active_expedition = Some(ActiveExpedition::new("forest"));
+        state.active_expedition = Some(ActiveExpedition::new("field"));
         for _ in 0..30 {
             tick_active_expedition(&mut state, 1.0);
         }
@@ -353,58 +651,131 @@ mod tests {
         };
 
         assert_eq!(
-            run_expedition(&mut state, "forest", 10),
+            run_expedition(&mut state, "field", 10),
             Err(ExpeditionError::NoEnergy)
         );
     }
 
     #[test]
-    fn expedition_spends_energy_per_tick() {
+    fn expedition_spends_location_energy_per_second() {
         let mut state = GameState {
             energy: 100.0,
             ..GameState::default()
         };
 
-        run_expedition(&mut state, "forest", 10).expect("поход");
+        run_expedition(&mut state, "ravine", 10).expect("поход");
         let spent = 100.0 - state.energy;
-        assert!((spent - balance::EXPEDITION_ENERGY_PER_TICK * 10.0).abs() < 1e-9);
+        assert!((spent - 7.5 * 10.0).abs() < 1e-9);
     }
 
     #[test]
     fn expedition_stops_when_energy_runs_out() {
         let mut state = GameState {
-            energy: balance::EXPEDITION_ENERGY_PER_TICK * 3.0,
+            energy: 5.0 * 3.0,
             ..GameState::default()
         };
 
-        let report = run_expedition(&mut state, "forest", 100).expect("поход");
+        let report = run_expedition(&mut state, "field", 100).expect("поход");
         assert!(report.out_of_energy);
         assert!(state.energy.abs() < 1e-9);
     }
 
     #[test]
-    fn expedition_drops_only_location_resources() {
+    fn rarity_downgrades_to_location_max() {
+        // У каменоломни редкая редкость — только через карту руин, поэтому
+        // эпический и легендарный лут становятся редким.
+        let quarry = location("forgotten_quarry").expect("локация");
+        assert_eq!(quarry.downgrade(Rarity::Legendary), Some(Rarity::Rare));
+        assert_eq!(quarry.downgrade(Rarity::Epic), Some(Rarity::Rare));
+
+        let ruins = location("ancient_ruins").expect("локация");
+        assert_eq!(ruins.downgrade(Rarity::Legendary), Some(Rarity::Legendary));
+
+        // Своей редкой строки у шахт нет, но карта каменоломни — редкая.
+        let mines = location("deep_mines").expect("локация");
+        assert_eq!(mines.downgrade(Rarity::Epic), Some(Rarity::Rare));
+    }
+
+    #[test]
+    fn field_drops_only_its_own_loot() {
         let mut state = endless_state();
         let mut found = 0;
 
         for seed in 0..2_000u64 {
             state.market_seed = seed;
-            let report = run_expedition(&mut state, "forest", 60).expect("поход");
+            let report = run_expedition(&mut state, "field", 60).expect("поход");
             for loot in &report.loot {
                 found += 1;
-                assert_ne!(loot.item_id, "coal");
                 assert!(
-                    matches!(loot.item_id.as_str(), "wood" | "fiber" | "gems"),
+                    matches!(
+                        loot.item_id.as_str(),
+                        "wood" | "clay" | "fiber" | "map_forest"
+                    ),
                     "неожиданный дроп: {}",
                     loot.item_id
                 );
             }
-            // Склад сбрасываем, чтобы лимиты не мешали повторять.
             state.active_resources.clear();
             state.inventory.clear();
+            state.unlocked_locations.clear();
         }
 
         assert!(found > 0, "за 2000 походов не нашлось ни одной добычи");
+    }
+
+    #[test]
+    fn map_drops_only_in_current_location() {
+        let mut state = endless_state();
+        state.unlock_location("deep_forest");
+        // Текущая локация — лес, поэтому поле карт не сыплет.
+        let mut any_map = false;
+        for seed in 0..2_000u64 {
+            state.market_seed = seed;
+            let report = run_expedition(&mut state, "field", 60).expect("поход");
+            if report.loot.iter().any(|loot| loot.item_id == "map_forest") {
+                any_map = true;
+            }
+            state.active_resources.clear();
+            state.inventory.clear();
+        }
+        assert!(!any_map, "карта выпала не в текущей локации");
+    }
+
+    #[test]
+    fn quarry_map_unlocks_forgotten_quarry() {
+        // Карта — редкая находка: меряем средний интервал до первой карты,
+        // а не каждый отдельный бросок.
+        let mut total = 0.0;
+        let mut found = 0;
+        for seed in 0..300u64 {
+            let mut state = endlessly_rich();
+            state.market_seed = seed;
+            // Шахты — текущая локация цепочки: карта каменоломни падает только там.
+            for second in 1..=20_000u32 {
+                let tick = step_expedition(&mut state, "deep_mines", 1.0);
+                assert!(!tick.is_over(), "поход прервался на {second} с");
+                if tick.loot.iter().any(|loot| loot.item_id == "map_quarry") {
+                    found += 1;
+                    total += second as f64;
+                    assert!(state.item_count("map_quarry") >= 1);
+                    assert!(
+                        state.location_unlocked("forgotten_quarry"),
+                        "карта не открыла каменоломню"
+                    );
+                    break;
+                }
+                // Рюкзак не должен переполняться и рвать долгий замер.
+                state.inventory.clear();
+            }
+        }
+
+        assert!(found > 0, "карта каменоломни ни разу не выпала");
+        let average = total / found as f64;
+        // По концепту карта — примерно раз в 2000 секунд пути.
+        assert!(
+            (1_200.0..=3_500.0).contains(&average),
+            "карта падает не по концепту: раз в {average:.0} с"
+        );
     }
 
     #[test]
@@ -414,14 +785,12 @@ mod tests {
 
         for seed in 0..500u64 {
             state.market_seed = seed;
-            let report = run_expedition(&mut state, "quarry", 60).expect("поход");
+            let report = run_expedition(&mut state, "ravine", 60).expect("поход");
             for loot in report.loot {
                 found = true;
                 if loot.active {
                     assert!(state.active_amount(&loot.item_id) >= loot.quantity);
-                } else {
-                    // Глина — инвентарный ресурс, а не активный.
-                    assert!(loot.item_id != "clay" || state.item_count("clay") >= loot.quantity);
+                } else if loot.item_id != "map_forest" && loot.item_id != "map_mines" {
                     assert!(state.item_count(&loot.item_id) >= loot.quantity);
                 }
             }
@@ -433,26 +802,26 @@ mod tests {
     }
 
     #[test]
-    fn full_backpack_interrupts_expedition() {
+    fn ruins_drop_steam_blueprint() {
         let mut state = endless_state();
-        // Забиваем рюкзак нестакуемыми предметами под завязку.
-        let slots = state.inventory_slots();
-        for index in 0..slots {
-            let id = format!("filler_{index}");
-            state.inventory.insert(id, 1);
-        }
+        state.unlock_location("ancient_ruins");
+        let mut found = false;
 
-        // Ищем зерно, при котором лес находит волокно (инвентарный дроп).
-        for seed in 0..5_000u64 {
+        for seed in 0..500u64 {
             state.market_seed = seed;
-            let report = run_expedition(&mut state, "forest", 60).expect("поход");
-            if report.interrupted {
-                return;
+            let report = run_expedition(&mut state, "ancient_ruins", 200).expect("поход");
+            if report
+                .loot
+                .iter()
+                .any(|loot| loot.item_id == "steam_blueprint")
+            {
+                found = true;
+                break;
             }
-            // Откатываем добычу склада между попытками.
             state.active_resources.clear();
+            state.inventory.clear();
         }
 
-        panic!("не удалось найти прерывание похода при полном рюкзаке");
+        assert!(found, "чертёж паровой машины не выпал");
     }
 }

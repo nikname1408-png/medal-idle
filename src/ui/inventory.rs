@@ -54,6 +54,11 @@ pub(crate) fn item_icon(item: &Item) -> &'static str {
         "wanderer_pendant" => "📿",
         "gold_ring" => "💍",
         "gold_pendant" => "📿",
+        "map_forest" => "🗺",
+        "map_mines" => "🗺",
+        "map_quarry" => "🗺",
+        "map_ruins" => "🗺",
+        "steam_blueprint" => "📜",
         _ => match item.category {
             Category::Gear => "🎽",
             Category::Jewelry => "💍",
@@ -301,9 +306,10 @@ pub(crate) fn ingredient_name(id: &str) -> &str {
     match id {
         "wood" => "Дерево",
         "stone" => "Камень",
-        "iron" => "Руда",
+        "iron" => "Железная руда",
         "clay" => "Глина",
         "coal" => "Уголь",
+        "fire" => "Огонь",
         _ => items::item(id).map(|item| item.name.as_str()).unwrap_or(id),
     }
 }
