@@ -203,21 +203,28 @@ pub const RESEARCH_TIME_WARP: f64 = 15.0;
 
 /// Сколько энергии тратит один поход.
 pub const EXPEDITION_ENERGY_COST: f64 = 10.0;
+/// Сколько «тиков пути» моделирует один поход.
+pub const EXPEDITION_TICKS: u32 = 30;
 
-/// Дропи походов: активные ресурсы (вид, минимум, максимум).
-pub const EXPEDITION_ACTIVE_DROPS: [(&str, u32, u32); 4] = [
-    ("wood", 50, 350),
-    ("stone", 30, 220),
-    ("iron", 20, 180),
-    ("clay", 10, 120),
-];
-/// Дропи походов: инвентарные предметы (вид, минимум, максимум).
-pub const EXPEDITION_INVENTORY_DROPS: [(&str, u32, u32); 4] = [
-    ("leather", 1, 3),
-    ("fiber", 1, 3),
-    ("quartz", 1, 3),
-    ("silver", 1, 3),
-];
+/// Шанс находки за тик пути, %.
+pub const EXPEDITION_CHANCE_FOREST: u32 = 3;
+pub const EXPEDITION_CHANCE_QUARRY: u32 = 2;
+pub const EXPEDITION_CHANCE_RUINS: u32 = 1;
+
+/// Дропи леса: активные ресурсы (вид, минимум, максимум).
+pub const EXPEDITION_FOREST_ACTIVE: [(&str, u32, u32); 1] = [("wood", 50, 350)];
+/// Дропи леса: инвентарные предметы (вид, минимум, максимум).
+pub const EXPEDITION_FOREST_INVENTORY: [(&str, u32, u32); 1] = [("fiber", 1, 3)];
+
+/// Дропи каменоломни: активные ресурсы.
+pub const EXPEDITION_QUARRY_ACTIVE: [(&str, u32, u32); 2] = [("stone", 30, 220), ("clay", 10, 120)];
+/// Дропи каменоломни: инвентарные предметы.
+pub const EXPEDITION_QUARRY_INVENTORY: [(&str, u32, u32); 1] = [("quartz", 1, 3)];
+
+/// Дропи руин: активные ресурсы.
+pub const EXPEDITION_RUINS_ACTIVE: [(&str, u32, u32); 1] = [("iron", 20, 180)];
+/// Дропи руин: инвентарные предметы.
+pub const EXPEDITION_RUINS_INVENTORY: [(&str, u32, u32); 2] = [("leather", 1, 3), ("silver", 1, 3)];
 
 /// Стоимость предметов в кузнице.
 pub const ITEM_SWORD_IRON: f64 = 5.0;

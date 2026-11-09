@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 
-use crate::game::actions::{self, CraftError, ExpeditionError};
+use crate::game::actions::{self, CraftError};
 use crate::game::items::{self, Category, EquipSlot, Item};
 use crate::game::state::{is_active_resource, EquipError, GameState};
 
@@ -17,6 +17,7 @@ pub fn InventoryScreen(
     back: Signal<u32>,
     on_back: EventHandler<()>,
     on_trade: EventHandler<()>,
+    on_expedition: EventHandler<()>,
 ) -> Element {
     let mut selected = use_signal(|| None::<String>);
     let mut craft_open = use_signal(|| false);
@@ -170,8 +171,8 @@ pub fn InventoryScreen(
         div { class: "inv-actions",
             button {
                 class: "inv-tool",
-                onclick: move |_| do_expedition(state, message),
-                "Поход"
+                onclick: move |_| on_expedition.call(()),
+                "Походы"
             }
             button {
                 class: "inv-tool",
@@ -276,7 +277,7 @@ fn item_icon(item: &Item) -> &'static str {
 }
 
 /// Название ингредиента: активный ресурс склада или предмет каталога.
-fn ingredient_name(id: &str) -> &str {
+pub(crate) fn ingredient_name(id: &str) -> &str {
     match id {
         "wood" => "Дерево",
         "stone" => "Камень",
@@ -494,25 +495,6 @@ fn InventoryCard(
     }
 }
 
-fn do_expedition(mut state: Signal<GameState>, mut message: Signal<String>) {
-    let result = {
-        let mut guard = state.write();
-        actions::simulate_expedition(&mut guard)
-    };
-    message.set(match result {
-        Ok(loot) => loot
-            .into_iter()
-            .map(|(item_id, quantity)| {
-                let name = ingredient_name(&item_id);
-                format!("Поход: +{quantity} × {name}")
-            })
-            .collect::<Vec<_>>()
-            .join(", "),
-        Err(error) => expedition_error_text(error).to_string(),
-    });
-    refresh_view(state);
-}
-
 fn do_add_resources(mut state: Signal<GameState>, mut message: Signal<String>) {
     let added = {
         let mut guard = state.write();
@@ -535,10 +517,6 @@ fn slot_short(slot: EquipSlot) -> &'static str {
 }
 
 fn craft_error_text(error: CraftError) -> &'static str {
-    error.text()
-}
-
-fn expedition_error_text(error: ExpeditionError) -> &'static str {
     error.text()
 }
 

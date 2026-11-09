@@ -51,22 +51,6 @@ impl CraftError {
     }
 }
 
-/// Ошибка похода.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExpeditionError {
-    NoEnergy,
-    NoSpace,
-}
-
-impl ExpeditionError {
-    pub fn text(self) -> &'static str {
-        match self {
-            Self::NoEnergy => "Не хватает энергии на поход.",
-            Self::NoSpace => "В сумке нет места для добычи.",
-        }
-    }
-}
-
 /// Результат перерождения.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PrestigeResult {
@@ -529,53 +513,6 @@ pub fn unequip_slot(state: &mut GameState, slot: items::EquipSlot) {
     state.unequip_slot(slot);
 }
 
-/// Короткий поход: тратит энергию и приносит лут.
-///
-/// Результат детерминированный: рынок и походы используют одно зерно.
-pub fn simulate_expedition(state: &mut GameState) -> Result<Vec<(String, u32)>, ExpeditionError> {
-    let cost = balance::EXPEDITION_ENERGY_COST;
-    if state.energy + 1e-9 < cost {
-        return Err(ExpeditionError::NoEnergy);
-    }
-
-    let mut seed = state
-        .market_seed
-        .wrapping_add(state.stats.clicks.wrapping_mul(31))
-        .wrapping_add((state.stats.play_seconds as u64).wrapping_mul(17));
-    let mut loot = Vec::new();
-    if next_random(&mut seed) % 100 < 2 {
-        let total_drops =
-            balance::EXPEDITION_ACTIVE_DROPS.len() + balance::EXPEDITION_INVENTORY_DROPS.len();
-        let pick = (next_random(&mut seed) % total_drops as u64) as usize;
-        if pick < balance::EXPEDITION_ACTIVE_DROPS.len() {
-            let (kind, min_q, max_q) = balance::EXPEDITION_ACTIVE_DROPS[pick];
-            let span = (max_q - min_q + 1) as u64;
-            let quantity = min_q + (next_random(&mut seed) % span) as u32;
-            // Излишки сверх лимита склада сгорают.
-            let added = state.add_active(kind, quantity);
-            if added > 0 {
-                loot.push((kind.to_string(), added));
-            }
-        } else {
-            let (kind, min_q, max_q) =
-                balance::EXPEDITION_INVENTORY_DROPS[pick - balance::EXPEDITION_ACTIVE_DROPS.len()];
-            let span = (max_q - min_q + 1) as u64;
-            let quantity = min_q + (next_random(&mut seed) % span) as u32;
-            if !state.add_item(kind, quantity) {
-                return Err(ExpeditionError::NoSpace);
-            }
-            loot.push((kind.to_string(), quantity));
-        }
-    }
-    state.market_seed = seed;
-
-    if !state.spend_energy(cost) {
-        return Err(ExpeditionError::NoEnergy);
-    }
-
-    Ok(loot)
-}
-
 /// Чит для демо: добавляет по горсти базовых материалов.
 ///
 /// Возвращает число добавленных стопок.
@@ -600,7 +537,7 @@ pub fn add_demo_resources(state: &mut GameState) -> u32 {
     added
 }
 
-fn next_random(seed: &mut u64) -> u64 {
+pub(crate) fn next_random(seed: &mut u64) -> u64 {
     *seed = seed
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
@@ -990,38 +927,6 @@ mod tests {
 
         assert_eq!(equip_item(&mut state, "backpack"), Ok(()));
         assert_eq!(state.inventory_slots(), before + 10);
-    }
-
-    #[test]
-    fn expedition_spends_energy_and_adds_loot() {
-        let mut state = GameState {
-            energy: 20.0,
-            ..GameState::default()
-        };
-        let before = state.energy;
-
-        let loot = simulate_expedition(&mut state).expect("поход");
-        assert_eq!(state.energy, before - balance::EXPEDITION_ENERGY_COST);
-        assert!(loot.len() <= 1);
-        if loot.len() == 1 {
-            assert!(
-                state.item_count(&loot[0].0) >= loot[0].1
-                    || state.active_amount(&loot[0].0) >= loot[0].1
-            );
-        }
-    }
-
-    #[test]
-    fn expedition_rejects_without_energy() {
-        let mut state = GameState {
-            energy: 0.0,
-            ..GameState::default()
-        };
-
-        assert_eq!(
-            simulate_expedition(&mut state),
-            Err(ExpeditionError::NoEnergy)
-        );
     }
 
     #[test]

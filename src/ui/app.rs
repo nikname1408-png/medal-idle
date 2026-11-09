@@ -6,6 +6,7 @@ use crate::game::actions::{self, BuildResult};
 use crate::game::state::{AchievementStatus, ResearchKind, ResourceKind, Theme};
 use crate::game::{balance, GameState};
 
+use super::expedition::ExpeditionScreen;
 use super::inventory::InventoryScreen;
 use super::save;
 use super::trader::TradeScreen;
@@ -19,6 +20,7 @@ const TAB_FIELD: usize = 0;
 const TAB_STUDIES: usize = 1;
 const TAB_WORK: usize = 2;
 const TAB_BAG: usize = 3;
+const TAB_EXPEDITION: usize = 4;
 const TAB_CYCLE: usize = 5;
 const TAB_STATS: usize = 6;
 const TAB_SETTINGS: usize = 7;
@@ -179,6 +181,7 @@ pub fn App() -> Element {
         TAB_STUDIES => "Изучения",
         TAB_WORK => "Труд",
         TAB_BAG => "Инвентарь",
+        TAB_EXPEDITION => "Походы",
         TAB_CYCLE => "Цикл",
         TAB_STATS => "Статы",
         _ => "Поле",
@@ -204,7 +207,11 @@ pub fn App() -> Element {
                     back,
                     on_back: move |_| active_tab.set(TAB_FIELD),
                     on_trade: move |_| trader_open.set(true),
+                    on_expedition: move |_| active_tab.set(TAB_EXPEDITION),
                 }
+            },
+            TAB_EXPEDITION => rsx! {
+                ExpeditionScreen { state, view: snapshot.clone() }
             },
             TAB_CYCLE => rsx! {
                 CycleScreen { state, view: snapshot.clone() }
