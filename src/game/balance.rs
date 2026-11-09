@@ -5,10 +5,10 @@
 #![allow(dead_code)]
 
 /// Версия формата сохранения. Меняется при несовместимых правках.
-pub const SAVE_VERSION: u32 = 6;
+pub const SAVE_VERSION: u32 = 7;
 
-/// Демо-капитал для проверки торговца. Убрать перед релизом.
-pub const DEMO_START_GOLD: f64 = 1240.0;
+/// Стартовый капитал новой игры. Ноль: всё добывается и зарабатывается.
+pub const START_GOLD: f64 = 0.0;
 
 /// Энергия в начале игры. Капать сама она не будет — только отдых и дом.
 pub const START_ENERGY: f64 = 0.0;
@@ -50,6 +50,8 @@ pub const ENERGY_CAP_PER_COMFORT: f64 = 100.0;
 pub struct Cost {
     pub wood: f64,
     pub stone: f64,
+    /// Доплата золотом (часть построек требует монет).
+    pub gold: f64,
 }
 
 /// Стоимость следующего уровня дома.
@@ -58,6 +60,7 @@ pub fn house_cost(level: u32) -> Cost {
     Cost {
         wood: (HOUSE_BASE_COST_WOOD * factor).ceil(),
         stone: (HOUSE_BASE_COST_STONE * factor).ceil(),
+        gold: (HOUSE_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -67,6 +70,7 @@ pub fn storage_cost(level: u32) -> Cost {
     Cost {
         wood: (STORAGE_BASE_COST_WOOD * factor).ceil(),
         stone: (STORAGE_BASE_COST_STONE * factor).ceil(),
+        gold: (STORAGE_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -76,6 +80,7 @@ pub fn comfort_cost(level: u32) -> Cost {
     Cost {
         wood: (COMFORT_BASE_COST_WOOD * factor).ceil(),
         stone: (COMFORT_BASE_COST_STONE * factor).ceil(),
+        gold: (COMFORT_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -85,6 +90,7 @@ pub fn worker_house_cost(level: u32) -> Cost {
     Cost {
         wood: (WORKER_HOUSE_BASE_COST_WOOD * factor).ceil(),
         stone: (WORKER_HOUSE_BASE_COST_STONE * factor).ceil(),
+        gold: (WORKER_HOUSE_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -94,6 +100,7 @@ pub fn research_house_cost(level: u32) -> Cost {
     Cost {
         wood: (RESEARCH_HOUSE_BASE_COST_WOOD * factor).ceil(),
         stone: (RESEARCH_HOUSE_BASE_COST_STONE * factor).ceil(),
+        gold: (RESEARCH_HOUSE_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -103,6 +110,7 @@ pub fn sawmill_cost(level: u32) -> Cost {
     Cost {
         wood: (SAWMILL_BASE_COST_WOOD * factor).ceil(),
         stone: (SAWMILL_BASE_COST_STONE * factor).ceil(),
+        gold: (SAWMILL_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -112,6 +120,7 @@ pub fn coal_pit_cost(level: u32) -> Cost {
     Cost {
         wood: (COAL_PIT_BASE_COST_WOOD * factor).ceil(),
         stone: (COAL_PIT_BASE_COST_STONE * factor).ceil(),
+        gold: (COAL_PIT_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -121,6 +130,7 @@ pub fn forge_cost(level: u32) -> Cost {
     Cost {
         wood: (FORGE_BASE_COST_WOOD * factor).ceil(),
         stone: (FORGE_BASE_COST_STONE * factor).ceil(),
+        gold: (FORGE_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -130,6 +140,7 @@ pub fn mine_cost(level: u32) -> Cost {
     Cost {
         wood: (MINE_BASE_COST_WOOD * factor).ceil(),
         stone: (MINE_BASE_COST_STONE * factor).ceil(),
+        gold: (MINE_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -139,6 +150,7 @@ pub fn bank_cost(level: u32) -> Cost {
     Cost {
         wood: (BANK_BASE_COST_WOOD * factor).ceil(),
         stone: (BANK_BASE_COST_STONE * factor).ceil(),
+        gold: (BANK_BASE_COST_GOLD * factor).ceil(),
     }
 }
 
@@ -147,8 +159,8 @@ pub const WORKERS_PER_HOUSE_LEVEL: u32 = 1;
 /// Сколько исследователей даёт один уровень дома для изучения.
 pub const RESEARCHERS_PER_HOUSE_LEVEL: u32 = 1;
 
-/// Сколько дерева в секунду приносит один работник лесопилки.
-pub const SAWMILL_WOOD_PER_WORKER_PER_SEC: f64 = 0.4;
+/// Сколько камня в секунду приносит один работник лесопилки.
+pub const SAWMILL_WOOD_PER_WORKER_PER_SEC: f64 = 0.5;
 
 /// Сколько опыта нужно, чтобы изучить угольную яму.
 pub const COAL_PIT_RESEARCH_COST: f64 = 60.0;
@@ -164,8 +176,8 @@ pub const COAL_PIT_BATCH_SECONDS: f64 = 5.0;
 
 /// Сколько опыта нужно, чтобы изучить кузницу.
 pub const FORGE_RESEARCH_COST: f64 = 120.0;
-/// Сколько опыта нужно, чтобы изучить торговца.
-pub const TRADER_RESEARCH_COST: f64 = 200.0;
+/// Сколько опыта нужно, чтобы изучить банк (открывает банк после кузницы).
+pub const BANK_RESEARCH_COST: f64 = 200.0;
 
 /// Максимальный запас огня кузницы без амулета.
 pub const FORGE_FIRE_MAX_SECONDS: u32 = 60;
@@ -174,16 +186,13 @@ pub const FIRE_SECONDS_PER_COAL: u32 = 20;
 /// Прибавка к запасу огня за каждый уровень кузницы выше первого.
 pub const FORGE_FIRE_PER_LEVEL: u32 = 10;
 
-/// Сколько железа в секунду даёт один работник шахты.
-pub const MINE_IRON_PER_WORKER_PER_SEC: f64 = 0.2;
+/// Сколько камня в секунду даёт один работник шахты.
+pub const MINE_STONE_PER_WORKER_PER_SEC: f64 = 0.5;
 
 /// Базовый лимит золота без банка.
-///
-/// Должен быть не ниже демо-капитала и цен дорогих товаров, иначе торговля
-/// упирается в потолок раньше, чем игрок успевает что-то купить.
-pub const BASE_GOLD_CAP: f64 = 1_500.0;
+pub const BASE_GOLD_CAP: f64 = 1_000.0;
 /// Прирост лимита золота за уровень банка.
-pub const GOLD_CAP_PER_LEVEL: f64 = 150.0;
+pub const GOLD_CAP_PER_LEVEL: f64 = 1_000.0;
 
 /// Постоянный бонус к производству за каждый пройденный цикл.
 pub const CYCLE_BONUS_PER_CYCLE: f64 = 0.10;
@@ -256,41 +265,51 @@ pub const TRADE_BUY_IRON_GOLD: f64 = 3.0;
 pub const TRADE_BUY_IRON_AMOUNT: f64 = 2.0;
 
 const HOUSE_BASE_COST_WOOD: f64 = 15.0;
+const HOUSE_BASE_COST_GOLD: f64 = 0.0;
 const HOUSE_BASE_COST_STONE: f64 = 8.0;
 const HOUSE_COST_GROWTH: f64 = 2.2;
 
 const STORAGE_BASE_COST_WOOD: f64 = 30.0;
+const STORAGE_BASE_COST_GOLD: f64 = 0.0;
 const STORAGE_BASE_COST_STONE: f64 = 15.0;
 const STORAGE_COST_GROWTH: f64 = 2.2;
 
 const COMFORT_BASE_COST_WOOD: f64 = 40.0;
+const COMFORT_BASE_COST_GOLD: f64 = 0.0;
 const COMFORT_BASE_COST_STONE: f64 = 25.0;
 const COMFORT_COST_GROWTH: f64 = 2.2;
 
 const WORKER_HOUSE_BASE_COST_WOOD: f64 = 18.0;
+const WORKER_HOUSE_BASE_COST_GOLD: f64 = 0.0;
 const WORKER_HOUSE_BASE_COST_STONE: f64 = 12.0;
 const WORKER_HOUSE_COST_GROWTH: f64 = 2.2;
 
 const RESEARCH_HOUSE_BASE_COST_WOOD: f64 = 24.0;
+const RESEARCH_HOUSE_BASE_COST_GOLD: f64 = 0.0;
 const RESEARCH_HOUSE_BASE_COST_STONE: f64 = 15.0;
 const RESEARCH_HOUSE_COST_GROWTH: f64 = 2.2;
 
 const SAWMILL_BASE_COST_WOOD: f64 = 24.0;
+const SAWMILL_BASE_COST_GOLD: f64 = 0.0;
 const SAWMILL_BASE_COST_STONE: f64 = 12.0;
 const SAWMILL_COST_GROWTH: f64 = 2.2;
 
 const COAL_PIT_BASE_COST_WOOD: f64 = 30.0;
+const COAL_PIT_BASE_COST_GOLD: f64 = 60.0;
 const COAL_PIT_BASE_COST_STONE: f64 = 18.0;
 const COAL_PIT_COST_GROWTH: f64 = 2.2;
 
 const FORGE_BASE_COST_WOOD: f64 = 60.0;
+const FORGE_BASE_COST_GOLD: f64 = 120.0;
 const FORGE_BASE_COST_STONE: f64 = 40.0;
 const FORGE_COST_GROWTH: f64 = 2.2;
 
 const MINE_BASE_COST_WOOD: f64 = 45.0;
+const MINE_BASE_COST_GOLD: f64 = 0.0;
 const MINE_BASE_COST_STONE: f64 = 30.0;
 const MINE_COST_GROWTH: f64 = 2.2;
 
 const BANK_BASE_COST_WOOD: f64 = 80.0;
+const BANK_BASE_COST_GOLD: f64 = 200.0;
 const BANK_BASE_COST_STONE: f64 = 60.0;
 const BANK_COST_GROWTH: f64 = 2.2;

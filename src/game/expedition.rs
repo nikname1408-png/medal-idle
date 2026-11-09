@@ -22,6 +22,7 @@ pub enum ExpeditionError {
 }
 
 impl ExpeditionError {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn text(self) -> &'static str {
         match self {
             Self::UnknownLocation => "Такой локации нет.",
@@ -211,6 +212,46 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
     tick
 }
 
+/// Продвигает активный поход в игровом тике. Возвращает `true`, если что-то
+/// изменилось (нашлась добыча, поход закончился).
+pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
+    let Some(location_id) = state
+        .active_expedition
+        .as_ref()
+        .map(|active| active.location_id.clone())
+    else {
+        return false;
+    };
+    let tick = step_expedition(state, &location_id, dt);
+    let mut changed = false;
+
+    if let Some(active) = state.active_expedition.as_mut() {
+        if !tick.loot.is_empty() {
+            for loot in &tick.loot {
+                active.push_found(&loot.item_id, loot.quantity, loot.active);
+            }
+            changed = true;
+        }
+        if tick.overflow {
+            active.notice = Some("Склад полон — часть добычи сгорела.".to_string());
+            changed = true;
+        }
+        active.elapsed = active.elapsed.saturating_add(dt.max(0.0).round() as u32);
+        if tick.out_of_energy {
+            active.notice = Some("Поход прерван: энергия закончилась.".to_string());
+        }
+        if tick.interrupted {
+            active.notice = Some("Поход прерван: рюкзак полон.".to_string());
+        }
+        if tick.is_over() {
+            // Поход окончен; запись остаётся ради итоговой сводки.
+            active.done = true;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Отправляет игрока в поход на `seconds` секунд одним разом.
 ///
 /// Используется в тестах и для быстрой проверки; интерфейс тикает по секундам.
@@ -272,6 +313,22 @@ mod tests {
             energy: 1_000_000.0,
             ..GameState::default()
         }
+    }
+
+    #[test]
+    fn active_expedition_runs_in_game_tick() {
+        use crate::game::state::ActiveExpedition;
+
+        let mut state = endless_state();
+        state.active_expedition = Some(ActiveExpedition::new("forest"));
+        for _ in 0..30 {
+            tick_active_expedition(&mut state, 1.0);
+        }
+
+        let active = state.active_expedition.as_ref().expect("поход идёт");
+        assert_eq!(active.elapsed, 30);
+        assert!(!active.done);
+        assert!(state.energy < 1_000_000.0);
     }
 
     #[test]

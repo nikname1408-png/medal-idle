@@ -439,21 +439,58 @@ pub fn tick_markets(state: &mut GameState, dt: f64) {
 fn market_step(state: &mut GameState) {
     let mut seed = state.market_seed;
 
-    for market in state.traders.iter_mut() {
+    for (index, market) in state.traders.iter_mut().enumerate() {
+        // Ротация ассортимента: иногда товар пропадает из лавки, а позже
+        // возвращается. Пропавший товар нельзя продать, пока он не найдётся.
+        let roster = TRADERS.get(index).map(|trader| trader.goods).unwrap_or(&[]);
+        if !roster.is_empty() {
+            let active = market.goods.iter().filter(|good| good.stock > 0).count();
+            if active > 1 && next_random(&mut seed).is_multiple_of(40) {
+                let index = (next_random(&mut seed) as usize) % market.goods.len();
+                if market.goods[index].stock > 0 {
+                    market.goods[index].stock = 0;
+                }
+            }
+            // Пустой слот с шансом 1/4 возвращает товар, если в лавке есть спрос.
+            if next_random(&mut seed).is_multiple_of(4) {
+                let all_gone = market.goods.iter().all(|good| good.stock == 0);
+                if all_gone {
+                    market.goods = default_market(index).goods;
+                } else {
+                    let mut pick = (next_random(&mut seed) as usize) % roster.len();
+                    // Пробуем несколько раз, чтобы шанс не упирался в занятые товары.
+                    for _ in 0..roster.len() {
+                        let item_id = roster[pick];
+                        if let Some(good) = market.good_mut(item_id) {
+                            if good.stock == 0 {
+                                good.stock = 1 + (next_random(&mut seed) % 6) as u32;
+                                break;
+                            }
+                        }
+                        pick = (pick + 1) % roster.len();
+                    }
+                }
+            }
+        }
+        if market.goods.is_empty() {
+            market.goods = default_market(index).goods;
+        }
+
         for good in market.goods.iter_mut() {
             let demand_shift = noise(&mut seed, 3);
             let supply_shift = noise(&mut seed, 3);
             good.demand = (good.demand as i32 + demand_shift).clamp(5, 95) as u8;
             good.supply = (good.supply as i32 + supply_shift).clamp(5, 95) as u8;
 
-            // Запас тянется к предложению: чем больше предложение, тем больше товара.
+            // Запас тянется к предложению, но не больше трёх штук за шаг.
             let target = (good.supply as i32 / 3).clamp(0, 40);
-            let drift = (target - good.stock as i32).signum();
+            let gap = target - good.stock as i32;
+            let drift = gap.signum() * gap.unsigned_abs().min(3) as i32;
             let stock_shift = noise(&mut seed, 1);
             good.stock = (good.stock as i32 + drift + stock_shift).clamp(0, 99) as u32;
 
-            if good.stock == 0 && next_random(&mut seed).is_multiple_of(3) {
-                good.stock = 2 + (next_random(&mut seed) % 4) as u32;
+            if good.stock == 0 && next_random(&mut seed).is_multiple_of(6) {
+                good.stock = 1 + (next_random(&mut seed) % 4) as u32;
             }
             if good.buy_limit == 0 {
                 good.buy_limit = 1 + (next_random(&mut seed) % 5) as u32;

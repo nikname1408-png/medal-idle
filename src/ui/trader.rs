@@ -298,13 +298,15 @@ fn ItemCard(
     let status = good.status();
     let owned = view.item_count(&item.id);
 
-    let space_limit = if item.stackable && (owned > 0 || view.inventory_free_slots() > 0) {
-        u32::MAX
+    let room = if owned > 0 {
+        view.item_capacity_left(&item.id)
+    } else if view.inventory_free_slots() > 0 {
+        items::ITEM_STACK_LIMIT
     } else {
-        view.inventory_free_slots()
+        0
     };
     let max_qty = match mode {
-        Mode::Buy => trader::max_buy(view.gold, good.stock, buy).min(space_limit),
+        Mode::Buy => trader::max_buy(view.gold, good.stock, buy).min(room),
         Mode::Sell => trader::max_sell(owned, good.buy_limit, view.gold, view.gold_cap(), sell),
     };
 
@@ -332,7 +334,7 @@ fn ItemCard(
         Mode::Buy => {
             if good.stock == 0 {
                 Some("Нет в наличии".to_string())
-            } else if max_qty == 0 && space_limit == 0 {
+            } else if max_qty == 0 && room == 0 {
                 Some("В сумке нет места".to_string())
             } else if view.gold + 1e-9 < buy {
                 Some("Недостаточно золота".to_string())

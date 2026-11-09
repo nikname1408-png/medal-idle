@@ -1,12 +1,10 @@
 //! Экран походов: локации, длительный поход и найденное.
 
-use std::time::Duration;
-
 use dioxus::prelude::*;
 
 use crate::game::balance;
-use crate::game::expedition::{self, ExpeditionError, ExpeditionLocation};
-use crate::game::state::GameState;
+use crate::game::expedition::{self, ExpeditionLocation};
+use crate::game::state::{ActiveExpedition, GameState};
 
 use super::app::{format_num, refresh_view};
 use super::inventory::ingredient_name;
@@ -14,68 +12,38 @@ use super::inventory::ingredient_name;
 /// Полный экран походов.
 #[component]
 pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
-    let mut message = use_signal(String::new);
-    let mut good = use_signal(|| false);
-    // Локация, в которой игрок сейчас: `None` — поход не идёт.
-    let mut active = use_signal(|| None::<&'static str>);
-    let mut found = use_signal(String::new);
-    let mut elapsed = use_signal(|| 0u32);
-    let mut stopping = use_signal(|| false);
     let energy = view.energy;
-
-    // Тик похода: раз в секунду, пока поход не остановлен и игра загружена.
-    use_future(move || async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(balance::TICK_MS)).await;
-            let Some(location_id) = *active.peek() else {
-                continue;
-            };
-            // Стоит ли ждать остальное: пока идёт остановка, тиков не делаем.
-            if *stopping.peek() {
-                active.set(None);
-                stopping.set(false);
-                continue;
-            }
-
-            let tick = {
-                let mut guard = state.write();
-                expedition::step_expedition(&mut guard, location_id, 1.0)
-            };
-            if !tick.loot.is_empty() {
-                let line = tick
-                    .loot
-                    .iter()
-                    .map(|loot| format!("+{} × {}", loot.quantity, ingredient_name(&loot.item_id)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let previous = found.peek().clone();
-                found.set(join_lines(&previous, &line));
-                good.set(true);
-            }
-            if tick.overflow {
-                message.set("Склад полон — часть добычи сгорела.".to_string());
-            }
-            if tick.interrupted {
-                message.set("Поход прерван: рюкзак полон.".to_string());
-                good.set(false);
-            }
-            if tick.out_of_energy {
-                message.set("Поход прерван: энергия закончилась.".to_string());
-                good.set(false);
-            }
-            if tick.is_over() {
-                active.set(None);
-            }
-            elapsed += 1;
-            refresh_view(state);
-        }
-    });
-
-    let message_text = message();
-    let good_now = good();
-    let found_text = found();
-    let active_now = active();
-    let elapsed_now = elapsed();
+    // Поход живёт в состоянии игры и идёт в общем тике, поэтому экран только
+    // показывает его и меняет по кнопкам.
+    let active = view.active_expedition.clone();
+    let active_id = active
+        .as_ref()
+        .filter(|expedition| !expedition.done)
+        .map(|expedition| expedition.location_id.clone());
+    let elapsed = active
+        .as_ref()
+        .map(|expedition| expedition.elapsed)
+        .unwrap_or(0);
+    let message_text = active
+        .as_ref()
+        .and_then(|expedition| expedition.notice.clone())
+        .unwrap_or_default();
+    let finished = active
+        .as_ref()
+        .map(|expedition| expedition.done)
+        .unwrap_or(false);
+    let good_now = !finished && !message_text.is_empty();
+    let found_text = active
+        .as_ref()
+        .map(|expedition| {
+            expedition
+                .found
+                .iter()
+                .map(|(item_id, quantity, _)| format!("+{quantity} × {}", ingredient_name(item_id)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
 
     rsx! {
         section { class: "exp-screen",
@@ -87,7 +55,7 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                 }
                 p { class: "exp-hint",
-                    "Поход идёт, пока есть энергия ({format_num(balance::EXPEDITION_ENERGY_PER_TICK)}/с). Находки появляются по дороге; нажми «Закончить поход», чтобы вернуться."
+                    "Поход идёт, пока есть энергия ({format_num(balance::EXPEDITION_ENERGY_PER_TICK)}/с) — даже если закрыть эту вкладку. Нажми «Закончить поход», чтобы вернуться."
                 }
                 div { class: "exp-stats",
                     span { class: "exp-stat",
@@ -102,17 +70,28 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
             }
 
-            if let Some(location_id) = active_now {
+            if let Some(location_id) = active_id.clone() {
                 div { class: "exp-live",
                     div { class: "exp-live-head",
                         span { class: "exp-live-name",
-                            "В пути: {expedition::location(location_id).map(|l| l.name).unwrap_or(\"\")}"
+                            "В пути: {expedition::location(&location_id).map(|l| l.name).unwrap_or(\"\")}"
                         }
-                        span { class: "exp-live-time", "В пути {format_num(elapsed_now as f64)} с" }
+                        span { class: "exp-live-time", "В пути {format_num(elapsed as f64)} с" }
                     }
                     button {
                         class: "exp-stop",
-                        onclick: move |_| stopping.set(true),
+                        onclick: move |_| {
+                            {
+                                let mut guard = state.write();
+                                if let Some(active) = guard.active_expedition.as_mut() {
+                                    if active.notice.is_none() {
+                                        active.notice = Some("Поход окончен.".to_string());
+                                    }
+                                    active.done = true;
+                                }
+                            }
+                            refresh_view(state);
+                        },
                         "Закончить поход"
                     }
                 }
@@ -138,14 +117,14 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                         key: "{location.id}",
                         location,
                         energy,
-                        busy: active_now.is_some(),
-                        current: active_now == Some(location.id),
+                        busy: active_id.is_some(),
+                        current: active_id.as_deref() == Some(location.id),
                         on_go: move |_| {
-                            message.set(String::new());
-                            found.set(String::new());
-                            good.set(false);
-                            elapsed.set(0);
-                            active.set(Some(location.id));
+                            {
+                                let mut guard = state.write();
+                                guard.expedition_timer = 0.0;
+                                guard.active_expedition = Some(ActiveExpedition::new(location.id));
+                            }
                             refresh_view(state);
                         },
                     }
@@ -206,19 +185,4 @@ fn drop_list(drops: &[(&str, u32, u32)]) -> String {
         .map(|(id, min, max)| format!("{} {min}–{max}", ingredient_name(id)))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// Добавляет строку к списку находок, склеивая одинаковые пункты.
-fn join_lines(previous: &str, line: &str) -> String {
-    if previous.is_empty() {
-        line.to_string()
-    } else {
-        format!("{previous}\n{line}")
-    }
-}
-
-/// Текст ошибки похода (для будущих вызовов).
-#[allow(dead_code)]
-fn error_text(error: ExpeditionError) -> &'static str {
-    error.text()
 }

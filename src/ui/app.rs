@@ -3,6 +3,7 @@ use std::time::Duration;
 use dioxus::prelude::*;
 
 use crate::game::actions::{self, BuildResult};
+use crate::game::expedition;
 use crate::game::state::{AchievementStatus, ResearchKind, ResourceKind, Theme};
 use crate::game::{balance, GameState};
 
@@ -104,7 +105,13 @@ pub fn App() -> Element {
             let snapshot = {
                 let mut guard = state.write();
                 actions::tick(&mut guard, 1.0);
-                guard.clone()
+                expedition::tick_active_expedition(&mut guard, 1.0);
+                let mut snapshot = guard.clone();
+                // Панель разработчика показывает живые числа без сброса ввода.
+                if *dev_open.peek() {
+                    snapshot.dev = guard.dev.clone();
+                }
+                snapshot
             };
             *VIEW.write() = snapshot;
         }
@@ -302,10 +309,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let house_cost = balance::house_cost(snapshot.house_level);
     let comfort_cost = balance::comfort_cost(snapshot.comfort_level);
 
-    let affordable = |cost: balance::Cost| {
-        snapshot.active_amount("wood") >= cost.wood as u32
-            && snapshot.active_amount("stone") >= cost.stone as u32
-    };
+    let affordable = |cost: balance::Cost| actions::can_afford(&snapshot, cost);
     let storage_affordable = affordable(storage_cost);
     let worker_house_affordable = affordable(worker_house_cost);
     let research_house_affordable = affordable(research_house_cost);
@@ -387,8 +391,8 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     );
 
     let mine_description = format!(
-        "Работники добывают железо: +{}/с с каждого. Уровень даёт одно рабочее место.",
-        format_num(balance::MINE_IRON_PER_WORKER_PER_SEC)
+        "Работники добывают камень: +{}/с с каждого. Железо — только из походов и у торговца. Уровень даёт одно рабочее место.",
+        format_num(balance::MINE_STONE_PER_WORKER_PER_SEC)
     );
 
     let forge_description = format!(
@@ -403,12 +407,18 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     );
 
     let house_description = if snapshot.house_level == 0 {
-        "После постройки: +1.5 энергии за отдых и +1 энергии в секунду.".to_string()
+        format!(
+            "После постройки: +{} энергии за отдых и +{}/с.",
+            format_num(snapshot.rest_energy() + balance::REST_ENERGY_PER_HOUSE_LEVEL),
+            format_num(balance::HOUSE_ENERGY_PER_LEVEL)
+        )
     } else {
         format!(
-            "Сейчас: +{} за отдых, +{}/с. Улучшение добавит ещё +1 к отдыху и +1/с.",
+            "Сейчас: +{} за отдых, +{}/с. Улучшение даст ещё +{} за отдых и +{}/с.",
             format_num(snapshot.rest_energy()),
-            format_num(snapshot.energy_regen())
+            format_num(snapshot.energy_regen()),
+            format_num(balance::REST_ENERGY_PER_HOUSE_LEVEL),
+            format_num(balance::HOUSE_ENERGY_PER_LEVEL)
         )
     };
 
@@ -760,7 +770,7 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
     let sawmill_rate = snapshot.sawmill_wood_per_sec();
     let mine_workers = snapshot.mine_workers;
     let mine_slots = snapshot.mine_slots();
-    let mine_rate = snapshot.mine_iron_per_sec();
+    let mine_rate = snapshot.mine_stone_per_sec();
     let coal_workers = snapshot.coal_pit_workers;
     let coal_slots = snapshot.coal_pit_slots();
     let coal_rate = snapshot.coal_pit_coal_per_sec();
@@ -802,7 +812,7 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                 if snapshot.coal_pit_researched {
                     WorkerRow {
                         title: "Шахта".to_string(),
-                        detail: format!("+{}/с железа", format_num(mine_rate)),
+                        detail: format!("+{}/с камня", format_num(mine_rate)),
                         assigned: mine_workers,
                         capacity: mine_slots,
                         free,
@@ -1227,8 +1237,9 @@ fn GoalPanel(view: GameState, on_close: EventHandler<()>) -> Element {
 #[component]
 fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
     let mut state = state;
-    // Читаем через peek, чтобы тик не перерисовывал панель.
-    let snapshot = state.peek().clone();
+    // Снимок берём через peek и только один раз при открытии панели: тик игры
+    // не должен перерисовывать панель и сбрасывать введённые числа.
+    let snapshot = use_hook(|| state.peek().clone());
     let dev = snapshot.dev.clone();
 
     rsx! {
@@ -1251,8 +1262,7 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         value: snapshot.energy,
                         step: "1".to_string(),
                         on_change: move |value: f64| {
-                            let max = state.peek().energy_max;
-                            state.write().energy = value.clamp(0.0, max);
+                            state.write().energy = value.max(0.0);
                         },
                     }
                     DevNumberRow {
@@ -1310,6 +1320,14 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         },
                     }
                     DevNumberRow {
+                        label: "Уют, уровень".to_string(),
+                        value: snapshot.comfort_level as f64,
+                        step: "1".to_string(),
+                        on_change: move |value: f64| {
+                            state.write().comfort_level = value.max(0.0) as u32;
+                        },
+                    }
+                    DevNumberRow {
                         label: "Дом для работников".to_string(),
                         value: snapshot.worker_house_level as f64,
                         step: "1".to_string(),
@@ -1362,7 +1380,9 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         value: snapshot.bank_level as f64,
                         step: "1".to_string(),
                         on_change: move |value: f64| {
-                            state.write().bank_level = value.max(0.0) as u32;
+                            let mut guard = state.write();
+                            guard.bank_level = value.max(0.0) as u32;
+                            guard.gold = guard.gold.min(guard.gold_cap());
                         },
                     }
                     DevNumberRow {
@@ -1370,8 +1390,7 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         value: snapshot.current_fire as f64,
                         step: "5".to_string(),
                         on_change: move |value: f64| {
-                            let max = state.peek().fire_max();
-                            state.write().current_fire = value.clamp(0.0, max as f64) as u32;
+                            state.write().current_fire = value.max(0.0) as u32;
                         },
                     }
                     DevNumberRow {
@@ -1449,9 +1468,9 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                             guard.trader_researched = !guard.trader_researched;
                         },
                         if snapshot.trader_researched {
-                            "Сбросить изучение торговца"
+                            "Сбросить изучение банка"
                         } else {
-                            "Изучить торговца сразу"
+                            "Изучить банк сразу"
                         }
                     }
                 }
@@ -1492,7 +1511,7 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                     }
                     DevResourceRow {
                         icon: "⛏️".to_string(),
-                        name: "Железо".to_string(),
+                        name: "Руда".to_string(),
                         value: snapshot.active_amount("iron") as f64,
                         speed: dev.iron_per_sec,
                         on_value: move |value: f64| {
@@ -1507,7 +1526,7 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         },
                     }
                     DevResourceRow {
-                        icon: "🪙".to_string(),
+                        icon: "🔥".to_string(),
                         name: "Уголь".to_string(),
                         value: snapshot.active_amount("coal") as f64,
                         speed: dev.coal_per_sec,
@@ -1528,7 +1547,9 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         value: snapshot.gold,
                         speed: dev.gold_per_sec,
                         on_value: move |value: f64| {
-                            state.write().gold = value.max(0.0);
+                            // То же золото, что видно в баре ресурсов и у торговца.
+                            let mut guard = state.write();
+                            guard.gold = value.max(0.0);
                         },
                         on_speed: move |value: f64| {
                             state.write().dev.gold_per_sec = value.max(0.0);
@@ -1566,19 +1587,32 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
     }
 }
 
+/// Поле ввода числа. Текст живёт в локальном сигнале, поэтому перерисовки
+/// игры не стирают то, что набирает пользователь.
 #[component]
 fn DevNumberRow(label: String, value: f64, step: String, on_change: EventHandler<f64>) -> Element {
+    let mut text = use_signal(|| format_input(value));
+    let draft = text();
+    let field_class = if draft.trim() == format_input(value) {
+        "dev-input"
+    } else {
+        "dev-input dirty"
+    };
+    let shown = draft.clone();
+
     rsx! {
         div { class: "dev-row",
             span { class: "dev-label", "{label}" }
             input {
-                class: "dev-input",
+                class: "{field_class}",
                 r#type: "number",
                 step: "{step}",
-                value: "{value}",
+                value: "{shown}",
+                oninput: move |event| text.set(event.value()),
                 onchange: move |event| {
                     if let Ok(parsed) = event.value().parse::<f64>() {
                         on_change.call(parsed);
+                        text.set(format_input(parsed));
                     }
                 },
             }
@@ -1595,6 +1629,26 @@ fn DevResourceRow(
     on_value: EventHandler<f64>,
     on_speed: EventHandler<f64>,
 ) -> Element {
+    // Локальные черновики полей не зависят от тика игры.
+    let mut amount_text = use_signal(|| format_input(value));
+    let mut speed_text = use_signal(|| format_input(speed));
+    let amount = amount_text();
+    let speed_draft = speed_text();
+    let current_amount = format_input(value);
+    let current_speed = format_input(speed);
+    let amount_class = if amount.trim() == current_amount {
+        "dev-input"
+    } else {
+        "dev-input dirty"
+    };
+    let speed_class = if speed_draft.trim() == current_speed {
+        "dev-input"
+    } else {
+        "dev-input dirty"
+    };
+    let amount_shown = amount.clone();
+    let speed_shown = speed_draft.clone();
+
     rsx! {
         div { class: "dev-resource",
             div { class: "dev-resource-head",
@@ -1604,13 +1658,15 @@ fn DevResourceRow(
             div { class: "dev-row",
                 span { class: "dev-label", "Количество" }
                 input {
-                    class: "dev-input",
+                    class: "{amount_class}",
                     r#type: "number",
                     step: "1",
-                    value: "{value}",
+                    value: "{amount_shown}",
+                    oninput: move |event| amount_text.set(event.value()),
                     onchange: move |event| {
                         if let Ok(parsed) = event.value().parse::<f64>() {
                             on_value.call(parsed);
+                            amount_text.set(format_input(parsed));
                         }
                     },
                 }
@@ -1621,18 +1677,29 @@ fn DevResourceRow(
             div { class: "dev-row",
                 span { class: "dev-label", "В секунду" }
                 input {
-                    class: "dev-input",
+                    class: "{speed_class}",
                     r#type: "number",
                     step: "0.1",
-                    value: "{speed}",
+                    value: "{speed_shown}",
+                    oninput: move |event| speed_text.set(event.value()),
                     onchange: move |event| {
                         if let Ok(parsed) = event.value().parse::<f64>() {
                             on_speed.call(parsed);
+                            speed_text.set(format_input(parsed));
                         }
                     },
                 }
             }
         }
+    }
+}
+
+/// Число для поля ввода без лишних нулей.
+fn format_input(value: f64) -> String {
+    if (value.fract()).abs() < 1e-9 {
+        format!("{value:.0}")
+    } else {
+        format!("{value}")
     }
 }
 
@@ -1694,6 +1761,10 @@ fn CostLabel(cost: balance::Cost) -> Element {
             span { class: "cost-num", "{format_num(cost.wood)}" }
             span { class: "cost-icon", "🪨" }
             span { class: "cost-num", "{format_num(cost.stone)}" }
+            if cost.gold > 0.0 {
+                span { class: "cost-icon", "💰" }
+                span { class: "cost-num", "{format_num(cost.gold)}" }
+            }
         }
     }
 }

@@ -283,7 +283,14 @@ fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<Stri
             onclick: move |_| on_select.call(item_id.clone()),
             span { class: "inv-item-icon", "{icon}" }
             if count > 1 {
-                span { class: "inv-badge", "{count}" }
+                span {
+                    class: if count >= items::ITEM_STACK_LIMIT {
+                        "inv-badge full"
+                    } else {
+                        "inv-badge"
+                    },
+                    "{count}"
+                }
             }
         }
     }
@@ -593,7 +600,7 @@ fn InventoryCard(
             div { class: "inv-detail-slot", "[{category} · {rarity}]" }
             div { class: "inv-detail-desc", "{description}" }
             div { class: "inv-detail-stats",
-                span { "В сумке: {count}" }
+                span { "В сумке: {count} / {items::ITEM_STACK_LIMIT}" }
                 span { "Бонусы: {stats}" }
                 if let Some(slot) = slot {
                     span { "Слот: {slot.label()}" }

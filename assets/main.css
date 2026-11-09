@@ -1089,6 +1089,11 @@ button {
     font-variant-numeric: tabular-nums;
 }
 
+.dev-input.dirty {
+    border-color: #d9a441;
+    background: rgba(217, 164, 65, 0.16);
+}
+
 .dev-btn {
     padding: 7px 8px;
     border: 1px solid var(--line);
@@ -2155,6 +2160,10 @@ button {
     line-height: 12px;
     text-align: center;
     font-variant-numeric: tabular-nums;
+}
+
+.inv-badge.full {
+    background: #b4472f;
 }
 
 .inv-detail {

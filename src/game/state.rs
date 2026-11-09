@@ -40,17 +40,17 @@ pub fn is_active_resource(key: &str) -> bool {
 pub enum ResearchKind {
     CoalPit,
     Forge,
-    Trader,
+    Bank,
 }
 
 impl ResearchKind {
-    pub const ALL: [ResearchKind; 3] = [Self::CoalPit, Self::Forge, Self::Trader];
+    pub const ALL: [ResearchKind; 3] = [Self::CoalPit, Self::Forge, Self::Bank];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::CoalPit => "Угольная яма",
             Self::Forge => "Кузница",
-            Self::Trader => "Торговец",
+            Self::Bank => "Банк",
         }
     }
 
@@ -58,7 +58,7 @@ impl ResearchKind {
         match self {
             Self::CoalPit => "Открывает угольную яму: работники тратят дерево и добывают уголь.",
             Self::Forge => "Открывает кузницу: огонь из угля плавит камень в железо.",
-            Self::Trader => "Открывает банк: повышает лимит золота.",
+            Self::Bank => "Открывает банк: повышает лимит золота.",
         }
     }
 
@@ -67,7 +67,7 @@ impl ResearchKind {
         match self {
             Self::CoalPit => None,
             Self::Forge => Some("угольную яму"),
-            Self::Trader => Some("кузницу"),
+            Self::Bank => Some("кузницу"),
         }
     }
 }
@@ -175,6 +175,46 @@ pub struct DevSettings {
     pub gold_per_sec: f64,
 }
 
+/// Активный поход. Живёт в состоянии игры, поэтому идёт вне вкладки «Походы».
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ActiveExpedition {
+    /// Идентификатор локации.
+    pub location_id: String,
+    /// Сколько секунд уже в пути.
+    pub elapsed: u32,
+    /// Найдено за поход: (id предмета, количество, на склад).
+    pub found: Vec<(String, u32, bool)>,
+    /// Последнее сообщение (переполнение склада и т.п.).
+    pub notice: Option<String>,
+    /// Поход окончен (энергия или рюкзак).
+    pub done: bool,
+}
+
+impl ActiveExpedition {
+    pub fn new(location_id: &str) -> Self {
+        Self {
+            location_id: location_id.to_string(),
+            elapsed: 0,
+            found: Vec::new(),
+            notice: None,
+            done: false,
+        }
+    }
+
+    /// Плюс находка к списку с склейкой одинаковых.
+    pub fn push_found(&mut self, item_id: &str, quantity: u32, active: bool) {
+        if let Some(entry) = self
+            .found
+            .iter_mut()
+            .find(|entry| entry.0 == item_id && entry.2 == active)
+        {
+            entry.1 += quantity;
+        } else {
+            self.found.push((item_id.to_string(), quantity, active));
+        }
+    }
+}
+
 /// Всё состояние игры. Логика не зависит от Dioxus.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -188,6 +228,8 @@ pub struct GameState {
     pub stone: f64,
     pub iron: f64,
     pub coal: f64,
+    /// Золото. Старое сохранение без поля получает нуль, а не стартовое значение.
+    #[serde(default)]
     pub gold: f64,
 
     /// Активные ресурсы (склад): ID вида -> количество.
@@ -260,6 +302,9 @@ pub struct GameState {
     pub market_seed: u64,
     /// Накопленная дробная секунда пути в походе.
     pub expedition_timer: f64,
+    /// Активный поход: `None` — игрок не в пути. Хранится в состоянии, чтобы
+    /// поход шёл и при закрытой вкладке.
+    pub active_expedition: Option<ActiveExpedition>,
 
     /// Сколько циклов (перерождений) пройдено.
     pub cycles: u32,
@@ -302,10 +347,8 @@ pub struct GameState {
 
 impl Default for GameState {
     fn default() -> Self {
-        let mut inventory = HashMap::new();
-        inventory.insert("leather".to_string(), 2);
-        inventory.insert("silver".to_string(), 1);
-        inventory.insert("quartz".to_string(), 1);
+        // Новая игра начинается с пустой сумкой.
+        let inventory: HashMap<String, u32> = HashMap::new();
 
         let mut state = Self {
             version: balance::SAVE_VERSION,
@@ -315,7 +358,7 @@ impl Default for GameState {
             stone: 0.0,
             iron: 0.0,
             coal: 0.0,
-            gold: balance::DEMO_START_GOLD,
+            gold: balance::START_GOLD,
             active_resources: {
                 let mut map = HashMap::new();
                 map.insert("wood".to_string(), 0);
@@ -356,6 +399,7 @@ impl Default for GameState {
             market_timer: 0.0,
             market_seed: 0x9e37_79b9_7f4a_7c15,
             expedition_timer: 0.0,
+            active_expedition: None,
             cycles: 0,
             time: 0.0,
             last_seen: 0,
@@ -474,14 +518,18 @@ impl GameState {
 
     /// Дерево в секунду с лесопилки.
     pub fn sawmill_wood_per_sec(&self) -> f64 {
-        self.sawmill_workers as f64 * balance::SAWMILL_WOOD_PER_WORKER_PER_SEC
+        self.sawmill_workers as f64
+            * balance::SAWMILL_WOOD_PER_WORKER_PER_SEC
+            * self.production_multiplier()
+            * (1.0 + self.gather_bonus as f64)
     }
 
-    /// Железо в секунду с шахты.
-    pub fn mine_iron_per_sec(&self) -> f64 {
+    /// Камень в секунду с шахты (железо теперь только в походах и у торговца).
+    pub fn mine_stone_per_sec(&self) -> f64 {
         self.mine_workers as f64
-            * balance::MINE_IRON_PER_WORKER_PER_SEC
+            * balance::MINE_STONE_PER_WORKER_PER_SEC
             * self.production_multiplier()
+            * (1.0 + self.gather_bonus as f64)
     }
 
     /// Уголь в секунду с угольной ямы.
@@ -501,7 +549,7 @@ impl GameState {
         match kind {
             ResearchKind::CoalPit => true,
             ResearchKind::Forge => self.coal_pit_researched,
-            ResearchKind::Trader => self.forge_researched,
+            ResearchKind::Bank => self.forge_researched,
         }
     }
 
@@ -510,7 +558,7 @@ impl GameState {
         match kind {
             ResearchKind::CoalPit => self.coal_pit_researched,
             ResearchKind::Forge => self.forge_researched,
-            ResearchKind::Trader => self.trader_researched,
+            ResearchKind::Bank => self.trader_researched,
         }
     }
 
@@ -519,7 +567,7 @@ impl GameState {
         match kind {
             ResearchKind::CoalPit => balance::COAL_PIT_RESEARCH_COST,
             ResearchKind::Forge => balance::FORGE_RESEARCH_COST,
-            ResearchKind::Trader => balance::TRADER_RESEARCH_COST,
+            ResearchKind::Bank => balance::BANK_RESEARCH_COST,
         }
     }
 
@@ -528,7 +576,7 @@ impl GameState {
         match kind {
             ResearchKind::CoalPit => self.coal_pit_research,
             ResearchKind::Forge => self.forge_research,
-            ResearchKind::Trader => self.trader_research,
+            ResearchKind::Bank => self.trader_research,
         }
     }
 
@@ -537,7 +585,7 @@ impl GameState {
         match kind {
             ResearchKind::CoalPit => self.coal_pit_research = value,
             ResearchKind::Forge => self.forge_research = value,
-            ResearchKind::Trader => self.trader_research = value,
+            ResearchKind::Bank => self.trader_research = value,
         }
     }
 
@@ -546,7 +594,7 @@ impl GameState {
         match kind {
             ResearchKind::CoalPit => self.coal_pit_researchers,
             ResearchKind::Forge => self.forge_researchers,
-            ResearchKind::Trader => self.trader_researchers,
+            ResearchKind::Bank => self.trader_researchers,
         }
     }
 
@@ -555,7 +603,7 @@ impl GameState {
         match kind {
             ResearchKind::CoalPit => self.coal_pit_researchers = value,
             ResearchKind::Forge => self.forge_researchers = value,
-            ResearchKind::Trader => self.trader_researchers = value,
+            ResearchKind::Bank => self.trader_researchers = value,
         }
     }
 
@@ -587,7 +635,7 @@ impl GameState {
                 self.forge_researched = true;
                 self.forge_researchers = 0;
             }
-            ResearchKind::Trader => {
+            ResearchKind::Bank => {
                 self.trader_researched = true;
                 self.trader_researchers = 0;
             }
@@ -676,16 +724,13 @@ impl GameState {
         self.remove_item(key, quantity)
     }
 
-    /// Сколько ячеек занято. Стакающиеся предметы занимают одну ячейку.
+    /// Сколько ячеек занято. Каждый вид предмета — одна ячейка, сколько бы
+    /// штук в ней ни лежало.
     pub fn inventory_used_slots(&self) -> u32 {
         self.inventory
             .iter()
             .filter(|(_, quantity)| **quantity > 0)
-            .map(|(item_id, quantity)| match items::item(item_id) {
-                Some(item) if item.stackable => 1,
-                _ => *quantity,
-            })
-            .sum()
+            .count() as u32
     }
 
     /// Всего ячеек с учётом экипировки.
@@ -704,31 +749,38 @@ impl GameState {
             .saturating_sub(self.inventory_used_slots())
     }
 
-    /// Поместится ли предмет в сумку.
+    /// Поместится ли предмет в сумку: не больше лимита на ячейку и есть куда класть.
     pub fn can_add_item(&self, item_id: &str, quantity: u32) -> bool {
         if quantity == 0 {
             return true;
         }
-        let Some(item) = items::item(item_id) else {
+        if items::item(item_id).is_none() {
             return false;
-        };
-        if item.stackable && self.item_count(item_id) > 0 {
-            return true;
         }
-        let needed = if item.stackable { 1 } else { quantity };
-        self.inventory_free_slots() >= needed
+        self.item_capacity_left(item_id) >= quantity && self.inventory_free_slots() > 0
     }
 
-    /// Добавляет предмет в сумку с проверкой места.
+    /// Сколько ещё штук предмета влезет в его ячейку.
+    pub fn item_capacity_left(&self, item_id: &str) -> u32 {
+        items::ITEM_STACK_LIMIT.saturating_sub(self.item_count(item_id))
+    }
+
+    /// Добавляет предмет в сумку. Возвращает `true`, если добавлено всё;
+    /// остаток сверх лимита ячейки отбрасывается (как излишки склада).
     pub fn add_item(&mut self, item_id: &str, quantity: u32) -> bool {
-        if !self.can_add_item(item_id, quantity) {
-            return false;
-        }
         if quantity == 0 {
             return true;
         }
-        *self.inventory.entry(item_id.to_string()).or_insert(0) += quantity;
-        true
+        if items::item(item_id).is_none() {
+            return false;
+        }
+        let left = self.item_capacity_left(item_id);
+        if left == 0 {
+            return false;
+        }
+        let added = quantity.min(left);
+        *self.inventory.entry(item_id.to_string()).or_insert(0) += added;
+        added == quantity
     }
 
     /// Убирает предмет из сумки. Снимает экипировку, если предмет закончился.
@@ -829,6 +881,16 @@ impl GameState {
         self.gather_bonus = gather_bonus.clamp(0.0, 5.0);
         self.fire_discount = fire_discount.clamp(0.0, 0.9);
         self.expedition_energy_discount = expedition_energy_discount.clamp(0.0, 0.9);
+    }
+
+    /// Убирает торговца из чисел изучения: банк открывается после кузницы.
+    /// Изученным он считается задним числом, чтобы старые сохранения не теряли банк.
+    pub fn drop_trader_research(&mut self) {
+        if self.forge_researched {
+            self.trader_researched = true;
+        }
+        self.trader_researchers = 0;
+        self.trader_research = 0.0;
     }
 
     /// Снимает экипировку, которой больше нет в сумке.
@@ -1024,7 +1086,9 @@ impl GameState {
     /// Обновляет сохранение старого формата: демо-капитал, версия и рынки.
     pub fn migrate(&mut self) {
         if self.version < balance::SAVE_VERSION {
-            self.gold = self.gold.max(balance::DEMO_START_GOLD);
+            // Старые версии получали демо-капитал: убираем его, игра стартует с нуля.
+            self.gold = 0.0;
+            self.inventory.clear();
             self.version = balance::SAVE_VERSION;
         }
         if self.active_resources.is_empty() {
@@ -1050,11 +1114,17 @@ impl GameState {
         for removed in ["coal_amulet", "iron_armor"] {
             self.inventory.remove(removed);
         }
+        // Одна ячейка — не больше лимита штук.
+        for quantity in self.inventory.values_mut() {
+            *quantity = (*quantity).min(items::ITEM_STACK_LIMIT);
+        }
+        self.inventory.retain(|_, quantity| *quantity > 0);
         self.ensure_markets();
         if self.active_set >= self.equipment_sets.len() {
             self.active_set = 0;
         }
         self.ensure_equipment_owned();
+        self.drop_trader_research();
         self.recalculate_stats();
     }
 
@@ -1082,5 +1152,57 @@ impl GameState {
         if self.amount(ResourceKind::Coal) > 0.0 {
             self.coal_seen = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_game_starts_empty() {
+        let state = GameState::default();
+        assert_eq!(state.gold, 0.0);
+        assert!(state.inventory.is_empty());
+        assert_eq!(state.active_amount("wood"), 0);
+        assert_eq!(state.active_amount("stone"), 0);
+        assert_eq!(state.active_amount("iron"), 0);
+        assert_eq!(state.active_amount("coal"), 0);
+        assert_eq!(state.energy, balance::START_ENERGY);
+    }
+
+    #[test]
+    fn one_cell_per_item_and_stack_limit() {
+        let mut state = GameState::default();
+        assert!(state.add_item("iron_ingot", 10));
+        assert_eq!(state.inventory_used_slots(), 1);
+        // Переполнение лимита срезается, но остальное добавляется.
+        assert!(state.add_item("iron_ingot", items::ITEM_STACK_LIMIT - 10));
+        assert_eq!(state.item_count("iron_ingot"), items::ITEM_STACK_LIMIT);
+        assert!(!state.can_add_item("iron_ingot", 1));
+        assert!(!state.add_item("iron_ingot", 5));
+        assert_eq!(state.item_count("iron_ingot"), items::ITEM_STACK_LIMIT);
+        assert_eq!(state.inventory_used_slots(), 1);
+    }
+
+    #[test]
+    fn gold_cap_is_thousand_per_bank_level() {
+        let mut state = GameState::default();
+        assert_eq!(state.gold_cap(), 1_000.0);
+        state.bank_level = 2;
+        assert_eq!(state.gold_cap(), 3_000.0);
+    }
+
+    #[test]
+    fn migration_drops_demo_gold_and_backpack() {
+        let mut state = GameState {
+            version: 6,
+            gold: 1_240.0,
+            ..GameState::default()
+        };
+        state.inventory.insert("leather".to_string(), 2);
+        state.migrate();
+        assert_eq!(state.gold, 0.0);
+        assert!(state.inventory.is_empty());
     }
 }

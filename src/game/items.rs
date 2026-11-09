@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 /// Базовое число ячеек инвентаря без экипировки.
 pub const BASE_INVENTORY_SLOTS: u32 = 10;
 
+/// Сколько штук одного предмета помещается в одну ячейку.
+pub const ITEM_STACK_LIMIT: u32 = 1_000;
+
 /// Категория предмета.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,7 +150,6 @@ pub struct Item {
     pub name: String,
     pub category: Category,
     pub base_price: u32,
-    pub stackable: bool,
     pub stats: ItemStats,
     /// Слот экипировки. `None` — предмет нельзя надеть.
     pub slot: Option<EquipSlot>,
@@ -217,7 +219,6 @@ fn build_catalog() -> Vec<Item> {
             "Дерево",
             Category::Material,
             2,
-            true,
             None,
             "Простая древесина. Нужна почти во всех рецептах.",
         ),
@@ -226,7 +227,6 @@ fn build_catalog() -> Vec<Item> {
             "Камень",
             Category::Material,
             2,
-            true,
             None,
             "Обычный камень. Основа строительства и точил.",
         ),
@@ -235,7 +235,6 @@ fn build_catalog() -> Vec<Item> {
             "Железная руда",
             Category::Material,
             5,
-            true,
             None,
             "Кусок руды. Плавится в железные слитки.",
         ),
@@ -244,7 +243,6 @@ fn build_catalog() -> Vec<Item> {
             "Уголь",
             Category::Material,
             3,
-            true,
             None,
             "Уголь для кузницы. Горит и даёт огонь.",
         ),
@@ -254,7 +252,6 @@ fn build_catalog() -> Vec<Item> {
             "Глина",
             Category::Material,
             3,
-            true,
             None,
             "Мягкая глина из каменоломни. Идёт на кирпич и кувшины.",
         ),
@@ -263,7 +260,6 @@ fn build_catalog() -> Vec<Item> {
             "Кожа",
             Category::Material,
             8,
-            true,
             None,
             "Выделанная кожа. Идёт на рюкзаки и одежду.",
         ),
@@ -272,7 +268,6 @@ fn build_catalog() -> Vec<Item> {
             "Волокно",
             Category::Material,
             2,
-            true,
             None,
             "Растительное волокно. Идёт на ткань и свечи.",
         ),
@@ -281,7 +276,6 @@ fn build_catalog() -> Vec<Item> {
             "Кварц",
             Category::Material,
             10,
-            true,
             None,
             "Прозрачный камень для точил и украшений.",
         ),
@@ -290,7 +284,6 @@ fn build_catalog() -> Vec<Item> {
             "Серебро",
             Category::Material,
             30,
-            true,
             None,
             "Драгоценный металл для украшений.",
         ),
@@ -299,7 +292,6 @@ fn build_catalog() -> Vec<Item> {
             "Золотая руда",
             Category::Material,
             150,
-            true,
             None,
             "Редкая золотая руда. Плавится в золотые слитки.",
         ),
@@ -308,7 +300,6 @@ fn build_catalog() -> Vec<Item> {
             "Драгоценные камни",
             Category::Material,
             100,
-            true,
             None,
             "Огранённые камни для дорогих украшений.",
         ),
@@ -318,7 +309,6 @@ fn build_catalog() -> Vec<Item> {
             "Доска",
             Category::Material,
             5,
-            true,
             None,
             "Деревянная доска. Материал для инструментов.",
         ),
@@ -327,7 +317,6 @@ fn build_catalog() -> Vec<Item> {
             "Ткань",
             Category::Material,
             7,
-            true,
             None,
             "Обычная ткань. Идёт на робы и куртки.",
         ),
@@ -336,7 +325,6 @@ fn build_catalog() -> Vec<Item> {
             "Точильный камень",
             Category::Material,
             16,
-            true,
             None,
             "Камень с кварцем. Чтобы затачивать инструменты.",
         ),
@@ -345,7 +333,6 @@ fn build_catalog() -> Vec<Item> {
             "Кирпич",
             Category::Goods,
             10,
-            true,
             None,
             "Кирпич из глины и угля. Строительный материал.",
         )
@@ -355,7 +342,6 @@ fn build_catalog() -> Vec<Item> {
             "Железный слиток",
             Category::Material,
             15,
-            true,
             None,
             "Выплавленная руда. Заготовка для снаряжения.",
         )
@@ -365,7 +351,6 @@ fn build_catalog() -> Vec<Item> {
             "Гвозди",
             Category::Material,
             17,
-            true,
             None,
             "Связка из 10 железных гвоздей.",
         )
@@ -375,7 +360,6 @@ fn build_catalog() -> Vec<Item> {
             "Золотой слиток",
             Category::Material,
             330,
-            true,
             None,
             "Чистое золото для дорогих украшений.",
         )
@@ -386,7 +370,6 @@ fn build_catalog() -> Vec<Item> {
             "Кожаный рюкзак",
             Category::Gear,
             32,
-            false,
             Some(EquipSlot::Body),
             "Крепкий рюкзак с карманами для находок.",
         )
@@ -399,7 +382,6 @@ fn build_catalog() -> Vec<Item> {
             "Кирка",
             Category::Gear,
             39,
-            false,
             Some(EquipSlot::Hand),
             "Железная кирка. Открывает доступ к железной шахте.",
         )
@@ -413,7 +395,6 @@ fn build_catalog() -> Vec<Item> {
             "Топор",
             Category::Gear,
             28,
-            false,
             Some(EquipSlot::Hand),
             "Острый топор для заготовки леса.",
         )
@@ -427,7 +408,6 @@ fn build_catalog() -> Vec<Item> {
             "Роба",
             Category::Gear,
             39,
-            false,
             Some(EquipSlot::Body),
             "Лёгкая роба странника. Не сковывает в пути.",
         )
@@ -440,7 +420,6 @@ fn build_catalog() -> Vec<Item> {
             "Кожаные перчатки",
             Category::Gear,
             27,
-            false,
             Some(EquipSlot::Hand),
             "Удобные перчатки для работы в поле и в лесу.",
         )
@@ -454,7 +433,6 @@ fn build_catalog() -> Vec<Item> {
             "Железные наручи",
             Category::Gear,
             83,
-            false,
             Some(EquipSlot::Hand),
             "Наручи кузнеца: часть жара уходит в металл.",
         )
@@ -468,7 +446,6 @@ fn build_catalog() -> Vec<Item> {
             "Зимние перчатки",
             Category::Gear,
             50,
-            false,
             Some(EquipSlot::Hand),
             "Тёплые перчатки. Меньше усталости в пути.",
         )
@@ -481,7 +458,6 @@ fn build_catalog() -> Vec<Item> {
             "Куртка",
             Category::Gear,
             98,
-            false,
             Some(EquipSlot::Body),
             "Плотная куртка из кожи и ткани.",
         )
@@ -495,7 +471,6 @@ fn build_catalog() -> Vec<Item> {
             "Деревянное ведро",
             Category::Goods,
             47,
-            false,
             None,
             "Ведро из досок и гвоздей.",
         ),
@@ -504,7 +479,6 @@ fn build_catalog() -> Vec<Item> {
             "Железное ведро",
             Category::Goods,
             42,
-            false,
             None,
             "Прочное ведро, сколоченное на кузнице.",
         )
@@ -514,7 +488,6 @@ fn build_catalog() -> Vec<Item> {
             "Мотыга",
             Category::Goods,
             53,
-            false,
             None,
             "Мотыга для рыхления земли.",
         )
@@ -528,7 +501,6 @@ fn build_catalog() -> Vec<Item> {
             "Серп",
             Category::Goods,
             60,
-            false,
             None,
             "Серп для жатвы волокна.",
         )
@@ -542,7 +514,6 @@ fn build_catalog() -> Vec<Item> {
             "Коса",
             Category::Goods,
             72,
-            false,
             None,
             "Длинная коса: косит волокно рядками.",
         )
@@ -557,7 +528,6 @@ fn build_catalog() -> Vec<Item> {
             "Глиняный кувшин",
             Category::Goods,
             7,
-            false,
             None,
             "Кувшин, вылепленный из глины.",
         ),
@@ -566,7 +536,6 @@ fn build_catalog() -> Vec<Item> {
             "Свеча",
             Category::Goods,
             6,
-            false,
             None,
             "Свеча из волокна и угля.",
         ),
@@ -575,7 +544,6 @@ fn build_catalog() -> Vec<Item> {
             "Подкова",
             Category::Goods,
             17,
-            false,
             None,
             "Кованая подкова на счастье.",
         )
@@ -585,7 +553,6 @@ fn build_catalog() -> Vec<Item> {
             "Железный кинжал",
             Category::Goods,
             26,
-            false,
             None,
             "Короткий клинок с кожаной рукоятью.",
         )
@@ -595,7 +562,6 @@ fn build_catalog() -> Vec<Item> {
             "Железный меч",
             Category::Goods,
             48,
-            false,
             None,
             "Надёжный клинок. Ходовой товар у торговцев.",
         )
@@ -605,7 +571,6 @@ fn build_catalog() -> Vec<Item> {
             "Кольчуга",
             Category::Goods,
             431,
-            false,
             None,
             "Долгая работа кузнеца: сотни колец.",
         )
@@ -616,7 +581,6 @@ fn build_catalog() -> Vec<Item> {
             "Серебряное кольцо",
             Category::Jewelry,
             33,
-            false,
             Some(EquipSlot::Accessory),
             "Простое кольцо из серебра.",
         )
@@ -626,7 +590,6 @@ fn build_catalog() -> Vec<Item> {
             "Кольцо торговца",
             Category::Jewelry,
             44,
-            false,
             Some(EquipSlot::Accessory),
             "Серебряное кольцо с кварцем. Помогает торговаться.",
         )
@@ -640,7 +603,6 @@ fn build_catalog() -> Vec<Item> {
             "Амулет шахтёра",
             Category::Jewelry,
             44,
-            false,
             Some(EquipSlot::Accessory),
             "Кварц чутко отзывается на руду в породе.",
         )
@@ -655,7 +617,6 @@ fn build_catalog() -> Vec<Item> {
             "Кулон странника",
             Category::Jewelry,
             42,
-            false,
             Some(EquipSlot::Accessory),
             "Кожаный шнур с серебром. Приносит удачу в странствиях.",
         )
@@ -669,7 +630,6 @@ fn build_catalog() -> Vec<Item> {
             "Золотое кольцо с камнем",
             Category::Jewelry,
             473,
-            false,
             Some(EquipSlot::Accessory),
             "Тяжёлое золото и яркий камень.",
         )
@@ -683,7 +643,6 @@ fn build_catalog() -> Vec<Item> {
             "Золотая подвеска",
             Category::Jewelry,
             583,
-            false,
             Some(EquipSlot::Accessory),
             "Золотая подвеска с двумя камнями.",
         )
@@ -700,7 +659,6 @@ fn item_def(
     name: &str,
     category: Category,
     base_price: u32,
-    stackable: bool,
     slot: Option<EquipSlot>,
     description: &str,
 ) -> Item {
@@ -709,7 +667,6 @@ fn item_def(
         name: name.to_string(),
         category,
         base_price,
-        stackable,
         stats: ItemStats::default(),
         slot,
         description: description.to_string(),

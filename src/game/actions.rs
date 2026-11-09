@@ -59,6 +59,24 @@ pub enum PrestigeResult {
     Locked,
 }
 
+/// Хватает ли ресурсов и золота на постройку.
+pub fn can_afford(state: &GameState, cost: Cost) -> bool {
+    state.active_amount("wood") as f64 >= cost.wood
+        && state.active_amount("stone") as f64 >= cost.stone
+        && state.gold + 1e-9 >= cost.gold
+}
+
+/// Списывает стоимость постройки. Возвращает `false`, если не хватает.
+fn spend_cost(state: &mut GameState, cost: Cost) -> bool {
+    if !can_afford(state, cost) {
+        return false;
+    }
+    state.spend_active("wood", cost.wood as u32);
+    state.spend_active("stone", cost.stone as u32);
+    state.gold = (state.gold - cost.gold).max(0.0);
+    true
+}
+
 /// Клик по ресурсу: тратит энергию и добавляет ресурс.
 pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
     if !state.gathering_unlocked() {
@@ -131,10 +149,10 @@ pub fn tick(state: &mut GameState, dt_seconds: f64) {
         state.stats.wood_gathered += added;
     }
 
-    let mine = state.mine_iron_per_sec() * dt;
+    let mine = state.mine_stone_per_sec() * dt;
     if mine > 0.0 {
-        let added = state.add_resource(ResourceKind::Iron, mine);
-        state.stats.iron_mined += added;
+        let added = state.add_resource(ResourceKind::Stone, mine);
+        state.stats.stone_gathered += added;
     }
 
     tick_research(state, dt);
@@ -224,14 +242,9 @@ pub fn build_house(state: &mut GameState) -> BuildResult {
     }
 
     let cost = balance::house_cost(state.house_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.house_level += 1;
     BuildResult::Built(state.house_level)
 }
@@ -243,14 +256,9 @@ pub fn build_storage(state: &mut GameState) -> BuildResult {
     }
 
     let cost = balance::storage_cost(state.storage_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.storage_level += 1;
     BuildResult::Built(state.storage_level)
 }
@@ -258,14 +266,9 @@ pub fn build_storage(state: &mut GameState) -> BuildResult {
 /// Строит или улучшает «Уют»: повышает максимум энергии.
 pub fn build_comfort(state: &mut GameState) -> BuildResult {
     let cost = balance::comfort_cost(state.comfort_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.comfort_level += 1;
     BuildResult::Built(state.comfort_level)
 }
@@ -277,14 +280,9 @@ pub fn build_worker_house(state: &mut GameState) -> BuildResult {
     }
 
     let cost = balance::worker_house_cost(state.worker_house_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.worker_house_level += 1;
     BuildResult::Built(state.worker_house_level)
 }
@@ -296,14 +294,9 @@ pub fn build_research_house(state: &mut GameState) -> BuildResult {
     }
 
     let cost = balance::research_house_cost(state.research_house_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.research_house_level += 1;
     BuildResult::Built(state.research_house_level)
 }
@@ -315,14 +308,9 @@ pub fn build_sawmill(state: &mut GameState) -> BuildResult {
     }
 
     let cost = balance::sawmill_cost(state.sawmill_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.sawmill_level += 1;
     BuildResult::Built(state.sawmill_level)
 }
@@ -334,14 +322,9 @@ pub fn build_mine(state: &mut GameState) -> BuildResult {
     }
 
     let cost = balance::mine_cost(state.mine_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.mine_level += 1;
     BuildResult::Built(state.mine_level)
 }
@@ -353,14 +336,9 @@ pub fn build_coal_pit(state: &mut GameState) -> BuildResult {
     }
 
     let cost = balance::coal_pit_cost(state.coal_pit_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.coal_pit_level += 1;
     BuildResult::Built(state.coal_pit_level)
 }
@@ -372,33 +350,23 @@ pub fn build_forge(state: &mut GameState) -> BuildResult {
     }
 
     let cost = balance::forge_cost(state.forge_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.forge_level += 1;
     BuildResult::Built(state.forge_level)
 }
 
-/// Строит или улучшает банк. Доступен после изучения торговца.
+/// Строит или улучшает банк. Открывается после изучения кузницы.
 pub fn build_bank(state: &mut GameState) -> BuildResult {
     if !state.trader_researched {
         return BuildResult::Locked;
     }
 
     let cost = balance::bank_cost(state.bank_level);
-    if state.active_amount("wood") < cost.wood as u32
-        || state.active_amount("stone") < cost.stone as u32
-    {
+    if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
-
-    state.spend_active("wood", cost.wood as u32);
-    state.spend_active("stone", cost.stone as u32);
     state.bank_level += 1;
     BuildResult::Built(state.bank_level)
 }
@@ -484,8 +452,8 @@ pub fn fire_cost(state: &GameState, recipe: &items::Recipe) -> u32 {
 
 /// Сколько раз рецепт можно повторить подряд.
 ///
-/// Ограничение — ингредиенты, место в сумке (для нестакуемых предметов)
-/// и огонь кузницы.
+/// Ограничение — ингредиенты, место в сумке (одна ячейка на предмет, не более
+/// [`items::ITEM_STACK_LIMIT`] штук) и огонь кузницы.
 pub fn affordable_crafts(state: &GameState, recipe: &items::Recipe) -> u32 {
     if recipe.fire_cost > 0 && state.forge_level == 0 {
         return 0;
@@ -499,13 +467,20 @@ pub fn affordable_crafts(state: &GameState, recipe: &items::Recipe) -> u32 {
     if fire > 0 {
         limit = limit.min(state.current_fire.checked_div(fire).unwrap_or(0));
     }
-    if !items::item(recipe.result_id)
-        .map(|item| item.stackable && state.item_count(recipe.result_id) > 0)
-        .unwrap_or(true)
-    {
-        let per_item = recipe.result_quantity.max(1);
-        limit = limit.min(state.inventory_free_slots() / per_item);
-    }
+    // Каждый вид предмета — одна ячейка; второй вид требует свободной ячейки,
+    // а количество в ячейке ограничено лимитом стака.
+    let free_slots = state.inventory_free_slots();
+    let existing = state.item_count(recipe.result_id);
+    let room = if existing > 0 {
+        state.item_capacity_left(recipe.result_id)
+    } else {
+        if free_slots == 0 {
+            0
+        } else {
+            items::ITEM_STACK_LIMIT
+        }
+    };
+    limit = limit.min(room / recipe.result_quantity.max(1));
     limit
 }
 
@@ -768,8 +743,10 @@ mod tests {
 
         tick(&mut state, 10.0);
 
-        assert_eq!(state.active_amount("wood"), 4);
-        assert_eq!(state.sawmill_wood_per_sec(), 0.4);
+        assert_eq!(state.active_amount("wood"), 5);
+        assert!(
+            (state.sawmill_wood_per_sec() - balance::SAWMILL_WOOD_PER_WORKER_PER_SEC).abs() < 1e-9
+        );
     }
 
     #[test]
@@ -885,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn mine_workers_produce_iron() {
+    fn mine_workers_produce_stone() {
         let mut state = GameState {
             coal_pit_researched: true,
             mine_level: 1,
@@ -895,8 +872,10 @@ mod tests {
 
         tick(&mut state, 10.0);
 
-        assert!((state.active_amount("iron") as f64 - 2.0).abs() < 1e-9);
-        assert!((state.stats.iron_mined - 2.0).abs() < 1e-9);
+        // Шахта даёт камень, а не железо.
+        assert!((state.active_amount("stone") as f64 - 5.0).abs() < 1e-9);
+        assert!((state.stats.stone_gathered - 5.0).abs() < 1e-9);
+        assert_eq!(state.active_amount("iron"), 0);
     }
 
     #[test]
