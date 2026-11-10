@@ -659,7 +659,7 @@ fn build_catalog() -> Vec<Item> {
             Category::Jewelry,
             42,
             Some(EquipSlot::Accessory),
-            "Кожаный шнур с серебром. Приносит удачу в странствиях.",
+            "Серебряный кулон с драгоценным камнем. Приносит удачу в странствиях.",
         )
         .with_stats(ItemStats {
             rare_loot_bonus: Some(10.0),
@@ -985,7 +985,7 @@ fn build_recipes() -> Vec<Recipe> {
             "wanderer_pendant",
             1,
             15,
-            vec![need("silver", 1), need("leather", 1)],
+            vec![need("silver", 1), need("gems", 1)],
         ),
         make_recipe(
             "gold_ring",

@@ -505,7 +505,6 @@ fn CraftPanel(
     let stats = result.stats.summary();
     let owned = view.item_count(result.id.as_str());
     let result_id = result.id.clone();
-    let fire = actions::fire_cost(&view, &recipe);
 
     let mut missing = false;
     let ingredients: Vec<(String, u32, u32, bool)> = recipe
@@ -591,16 +590,6 @@ fn CraftPanel(
                             key: "{ingredient}",
                             class: if *lack { "craft-need lack" } else { "craft-need" },
                             "{ingredient}: {have}/{need}"
-                        }
-                    }
-                    if fire > 0 {
-                        div {
-                            class: if blocked.as_deref().map(|text| text.starts_with("Недостаточно огня")).unwrap_or(false) {
-                                "craft-need lack"
-                            } else {
-                                "craft-need"
-                            },
-                            "Огонь: {view.current_fire}/{fire}"
                         }
                     }
                     if result_quantity > 1 {

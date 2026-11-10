@@ -2009,8 +2009,23 @@ button {
 }
 
 .craft-panel-icon {
+    flex: 0 0 52px;
+    width: 52px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.18);
     font-size: 26px;
     line-height: 1;
+}
+
+.craft-panel-icon .icon {
+    width: 100%;
+    height: 100%;
 }
 
 .craft-panel-bottom {

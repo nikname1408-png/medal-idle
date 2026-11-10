@@ -22,7 +22,7 @@ pub const ROTATION_PERCENT: u64 = 30;
 
 /// Предел «настроения рынка»: насколько спрос и предложение расходятся
 /// вокруг 50 из-за медленного тренда.
-const TREND_LIMIT: i32 = 15;
+const TREND_LIMIT: i32 = 20;
 
 /// Описание торговца в каталоге.
 #[derive(Clone, Copy, Debug)]
@@ -154,11 +154,11 @@ impl MarketStatus {
 
 /// Рынок: спрос − предложение.
 ///
-/// `>= +20` — дефицит, `<= -20` — избыток, между ними — баланс.
+/// `>= +16` — дефицит, `<= -16` — избыток, между ними — баланс.
 pub fn market_status(demand: u8, supply: u8) -> MarketStatus {
     match demand as i32 - supply as i32 {
-        diff if diff >= 20 => MarketStatus::Deficit,
-        diff if diff <= -20 => MarketStatus::Surplus,
+        diff if diff >= 16 => MarketStatus::Deficit,
+        diff if diff <= -16 => MarketStatus::Surplus,
         _ => MarketStatus::Balance,
     }
 }
@@ -687,7 +687,7 @@ fn market_step(state: &mut GameState) {
             // Настроение рынка медленно гуляет: спрос и предложение тянутся
             // к `50 ± trend`, поэтому периодически возникают устойчивые
             // дефицит и избыток, а не вечный баланс 50/50.
-            let trend = (good.trend as i32 + noise(&mut seed, 3)).clamp(-TREND_LIMIT, TREND_LIMIT);
+            let trend = (good.trend as i32 + noise(&mut seed, 4)).clamp(-TREND_LIMIT, TREND_LIMIT);
             good.trend = trend as i8;
             let target_demand = (50 + trend) as u8;
             let target_supply = (50 - trend) as u8;
@@ -755,11 +755,11 @@ mod tests {
     #[test]
     fn market_status_thresholds() {
         assert_eq!(market_status(72, 31), MarketStatus::Deficit);
-        assert_eq!(market_status(70, 50), MarketStatus::Deficit);
-        assert_eq!(market_status(69, 50), MarketStatus::Balance);
+        assert_eq!(market_status(66, 50), MarketStatus::Deficit);
+        assert_eq!(market_status(65, 50), MarketStatus::Balance);
         assert_eq!(market_status(50, 50), MarketStatus::Balance);
-        assert_eq!(market_status(31, 50), MarketStatus::Balance);
-        assert_eq!(market_status(30, 50), MarketStatus::Surplus);
+        assert_eq!(market_status(35, 50), MarketStatus::Balance);
+        assert_eq!(market_status(34, 50), MarketStatus::Surplus);
     }
 
     #[test]
