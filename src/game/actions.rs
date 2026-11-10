@@ -1141,6 +1141,26 @@ mod tests {
     }
 
     #[test]
+    fn tools_are_craftable_with_ingredients_and_fire() {
+        for (recipe_id, ingredients) in [
+            ("hoe", [("iron_ingot", 2), ("nails", 4), ("board", 2)]),
+            ("sickle", [("iron_ingot", 3), ("nails", 2), ("board", 1)]),
+            ("scythe", [("iron_ingot", 3), ("nails", 5), ("board", 2)]),
+        ] {
+            let mut state = GameState {
+                forge_level: 1,
+                current_fire: 100,
+                ..GameState::default()
+            };
+            for (item_id, quantity) in ingredients {
+                state.add_item(item_id, quantity);
+            }
+            assert_eq!(craft_times(&mut state, recipe_id, 1), Ok(1));
+            assert_eq!(state.item_count(recipe_id), 1, "{recipe_id} не создан");
+        }
+    }
+
+    #[test]
     fn backpack_raises_inventory_slots() {
         let mut state = GameState::default();
         state.add_item("backpack", 1);

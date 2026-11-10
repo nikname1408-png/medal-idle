@@ -20,6 +20,10 @@ pub const BUY_RATE: f64 = 1.15;
 /// Шанс смены одного товара за шаг рынка (в процентах).
 pub const ROTATION_PERCENT: u64 = 30;
 
+/// Предел «настроения рынка»: насколько спрос и предложение расходятся
+/// вокруг 50 из-за медленного тренда.
+const TREND_LIMIT: i32 = 15;
+
 /// Описание торговца в каталоге.
 #[derive(Clone, Copy, Debug)]
 pub struct TraderDef {
@@ -194,6 +198,10 @@ pub struct GoodState {
     pub demand: u8,
     /// Предложение 0–100.
     pub supply: u8,
+    /// Медленный тренд рынка: спрос и предложение тянутся к `50 ± trend`.
+    /// Благодаря ему на рынке бывают устойчивые дефицит и избыток, а не
+    /// вечное равновесие 50/50.
+    pub trend: i8,
     /// Сколько ещё торговец готов скупить за цикл.
     pub buy_limit: u32,
 }
@@ -205,6 +213,7 @@ impl Default for GoodState {
             stock: 0,
             demand: 50,
             supply: 50,
+            trend: 0,
             buy_limit: 0,
         }
     }
@@ -238,11 +247,15 @@ impl TraderMarket {
 }
 
 fn good(item_id: &str, stock: u32, demand: u8, supply: u8, buy_limit: u32) -> GoodState {
+    // Стартовое настроение выводим из демо-спроса и предложения, чтобы
+    // витрина сразу начиналась с разными статусами рынка.
+    let trend = ((demand as i32 - supply as i32) / 2).clamp(-TREND_LIMIT, TREND_LIMIT) as i8;
     GoodState {
         item_id: item_id.to_string(),
         stock,
         demand,
         supply,
+        trend,
         buy_limit,
     }
 }
@@ -343,11 +356,13 @@ fn base_buy_limit(item_id: &str) -> u32 {
 
 /// Свежий товар, появившийся в лавке.
 fn fresh_good(item_id: &str) -> GoodState {
+    // Новый товар приходит на витрину нейтральным: настроение рынка дальше
+    // гуляет само, без перекоса в дефицит.
     good(
         item_id,
         base_stock(item_id),
-        60,
-        45,
+        50,
+        50,
         base_buy_limit(item_id),
     )
 }
@@ -669,14 +684,22 @@ fn market_step(state: &mut GameState) {
         rotate_market(&mut seed, index, market);
 
         for good in market.goods.iter_mut() {
-            // Шум спроса и предложения: рынок должен жить, а не стоять на 50/50.
-            good.demand = (good.demand as i32 + noise(&mut seed, 4)).clamp(5, 95) as u8;
-            good.supply = (good.supply as i32 + noise(&mut seed, 4)).clamp(5, 95) as u8;
+            // Настроение рынка медленно гуляет: спрос и предложение тянутся
+            // к `50 ± trend`, поэтому периодически возникают устойчивые
+            // дефицит и избыток, а не вечный баланс 50/50.
+            let trend = (good.trend as i32 + noise(&mut seed, 3)).clamp(-TREND_LIMIT, TREND_LIMIT);
+            good.trend = trend as i8;
+            let target_demand = (50 + trend) as u8;
+            let target_supply = (50 - trend) as u8;
 
-            // Возврат к равновесию постепенный: 1 пункт за шаг рынка, поэтому
+            // Небольшой шум: значения шевелятся на каждом шаге рынка.
+            good.demand = (good.demand as i32 + noise(&mut seed, 2)).clamp(5, 95) as u8;
+            good.supply = (good.supply as i32 + noise(&mut seed, 2)).clamp(5, 95) as u8;
+
+            // Возврат к настроению постепенный: 1 пункт за шаг рынка, поэтому
             // обвал цены после продаж восстанавливается минутами, а не за 5 с.
-            good.demand = approach(good.demand, 50, 1);
-            good.supply = approach(good.supply, 50, 1);
+            good.demand = approach(good.demand, target_demand, 1);
+            good.supply = approach(good.supply, target_supply, 1);
 
             // Запас медленно восстанавливается до нормы.
             let stock_norm = base_stock(&good.item_id);
@@ -959,6 +982,8 @@ mod tests {
         if let Some(board) = market.good_mut("board") {
             board.supply = 95;
             board.demand = 5;
+            // Нейтральное настроение: проверяем возврат именно к 50.
+            board.trend = 0;
         }
         state.traders = vec![market];
         state.market_seed = 7;
@@ -1073,6 +1098,26 @@ mod tests {
                 "{picked} уже есть в лавке — будет дубль"
             );
         }
+    }
+
+    #[test]
+    fn market_has_deficits_and_surpluses() {
+        let mut state = GameState::default();
+        let (mut deficits, mut surpluses) = (0u32, 0u32);
+        for _ in 0..200 {
+            market_step(&mut state);
+            for market in &state.traders {
+                for good in &market.goods {
+                    match good.status() {
+                        MarketStatus::Deficit => deficits += 1,
+                        MarketStatus::Surplus => surpluses += 1,
+                        MarketStatus::Balance => {}
+                    }
+                }
+            }
+        }
+        assert!(deficits > 100, "дефицит почти не появляется: {deficits}");
+        assert!(surpluses > 100, "избыток почти не появляется: {surpluses}");
     }
 
     #[test]

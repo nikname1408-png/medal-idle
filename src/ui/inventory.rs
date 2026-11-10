@@ -387,10 +387,10 @@ pub fn CraftScreen(
         let recipe = items::recipe(recipe_id)?;
         let fire = actions::fire_cost(&view, recipe);
         if recipe.fire_cost > 0 && view.forge_level == 0 {
-            Some("Нужна кузница".to_string())
+            Some("Нужна кузница. Постройте её на вкладке «Поле».".to_string())
         } else if view.current_fire < fire {
             Some(format!(
-                "Недостаточно огня! Нужно {fire}, есть {}",
+                "Недостаточно огня! Нужно {fire}, есть {}. Подбросьте уголь в кузницу на «Поле».",
                 view.current_fire
             ))
         } else if !view.can_add_item(recipe.result_id, recipe.result_quantity) {
