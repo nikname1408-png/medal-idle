@@ -494,27 +494,28 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
 /// Продвигает активный поход в игровом тике. Возвращает `true`, если что-то
 /// изменилось (нашлась добыча, открылась локация, поход закончился).
 pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
-    // Защита от зависшего похода после сворачивания игры: без запаса энергии
-    // поход закрывается, а не крутится вхолостую.
-    if state.energy <= balance::EXPEDITION_MIN_ENERGY {
-        let Some(active) = state.active_expedition.as_mut() else {
-            return false;
-        };
-        if active.done {
-            return false;
-        }
-        active.notice = Some("Поход прерван: мало энергии.".to_string());
-        active.done = true;
-        return true;
-    }
-
+    // Законченный поход (кнопка «Закончить», мало энергии, полный рюкзак) больше
+    // не двигается: иначе после восстановления энергии он «оживал» и продолжал
+    // тратить энергию и выдавать добычу.
     let Some(location_id) = state
         .active_expedition
         .as_ref()
+        .filter(|active| !active.done)
         .map(|active| active.location_id.clone())
     else {
         return false;
     };
+
+    // Защита от зависшего похода после сворачивания игры: без запаса энергии
+    // поход закрывается, а не крутится вхолостую.
+    if state.energy <= balance::EXPEDITION_MIN_ENERGY {
+        if let Some(active) = state.active_expedition.as_mut() {
+            active.notice = Some("Поход прерван: мало энергии.".to_string());
+            active.done = true;
+        }
+        return true;
+    }
+
     // Ограничиваем шаг: после паузы не должно проскакивать много секунд сразу.
     let tick = step_expedition(state, &location_id, dt.clamp(0.0, 5.0));
     let mut changed = false;
@@ -856,5 +857,35 @@ mod tests {
         assert!(active.done, "поход должен закрыться при малой энергии");
         assert_eq!(state.energy, 3.0, "энергия не должна тратиться");
         assert!(active.notice.is_some());
+    }
+
+    #[test]
+    fn finished_expedition_does_not_restart() {
+        use crate::game::state::ActiveExpedition;
+
+        let mut state = GameState {
+            energy: 3.0,
+            ..GameState::default()
+        };
+        state.active_expedition = Some(ActiveExpedition::new("field"));
+
+        assert!(tick_active_expedition(&mut state, 1.0));
+        let found_after_stop = state
+            .active_expedition
+            .as_ref()
+            .map(|active| active.found.len())
+            .unwrap_or(0);
+
+        // Энергия восстановилась — поход не должен оживать.
+        state.energy = 500.0;
+        for _ in 0..30 {
+            assert!(!tick_active_expedition(&mut state, 1.0));
+        }
+
+        assert_eq!(state.energy, 500.0, "законченный поход не тратит энергию");
+        let active = state.active_expedition.as_ref().expect("поход на месте");
+        assert!(active.done);
+        assert_eq!(active.found.len(), found_after_stop);
+        assert_eq!(active.elapsed, 0);
     }
 }
