@@ -6,12 +6,13 @@ use super::balance;
 use super::items::{self, EquipSlot};
 use super::trader::{self, TraderMarket};
 
-/// Виды ресурсов в баре: дерево, камень, огонь, золото. Руда и прочие
+/// Виды ресурсов в баре: дерево, камень, уголь, огонь, золото. Руда и прочие
 /// находки живут в рюкзаке.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResourceKind {
     Wood,
     Stone,
+    Coal,
     Fire,
     Gold,
 }
@@ -23,6 +24,7 @@ impl ResourceKind {
         match self {
             Self::Wood => "дерево",
             Self::Stone => "камень",
+            Self::Coal => "уголь",
             Self::Fire => "огонь",
             Self::Gold => "золото",
         }
@@ -42,6 +44,7 @@ pub enum ResearchKind {
     Bank,
 }
 
+#[allow(dead_code)]
 impl ResearchKind {
     pub const ALL: [ResearchKind; 3] = [Self::CoalPit, Self::Forge, Self::Bank];
 
@@ -174,6 +177,18 @@ pub struct DevSettings {
     pub gold_per_sec: f64,
 }
 
+/// Письмо в колокольчике: отложенное предложение постройки.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Letter {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    /// ID предложения, которое откроется по нажатию на письмо.
+    pub offer: Option<String>,
+    pub read: bool,
+}
+
 /// Активный поход. Живёт в состоянии игры, поэтому идёт вне вкладки «Походы».
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActiveExpedition {
@@ -233,6 +248,9 @@ pub struct GameState {
 
     /// Активные ресурсы (склад): ID вида -> количество.
     pub active_resources: HashMap<String, u32>,
+    /// Дробные остатки добычи: 0.5/с должны когда-то стать целым ресурсом.
+    #[serde(default)]
+    pub resource_fraction: HashMap<String, f64>,
 
     /// Сколько раз игрок нажимал «Отдых».
     pub rest_clicks: u32,
@@ -242,6 +260,9 @@ pub struct GameState {
     pub comfort_level: u32,
     /// Уровень склада.
     pub storage_level: u32,
+    /// Уровень амбара: каждый уровень даёт +500 к лимиту склада.
+    #[serde(default)]
+    pub barn_level: u32,
     /// Уровень дома для работников (каждый уровень — один работник).
     pub worker_house_level: u32,
     /// Уровень дома для изучения (каждый уровень — один исследователь).
@@ -267,6 +288,9 @@ pub struct GameState {
     pub current_fire: u32,
     /// Автоматически подбрасывать уголь, когда огонь гаснет.
     pub forge_auto_feed: bool,
+    /// Накопленное время до следующей автоподкидки угля.
+    #[serde(default)]
+    pub forge_auto_timer: f64,
 
     /// Изучен ли торговец.
     pub trader_researched: bool,
@@ -306,6 +330,16 @@ pub struct GameState {
     pub active_expedition: Option<ActiveExpedition>,
     /// Открытые картами локации походов (кроме стартовых поля и оврага).
     pub unlocked_locations: Vec<String>,
+
+    /// Предложение постройки, которое сейчас показано в центре экрана.
+    #[serde(default)]
+    pub pending_offer: Option<String>,
+    /// Письма в колокольчике.
+    #[serde(default)]
+    pub letters: Vec<Letter>,
+    /// Банк уже предложен игроку (порог 800 золота).
+    #[serde(default)]
+    pub bank_seen: bool,
 
     /// Сколько циклов (перерождений) пройдено.
     pub cycles: u32,
@@ -368,10 +402,12 @@ impl Default for GameState {
                 map.insert("coal".to_string(), 0);
                 map
             },
+            resource_fraction: HashMap::new(),
             rest_clicks: 0,
             house_level: 0,
             comfort_level: 0,
             storage_level: 0,
+            barn_level: 0,
             worker_house_level: 0,
             research_house_level: 0,
             sawmill_level: 0,
@@ -384,6 +420,7 @@ impl Default for GameState {
             forge_level: 0,
             current_fire: 0,
             forge_auto_feed: false,
+            forge_auto_timer: 0.0,
             trader_researched: false,
             trader_research: 0.0,
             trader_researchers: 0,
@@ -402,6 +439,9 @@ impl Default for GameState {
             expedition_timer: 0.0,
             active_expedition: None,
             unlocked_locations: Vec::new(),
+            pending_offer: None,
+            letters: Vec::new(),
+            bank_seen: false,
             cycles: 0,
             time: 0.0,
             last_seen: 0,
@@ -430,6 +470,7 @@ impl GameState {
         match kind {
             ResourceKind::Wood => "wood",
             ResourceKind::Stone => "stone",
+            ResourceKind::Coal => "coal",
             ResourceKind::Fire => "fire",
             ResourceKind::Gold => "gold",
         }
@@ -439,6 +480,7 @@ impl GameState {
         match kind {
             ResourceKind::Wood => self.active_amount("wood") as f64,
             ResourceKind::Stone => self.active_amount("stone") as f64,
+            ResourceKind::Coal => self.active_amount("coal") as f64,
             ResourceKind::Fire => self.current_fire as f64,
             ResourceKind::Gold => self.gold,
         }
@@ -452,6 +494,7 @@ impl GameState {
             _ => {
                 balance::BASE_STORAGE_CAP
                     + self.storage_level as f64 * balance::STORAGE_CAP_PER_LEVEL
+                    + self.barn_level as f64 * balance::BARN_CAP_PER_LEVEL
             }
         }
     }
@@ -616,6 +659,8 @@ impl GameState {
     }
 
     /// Доля изучения от 0.0 до 1.0.
+    /// Доля изучения (легаси, UI удалён).
+    #[allow(dead_code)]
     pub fn research_ratio(&self, kind: ResearchKind) -> f64 {
         let cost = self.research_cost(kind);
         if cost <= 0.0 {
@@ -676,8 +721,54 @@ impl GameState {
 
     /// Лимит активного ресурса.
     pub fn active_cap(&self, _kind: &str) -> u32 {
-        balance::BASE_STORAGE_CAP as u32
-            + self.storage_level * balance::STORAGE_CAP_PER_LEVEL as u32
+        (balance::BASE_STORAGE_CAP
+            + self.storage_level as f64 * balance::STORAGE_CAP_PER_LEVEL
+            + self.barn_level as f64 * balance::BARN_CAP_PER_LEVEL)
+            .round() as u32
+    }
+
+    /// Открыт ли амбар.
+    pub fn barn_unlocked(&self) -> bool {
+        self.storage_level >= balance::BARN_UNLOCK_STORAGE_LEVEL || self.barn_level > 0
+    }
+
+    /// Есть ли непрочитанные письма.
+    pub fn unread_letters(&self) -> u32 {
+        self.letters.iter().filter(|letter| !letter.read).count() as u32
+    }
+
+    /// Кладёт письмо в колокольчик. Повторное письмо с тем же id не дублируется,
+    /// но снова становится непрочитанным.
+    pub fn add_letter(&mut self, id: &str, title: &str, body: &str, offer: Option<&str>) {
+        if let Some(letter) = self.letters.iter_mut().find(|letter| letter.id == id) {
+            letter.title = title.to_string();
+            letter.body = body.to_string();
+            letter.offer = offer.map(str::to_string);
+            letter.read = false;
+            return;
+        }
+        self.letters.push(Letter {
+            id: id.to_string(),
+            title: title.to_string(),
+            body: body.to_string(),
+            offer: offer.map(str::to_string),
+            read: false,
+        });
+    }
+
+    /// Открывает письмо: помечает прочитанным и снова показывает предложение.
+    pub fn open_letter(&mut self, letter_id: &str) {
+        let offer = self
+            .letters
+            .iter_mut()
+            .find(|letter| letter.id == letter_id)
+            .and_then(|letter| {
+                letter.read = true;
+                letter.offer.clone()
+            });
+        if offer.is_some() {
+            self.pending_offer = offer;
+        }
     }
 
     /// Добавляет активный ресурс с проверкой лимита. Возвращает добавленное.
@@ -834,6 +925,9 @@ impl GameState {
     }
 
     /// Надевает предмет из сумки. Один предмет на слот.
+    ///
+    /// Надетый предмет больше не занимает ячейку: при надевании он списывается
+    /// из инвентаря, при снятии возвращается.
     pub fn equip_item(&mut self, item_id: &str) -> Result<(), EquipError> {
         let item = items::item(item_id).ok_or(EquipError::UnknownItem)?;
         let slot = item.slot.ok_or(EquipError::NotEquippable)?;
@@ -846,14 +940,22 @@ impl GameState {
         if self.equipment.get(slot).is_some() {
             return Err(EquipError::SlotOccupied);
         }
+        self.remove_one_item(item_id);
         self.equipment.set(slot, Some(item_id.to_string()));
+        self.sync_active_set();
         self.recalculate_stats();
         Ok(())
     }
 
-    /// Снимает предмет из слота.
+    /// Снимает предмет из слота и возвращает его в сумку.
     pub fn unequip_slot(&mut self, slot: EquipSlot) {
-        self.equipment.clear(slot);
+        if let Some(item_id) = self.equipment.get(slot).map(str::to_string) {
+            // Если в сумке нет места, предмет остаётся надетым, а не пропадает.
+            if self.add_item(&item_id, 1) {
+                self.equipment.clear(slot);
+            }
+        }
+        self.sync_active_set();
         self.recalculate_stats();
     }
 
@@ -862,10 +964,60 @@ impl GameState {
         if index >= self.equipment_sets.len() || index == self.active_set {
             return;
         }
+        // Сначала возвращаем текущий набор в сумку. Если места не хватило,
+        // откатываем добавленное и оставляем всё как было.
+        let current: Vec<String> = EquipSlot::ALL
+            .iter()
+            .filter_map(|slot| self.equipment.get(*slot).map(str::to_string))
+            .collect();
+        let mut added: Vec<String> = Vec::new();
+        for item_id in &current {
+            if !self.add_item(item_id, 1) {
+                for id in added.iter().rev() {
+                    self.remove_one_item(id);
+                }
+                return;
+            }
+            added.push(item_id.clone());
+        }
+
         self.equipment_sets[self.active_set] = self.equipment.clone();
         self.active_set = index;
-        self.equipment = self.equipment_sets[index].clone();
-        self.ensure_equipment_owned();
+        let target = self.equipment_sets[index].clone();
+        self.equipment = EquippedItems::default();
+        for slot in EquipSlot::ALL {
+            if let Some(item_id) = target.get(slot) {
+                if self.item_count(item_id) > 0 {
+                    self.remove_one_item(item_id);
+                    self.equipment.set(slot, Some(item_id.to_string()));
+                }
+            }
+        }
+        self.recalculate_stats();
+    }
+
+    /// Убирает одну штуку предмета без побочных эффектов экипировки.
+    fn remove_one_item(&mut self, item_id: &str) {
+        let remaining = {
+            let Some(current) = self.inventory.get_mut(item_id) else {
+                return;
+            };
+            if *current == 0 {
+                return;
+            }
+            *current -= 1;
+            *current
+        };
+        if remaining == 0 {
+            self.inventory.remove(item_id);
+        }
+    }
+
+    /// Запоминает текущую экипировку в активном наборе.
+    fn sync_active_set(&mut self) {
+        if let Some(set) = self.equipment_sets.get_mut(self.active_set) {
+            *set = self.equipment.clone();
+        }
     }
 
     /// Пересчитывает бонусы от экипировки.
@@ -911,21 +1063,12 @@ impl GameState {
         self.trader_research = 0.0;
     }
 
-    /// Снимает экипировку, которой больше нет в сумке.
+    /// Синхронизирует активный набор и пересчитывает бонусы.
+    ///
+    /// Раньше метод снимал экипировку, если предмета не было в сумке. Теперь
+    /// надетые предметы намеренно не лежат в инвентаре, поэтому проверка убрана.
     fn ensure_equipment_owned(&mut self) {
-        for slot in EquipSlot::ALL {
-            let missing = self
-                .equipment
-                .get(slot)
-                .map(|item_id| self.item_count(item_id) == 0)
-                .unwrap_or(false);
-            if missing {
-                self.equipment.clear(slot);
-            }
-        }
-        if let Some(set) = self.equipment_sets.get_mut(self.active_set) {
-            *set = self.equipment.clone();
-        }
+        self.sync_active_set();
         self.recalculate_stats();
     }
 
@@ -1058,25 +1201,39 @@ impl GameState {
     }
 
     /// Добавляет ресурс с учётом лимита. Возвращает, сколько реально поместилось.
+    ///
+    /// Для дерева, камня и угля дробные доли копятся в `resource_fraction`:
+    /// работник с 0.5/с даёт единицу ресурса раз в две секунды, а не ноль.
     pub fn add_resource(&mut self, kind: ResourceKind, amount: f64) -> f64 {
-        let room = (self.cap(kind) - self.amount(kind)).max(0.0);
-        let added = room.min(amount.max(0.0));
-
         match kind {
             ResourceKind::Gold => {
+                let room = (self.gold_cap() - self.gold).max(0.0);
+                let added = room.min(amount.max(0.0));
                 self.gold = (self.gold + added).min(self.gold_cap());
+                added
             }
             ResourceKind::Fire => {
+                let room = (self.cap(kind) - self.amount(kind)).max(0.0);
+                let added = room.min(amount.max(0.0));
                 self.current_fire = (self.current_fire as f64 + added).min(self.cap(kind)) as u32;
+                added
             }
-            _ => {
-                let added_u32 = added.max(0.0) as u32;
-                if added_u32 > 0 {
-                    self.add_active(Self::resource_key(kind), added_u32);
+            ResourceKind::Wood | ResourceKind::Stone | ResourceKind::Coal => {
+                let key = Self::resource_key(kind);
+                let mut fraction =
+                    self.resource_fraction.get(key).copied().unwrap_or(0.0) + amount.max(0.0);
+                let whole = fraction.floor();
+                fraction -= whole;
+                let room = self.active_cap(key).saturating_sub(self.active_amount(key)) as f64;
+                let added = whole.min(room);
+                if added > 0.0 {
+                    self.add_active(key, added as u32);
                 }
+                // Если склад полон, целая часть сгорает, как и раньше.
+                self.resource_fraction.insert(key.to_string(), fraction);
+                added
             }
         }
-        added
     }
 
     /// Тратит энергию, если её хватает.
@@ -1108,6 +1265,7 @@ impl GameState {
 
     /// Обновляет сохранение старого формата: демо-капитал, версия и рынки.
     pub fn migrate(&mut self) {
+        let previous_version = self.version;
         if self.version < balance::SAVE_VERSION {
             // Снос условий выживания: чужие сохранения переводятся на новую
             // экономику. С v7 демо-капитал больше не выдаётся, поэтому старая
@@ -1152,9 +1310,23 @@ impl GameState {
         if self.active_set >= self.equipment_sets.len() {
             self.active_set = 0;
         }
+        // До v9 надетый предмет оставался в сумке. Убираем дубликат, чтобы
+        // после обновления он не занимал ячейку.
+        if previous_version < 9 {
+            for slot in EquipSlot::ALL {
+                if let Some(item_id) = self.equipment.get(slot).map(str::to_string) {
+                    self.remove_one_item(&item_id);
+                }
+            }
+        }
         self.ensure_equipment_owned();
         self.drop_trader_research();
         self.recalculate_stats();
+        // Поход, застрявший после сворачивания игры, закрываем при малой энергии.
+        if self.active_expedition.is_some() && self.energy <= balance::EXPEDITION_MIN_ENERGY {
+            self.active_expedition = None;
+            self.expedition_timer = 0.0;
+        }
     }
 
     /// Приводит рынки в соответствие с каталогом торговцев.

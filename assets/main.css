@@ -223,6 +223,11 @@ button {
     font-size: 15px;
 }
 
+.menu-icon.icon {
+    width: 18px;
+    height: 18px;
+}
+
 /* ---------- Контент ---------- */
 
 .content {
@@ -861,6 +866,130 @@ button {
     background: rgba(255, 255, 255, 0.14);
 }
 
+.bell-badge {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 8px;
+    background: #d9483f;
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 15px;
+    text-align: center;
+    box-shadow: 0 0 0 2px var(--top, #2a221b);
+}
+
+.letters {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+    max-height: 42%;
+    overflow-y: auto;
+}
+
+.letter {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    text-align: left;
+}
+
+.letter.unread {
+    border-left: 3px solid var(--energy);
+}
+
+.letter-title {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.letter-body {
+    font-size: 11px;
+    line-height: 1.35;
+    opacity: 0.75;
+}
+
+.offer-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.offer-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 14px;
+    width: min(300px, 100%);
+    aspect-ratio: 1 / 1;
+    padding: 20px;
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--energy);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+    text-align: center;
+}
+
+.offer-title {
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.offer-body {
+    font-size: 13px;
+    line-height: 1.45;
+    opacity: 0.86;
+}
+
+.offer-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.offer-price {
+    padding: 11px 10px;
+    border: 0;
+    border-radius: 5px;
+    background: var(--energy);
+    color: #221a06;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.offer-price.missing {
+    background: #8f2f28;
+    color: #ffd9d5;
+}
+
+.offer-later {
+    padding: 11px 10px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+}
+
 .notif-overlay {
     position: absolute;
     inset: 0;
@@ -1467,9 +1596,18 @@ button {
 }
 
 .trade-name {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.trade-item-icon.icon {
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
 }
 
 .trade-cursor {

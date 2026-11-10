@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 /// Версия формата сохранения. Меняется при несовместимых правках.
-pub const SAVE_VERSION: u32 = 8;
+pub const SAVE_VERSION: u32 = 9;
 
 /// Стартовый капитал новой игры. Ноль: всё добывается и зарабатывается.
 pub const START_GOLD: f64 = 0.0;
@@ -37,7 +37,11 @@ pub const STONE_UNLOCK_WOOD: f64 = 2.0;
 /// Базовый лимит ресурсов без склада.
 pub const BASE_STORAGE_CAP: f64 = 100.0;
 /// Прирост лимита ресурсов за уровень склада.
-pub const STORAGE_CAP_PER_LEVEL: f64 = 150.0;
+pub const STORAGE_CAP_PER_LEVEL: f64 = 200.0;
+/// Прирост лимита ресурсов за уровень амбара.
+pub const BARN_CAP_PER_LEVEL: f64 = 500.0;
+/// Уровень склада, на котором открывается амбар.
+pub const BARN_UNLOCK_STORAGE_LEVEL: u32 = 8;
 
 /// Прирост регенерации энергии за уровень дома.
 pub const HOUSE_ENERGY_PER_LEVEL: f64 = 0.5;
@@ -52,105 +56,142 @@ pub struct Cost {
     pub stone: f64,
     /// Доплата золотом (часть построек требует монет).
     pub gold: f64,
+    /// Энергия, которую тратит постройка.
+    pub energy: f64,
+    /// Гвозди (предмет `nails`).
+    pub nails: u32,
+    /// Доски (предмет `board`).
+    pub boards: u32,
+    /// Железные слитки (предмет `iron_ingot`).
+    pub iron_ingot: u32,
+}
+
+/// Стоимость из дерева, камня и золота без предметов и энергии.
+fn cost(wood: f64, stone: f64, gold: f64) -> Cost {
+    Cost {
+        wood,
+        stone,
+        gold,
+        energy: 0.0,
+        nails: 0,
+        boards: 0,
+        iron_ingot: 0,
+    }
 }
 
 /// Стоимость следующего уровня дома.
 pub fn house_cost(level: u32) -> Cost {
     let factor = HOUSE_COST_GROWTH.powi(level as i32);
-    Cost {
-        wood: (HOUSE_BASE_COST_WOOD * factor).ceil(),
-        stone: (HOUSE_BASE_COST_STONE * factor).ceil(),
-        gold: (HOUSE_BASE_COST_GOLD * factor).ceil(),
-    }
+    cost(
+        (HOUSE_BASE_COST_WOOD * factor).ceil(),
+        (HOUSE_BASE_COST_STONE * factor).ceil(),
+        (HOUSE_BASE_COST_GOLD * factor).ceil(),
+    )
 }
 
 /// Стоимость следующего уровня склада.
 pub fn storage_cost(level: u32) -> Cost {
     let factor = STORAGE_COST_GROWTH.powi(level as i32);
+    cost(
+        (STORAGE_BASE_COST_WOOD * factor).ceil(),
+        (STORAGE_BASE_COST_STONE * factor).ceil(),
+        (STORAGE_BASE_COST_GOLD * factor).ceil(),
+    )
+}
+
+/// Стоимость следующего уровня амбара. Растёт сложным процентом.
+pub fn barn_cost(level: u32) -> Cost {
+    let factor = BARN_COST_GROWTH.powi(level as i32);
     Cost {
-        wood: (STORAGE_BASE_COST_WOOD * factor).ceil(),
-        stone: (STORAGE_BASE_COST_STONE * factor).ceil(),
-        gold: (STORAGE_BASE_COST_GOLD * factor).ceil(),
+        nails: (BARN_BASE_COST_NAILS as f64 * factor).ceil() as u32,
+        boards: (BARN_BASE_COST_BOARDS as f64 * factor).ceil() as u32,
+        ..cost(0.0, 0.0, (BARN_BASE_COST_GOLD * factor).ceil())
     }
 }
 
 /// Стоимость следующего уровня «Уюта».
 pub fn comfort_cost(level: u32) -> Cost {
     let factor = COMFORT_COST_GROWTH.powi(level as i32);
-    Cost {
-        wood: (COMFORT_BASE_COST_WOOD * factor).ceil(),
-        stone: (COMFORT_BASE_COST_STONE * factor).ceil(),
-        gold: (COMFORT_BASE_COST_GOLD * factor).ceil(),
-    }
+    cost(
+        (COMFORT_BASE_COST_WOOD * factor).ceil(),
+        (COMFORT_BASE_COST_STONE * factor).ceil(),
+        (COMFORT_BASE_COST_GOLD * factor).ceil(),
+    )
 }
 
 /// Стоимость следующего уровня дома для работников.
 pub fn worker_house_cost(level: u32) -> Cost {
     let factor = WORKER_HOUSE_COST_GROWTH.powi(level as i32);
-    Cost {
-        wood: (WORKER_HOUSE_BASE_COST_WOOD * factor).ceil(),
-        stone: (WORKER_HOUSE_BASE_COST_STONE * factor).ceil(),
-        gold: (WORKER_HOUSE_BASE_COST_GOLD * factor).ceil(),
-    }
+    cost(
+        (WORKER_HOUSE_BASE_COST_WOOD * factor).ceil(),
+        (WORKER_HOUSE_BASE_COST_STONE * factor).ceil(),
+        (WORKER_HOUSE_BASE_COST_GOLD * factor).ceil(),
+    )
 }
 
-/// Стоимость следующего уровня дома для изучения.
+/// Стоимость следующего уровня дома для изучения (легаси, UI удалён).
 pub fn research_house_cost(level: u32) -> Cost {
     let factor = RESEARCH_HOUSE_COST_GROWTH.powi(level as i32);
-    Cost {
-        wood: (RESEARCH_HOUSE_BASE_COST_WOOD * factor).ceil(),
-        stone: (RESEARCH_HOUSE_BASE_COST_STONE * factor).ceil(),
-        gold: (RESEARCH_HOUSE_BASE_COST_GOLD * factor).ceil(),
-    }
+    cost(
+        (RESEARCH_HOUSE_BASE_COST_WOOD * factor).ceil(),
+        (RESEARCH_HOUSE_BASE_COST_STONE * factor).ceil(),
+        (RESEARCH_HOUSE_BASE_COST_GOLD * factor).ceil(),
+    )
 }
 
 /// Стоимость следующего уровня лесопилки.
 pub fn sawmill_cost(level: u32) -> Cost {
     let factor = SAWMILL_COST_GROWTH.powi(level as i32);
-    Cost {
-        wood: (SAWMILL_BASE_COST_WOOD * factor).ceil(),
-        stone: (SAWMILL_BASE_COST_STONE * factor).ceil(),
-        gold: (SAWMILL_BASE_COST_GOLD * factor).ceil(),
-    }
+    cost(
+        (SAWMILL_BASE_COST_WOOD * factor).ceil(),
+        (SAWMILL_BASE_COST_STONE * factor).ceil(),
+        (SAWMILL_BASE_COST_GOLD * factor).ceil(),
+    )
 }
 
 /// Стоимость следующего уровня угольной ямы.
 pub fn coal_pit_cost(level: u32) -> Cost {
     let factor = COAL_PIT_COST_GROWTH.powi(level as i32);
-    Cost {
-        wood: (COAL_PIT_BASE_COST_WOOD * factor).ceil(),
-        stone: (COAL_PIT_BASE_COST_STONE * factor).ceil(),
-        gold: (COAL_PIT_BASE_COST_GOLD * factor).ceil(),
-    }
+    cost(
+        (COAL_PIT_BASE_COST_WOOD * factor).ceil(),
+        (COAL_PIT_BASE_COST_STONE * factor).ceil(),
+        (COAL_PIT_BASE_COST_GOLD * factor).ceil(),
+    )
 }
 
 /// Стоимость следующего уровня кузницы.
 pub fn forge_cost(level: u32) -> Cost {
     let factor = FORGE_COST_GROWTH.powi(level as i32);
     Cost {
-        wood: (FORGE_BASE_COST_WOOD * factor).ceil(),
-        stone: (FORGE_BASE_COST_STONE * factor).ceil(),
-        gold: (FORGE_BASE_COST_GOLD * factor).ceil(),
+        energy: (FORGE_BASE_COST_ENERGY * factor).ceil(),
+        ..cost(
+            (FORGE_BASE_COST_WOOD * factor).ceil(),
+            (FORGE_BASE_COST_STONE * factor).ceil(),
+            (FORGE_BASE_COST_GOLD * factor).ceil(),
+        )
     }
 }
 
 /// Стоимость следующего уровня шахты.
 pub fn mine_cost(level: u32) -> Cost {
     let factor = MINE_COST_GROWTH.powi(level as i32);
-    Cost {
-        wood: (MINE_BASE_COST_WOOD * factor).ceil(),
-        stone: (MINE_BASE_COST_STONE * factor).ceil(),
-        gold: (MINE_BASE_COST_GOLD * factor).ceil(),
-    }
+    cost(
+        (MINE_BASE_COST_WOOD * factor).ceil(),
+        (MINE_BASE_COST_STONE * factor).ceil(),
+        (MINE_BASE_COST_GOLD * factor).ceil(),
+    )
 }
 
 /// Стоимость следующего уровня банка.
 pub fn bank_cost(level: u32) -> Cost {
     let factor = BANK_COST_GROWTH.powi(level as i32);
     Cost {
-        wood: (BANK_BASE_COST_WOOD * factor).ceil(),
-        stone: (BANK_BASE_COST_STONE * factor).ceil(),
-        gold: (BANK_BASE_COST_GOLD * factor).ceil(),
+        iron_ingot: (BANK_BASE_COST_IRON_INGOT as f64 * factor).ceil() as u32,
+        ..cost(
+            (BANK_BASE_COST_WOOD * factor).ceil(),
+            (BANK_BASE_COST_STONE * factor).ceil(),
+            (BANK_BASE_COST_GOLD * factor).ceil(),
+        )
     }
 }
 
@@ -187,9 +228,17 @@ pub const FIRE_SECONDS_PER_COAL: u32 = 20;
 pub const FIRE_PER_COAL_PER_LEVEL: u32 = 10;
 /// Прибавка к запасу огня за каждый уровень кузницы выше первого.
 pub const FORGE_FIRE_PER_LEVEL: u32 = 50;
+/// Как часто кнопка «Авто» подбрасывает один уголь.
+pub const FORGE_AUTO_FEED_SECONDS: f64 = 2.0;
 
 /// Сколько камня в секунду даёт один работник шахты.
 pub const MINE_STONE_PER_WORKER_PER_SEC: f64 = 0.5;
+
+/// Ниже этой энергии поход автоматически закрывается.
+pub const EXPEDITION_MIN_ENERGY: f64 = 5.0;
+
+/// Порог золота, на котором появляется предложение построить банк.
+pub const BANK_OFFER_GOLD: f64 = 800.0;
 
 /// Базовый лимит золота без банка.
 pub const BASE_GOLD_CAP: f64 = 1_000.0;
@@ -269,7 +318,14 @@ const HOUSE_COST_GROWTH: f64 = 2.2;
 const STORAGE_BASE_COST_WOOD: f64 = 30.0;
 const STORAGE_BASE_COST_GOLD: f64 = 0.0;
 const STORAGE_BASE_COST_STONE: f64 = 15.0;
-const STORAGE_COST_GROWTH: f64 = 2.2;
+/// Рост цены склада мягче остальных построек: иначе до 8 уровня,
+/// где открывается амбар, не дотянуться из-за лимита хранения.
+const STORAGE_COST_GROWTH: f64 = 1.6;
+
+const BARN_BASE_COST_NAILS: u32 = 100;
+const BARN_BASE_COST_BOARDS: u32 = 40;
+const BARN_BASE_COST_GOLD: f64 = 200.0;
+const BARN_COST_GROWTH: f64 = 1.4;
 
 const COMFORT_BASE_COST_WOOD: f64 = 40.0;
 const COMFORT_BASE_COST_GOLD: f64 = 0.0;
@@ -287,26 +343,28 @@ const RESEARCH_HOUSE_BASE_COST_STONE: f64 = 15.0;
 const RESEARCH_HOUSE_COST_GROWTH: f64 = 2.2;
 
 const SAWMILL_BASE_COST_WOOD: f64 = 24.0;
-const SAWMILL_BASE_COST_GOLD: f64 = 0.0;
+const SAWMILL_BASE_COST_GOLD: f64 = 60.0;
 const SAWMILL_BASE_COST_STONE: f64 = 12.0;
 const SAWMILL_COST_GROWTH: f64 = 2.2;
 
-const COAL_PIT_BASE_COST_WOOD: f64 = 30.0;
-const COAL_PIT_BASE_COST_GOLD: f64 = 60.0;
-const COAL_PIT_BASE_COST_STONE: f64 = 18.0;
+const COAL_PIT_BASE_COST_WOOD: f64 = 0.0;
+const COAL_PIT_BASE_COST_GOLD: f64 = 300.0;
+const COAL_PIT_BASE_COST_STONE: f64 = 0.0;
 const COAL_PIT_COST_GROWTH: f64 = 2.2;
 
-const FORGE_BASE_COST_WOOD: f64 = 60.0;
-const FORGE_BASE_COST_GOLD: f64 = 120.0;
-const FORGE_BASE_COST_STONE: f64 = 40.0;
+const FORGE_BASE_COST_WOOD: f64 = 200.0;
+const FORGE_BASE_COST_GOLD: f64 = 500.0;
+const FORGE_BASE_COST_STONE: f64 = 100.0;
+const FORGE_BASE_COST_ENERGY: f64 = 300.0;
 const FORGE_COST_GROWTH: f64 = 2.2;
 
 const MINE_BASE_COST_WOOD: f64 = 45.0;
-const MINE_BASE_COST_GOLD: f64 = 0.0;
+const MINE_BASE_COST_GOLD: f64 = 80.0;
 const MINE_BASE_COST_STONE: f64 = 30.0;
 const MINE_COST_GROWTH: f64 = 2.2;
 
-const BANK_BASE_COST_WOOD: f64 = 80.0;
-const BANK_BASE_COST_GOLD: f64 = 200.0;
-const BANK_BASE_COST_STONE: f64 = 60.0;
+const BANK_BASE_COST_WOOD: f64 = 0.0;
+const BANK_BASE_COST_GOLD: f64 = 500.0;
+const BANK_BASE_COST_STONE: f64 = 0.0;
+const BANK_BASE_COST_IRON_INGOT: u32 = 25;
 const BANK_COST_GROWTH: f64 = 2.2;

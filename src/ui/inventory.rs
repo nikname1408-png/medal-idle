@@ -69,6 +69,65 @@ pub(crate) fn item_icon(item: &Item) -> &'static str {
     }
 }
 
+/// PNG-иконка предмета, если для него есть спрайт.
+pub(crate) fn item_icon_asset(item: &Item) -> Option<Asset> {
+    Some(match item.id.as_str() {
+        "wood" => asset!("/assets/icons/wood.png"),
+        "stone" => asset!("/assets/icons/stone.png"),
+        "iron" => asset!("/assets/icons/item_iron.png"),
+        "coal" => asset!("/assets/icons/coal.png"),
+        "clay" => asset!("/assets/icons/item_clay.png"),
+        "leather" => asset!("/assets/icons/item_leather.png"),
+        "fiber" => asset!("/assets/icons/item_fiber.png"),
+        "quartz" => asset!("/assets/icons/item_quartz.png"),
+        "silver" => asset!("/assets/icons/item_silver.png"),
+        "gold_ore" => asset!("/assets/icons/item_gold_ore.png"),
+        "gems" => asset!("/assets/icons/item_gems.png"),
+        "board" => asset!("/assets/icons/item_board.png"),
+        "cloth" => asset!("/assets/icons/item_cloth.png"),
+        "whetstone" => asset!("/assets/icons/item_whetstone.png"),
+        "iron_ingot" => asset!("/assets/icons/item_iron_ingot.png"),
+        "gold_ingot" => asset!("/assets/icons/item_gold_ingot.png"),
+        "backpack" => asset!("/assets/icons/item_backpack.png"),
+        "robe" => asset!("/assets/icons/item_robe.png"),
+        "leather_gloves" => asset!("/assets/icons/item_leather_gloves.png"),
+        "iron_bracers" => asset!("/assets/icons/item_iron_bracers.png"),
+        "winter_gloves" => asset!("/assets/icons/item_winter_gloves.png"),
+        "jacket" => asset!("/assets/icons/item_jacket.png"),
+        "wooden_bucket" => asset!("/assets/icons/item_wooden_bucket.png"),
+        "iron_bucket" => asset!("/assets/icons/item_iron_bucket.png"),
+        "jug" => asset!("/assets/icons/item_jug.png"),
+        "candle" => asset!("/assets/icons/item_candle.png"),
+        "chainmail" => asset!("/assets/icons/item_chainmail.png"),
+        "silver_ring" => asset!("/assets/icons/item_silver_ring.png"),
+        "trader_ring" => asset!("/assets/icons/item_trader_ring.png"),
+        "miner_amulet" => asset!("/assets/icons/item_miner_amulet.png"),
+        "wanderer_pendant" => asset!("/assets/icons/item_wanderer_pendant.png"),
+        "gold_ring" => asset!("/assets/icons/gold_ring.png"),
+        "gold_pendant" => asset!("/assets/icons/item_gold_pendant.png"),
+        "map_forest" | "map_mines" | "map_quarry" | "map_ruins" => {
+            asset!("/assets/icons/item_map.png")
+        }
+        "steam_blueprint" => asset!("/assets/icons/scroll.png"),
+        _ => return None,
+    })
+}
+
+/// Иконка предмета: PNG, если есть, иначе эмодзи.
+#[component]
+pub(crate) fn ItemIcon(item: Item, class: String) -> Element {
+    let emoji = item_icon(&item);
+    if let Some(asset) = item_icon_asset(&item) {
+        rsx! {
+            img { class: "{class} icon", src: "{asset}", alt: "" }
+        }
+    } else {
+        rsx! {
+            span { class: "{class}", "{emoji}" }
+        }
+    }
+}
+
 /// Полный экран инвентаря.
 #[component]
 pub fn InventoryScreen(
@@ -237,14 +296,13 @@ fn EquipmentSlot(slot: EquipSlot, state: Signal<GameState>, view: GameState) -> 
     let item = view.equipped_item(slot);
     let name = item.map(|item| item.name.as_str()).unwrap_or("Пусто");
     let bonus = item.map(|item| item.stats.summary()).unwrap_or_default();
-    let slot_icon = item.map(item_icon);
     let can_unequip = item.is_some();
 
     rsx! {
         div { class: "equip-row",
             div { class: "equip-slot",
-                if let Some(icon) = slot_icon {
-                    "{icon}"
+                if let Some(item) = item {
+                    ItemIcon { item: (*item).clone(), class: "equip-icon".to_string() }
                 } else {
                     "{slot_short(slot)}"
                 }
@@ -275,7 +333,6 @@ fn EquipmentSlot(slot: EquipSlot, state: Signal<GameState>, view: GameState) -> 
 #[component]
 fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<String>) -> Element {
     let item_id = item.id.clone();
-    let icon = item_icon(&item);
     let class = if selected {
         "inv-item selected"
     } else {
@@ -286,7 +343,7 @@ fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<Stri
         button {
             class: "{class}",
             onclick: move |_| on_select.call(item_id.clone()),
-            span { class: "inv-item-icon", "{icon}" }
+            ItemIcon { item: item.clone(), class: "inv-item-icon".to_string() }
             if count > 1 {
                 span {
                     class: if count >= items::ITEM_STACK_LIMIT {
@@ -403,7 +460,6 @@ fn RecipeCell(
     let Some(result) = items::item(recipe.result_id) else {
         return rsx! {};
     };
-    let icon = item_icon(result);
     let class = if selected {
         "inv-item selected"
     } else {
@@ -414,7 +470,7 @@ fn RecipeCell(
         button {
             class: "{class}",
             onclick: move |_| on_select.call(recipe_id),
-            span { class: "inv-item-icon", "{icon}" }
+            ItemIcon { item: (*result).clone(), class: "inv-item-icon".to_string() }
             if let Some(crafts) = crafts_badge(&view, recipe) {
                 span { class: "inv-badge", "{crafts}" }
             }
@@ -444,7 +500,6 @@ fn CraftPanel(
         return rsx! {};
     };
 
-    let icon = item_icon(result);
     let name = result.name.clone();
     let category = result.category.label();
     let stats = result.stats.summary();
@@ -515,7 +570,9 @@ fn CraftPanel(
                     div { class: "craft-panel-stats", "{stats}" }
                     div { class: "craft-panel-owned", "У меня: {owned}" }
                 }
-                div { class: "craft-panel-icon", "{icon}" }
+                div { class: "craft-panel-icon",
+                    ItemIcon { item: (*result).clone(), class: "craft-icon".to_string() }
+                }
             }
 
             div { class: "craft-panel-bottom",
@@ -588,13 +645,12 @@ fn InventoryCard(
     let stats = item.stats.summary();
     let base_price = item.base_price;
     let slot = item.slot;
-    let icon = item_icon(&item);
     let message_now = message();
 
     rsx! {
         section { class: "inv-detail",
             div { class: "inv-detail-head",
-                span { class: "inv-detail-icon", "{icon}" }
+                ItemIcon { item: item.clone(), class: "inv-detail-icon".to_string() }
                 span { class: "inv-detail-name", "{item_name}" }
                 span { class: "inv-detail-price", "{base_price} зл." }
                 button {

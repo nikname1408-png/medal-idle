@@ -17,6 +17,9 @@ pub const SELL_RATE: f64 = 0.60;
 /// Наценка торговца к базовой цене в равновесии.
 pub const BUY_RATE: f64 = 1.15;
 
+/// Шанс смены одного товара за шаг рынка (в процентах).
+pub const ROTATION_PERCENT: u64 = 30;
+
 /// Описание торговца в каталоге.
 #[derive(Clone, Copy, Debug)]
 pub struct TraderDef {
@@ -26,7 +29,7 @@ pub struct TraderDef {
 }
 
 /// Все торговцы игры.
-pub const TRADERS: [TraderDef; 3] = [
+pub const TRADERS: [TraderDef; 4] = [
     TraderDef {
         id: "marta",
         name: "Марта",
@@ -42,6 +45,7 @@ pub const TRADERS: [TraderDef; 3] = [
             "trader_ring",
             "wanderer_pendant",
             "whetstone",
+            "clay",
         ],
     },
     TraderDef {
@@ -67,6 +71,7 @@ pub const TRADERS: [TraderDef; 3] = [
         id: "smith",
         name: "Кузнец",
         goods: &[
+            "iron",
             "iron_ingot",
             "gold_ingot",
             "nails",
@@ -77,6 +82,22 @@ pub const TRADERS: [TraderDef; 3] = [
             "axe",
             "iron_sword",
             "chainmail",
+            "iron_bracers",
+        ],
+    },
+    TraderDef {
+        id: "miner",
+        name: "Рудокоп",
+        goods: &[
+            "iron",
+            "silver",
+            "quartz",
+            "gems",
+            "gold_ore",
+            "iron_ingot",
+            "gold_ingot",
+            "whetstone",
+            "miner_amulet",
             "iron_bracers",
         ],
     },
@@ -152,7 +173,7 @@ pub fn buy_price(item: &Item, demand: u8, supply: u8) -> f64 {
 
 /// Цена продажи: всегда ниже базовой, растёт от бонуса торговли.
 pub fn sell_price(item: &Item, demand: u8, supply: u8, trade_bonus: f32) -> f64 {
-    let factor = (SELL_RATE + (demand as f64 - supply as f64) / 500.0).clamp(0.30, 0.90);
+    let factor = (SELL_RATE + (demand as f64 - supply as f64) / 300.0).clamp(0.30, 0.90);
     let bonus = 1.0 + trade_bonus as f64;
     (item.base_price as f64 * factor * bonus).round().max(1.0)
 }
@@ -226,52 +247,162 @@ fn good(item_id: &str, stock: u32, demand: u8, supply: u8, buy_limit: u32) -> Go
     }
 }
 
+/// Редкость товара на рынке: чем реже, тем меньше шанс появления.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GoodRarity {
+    Common,
+    Uncommon,
+    Rare,
+    Epic,
+}
+
+impl GoodRarity {
+    /// Редкость по базовой цене предмета.
+    pub fn of(item: &Item) -> Self {
+        match item.base_price {
+            0..=5 => Self::Common,
+            6..=20 => Self::Uncommon,
+            21..=60 => Self::Rare,
+            _ => Self::Epic,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Common => "обычный",
+            Self::Uncommon => "необычный",
+            Self::Rare => "редкий",
+            Self::Epic => "эпический",
+        }
+    }
+
+    /// Вес выпадения редкости.
+    fn weight(self) -> u64 {
+        match self {
+            Self::Common => 55,
+            Self::Uncommon => 28,
+            Self::Rare => 13,
+            Self::Epic => 4,
+        }
+    }
+
+    fn lower(self) -> Option<Self> {
+        match self {
+            Self::Common => None,
+            Self::Uncommon => Some(Self::Common),
+            Self::Rare => Some(Self::Uncommon),
+            Self::Epic => Some(Self::Rare),
+        }
+    }
+}
+
+/// Товары, у которых увеличены запас и лимит скупки.
+fn bulk_volume(item_id: &str) -> Option<(u32, u32)> {
+    match item_id {
+        "clay" => Some((150, 100)),
+        "brick" => Some((80, 60)),
+        "jug" => Some((60, 50)),
+        "board" => Some((100, 80)),
+        "nails" => Some((100, 80)),
+        "iron" => Some((120, 100)),
+        _ => None,
+    }
+}
+
+/// Норма запаса товара у торговца.
+fn base_stock(item_id: &str) -> u32 {
+    if let Some((stock, _)) = bulk_volume(item_id) {
+        return stock;
+    }
+    let Some(item) = items::item(item_id) else {
+        return 1;
+    };
+    match GoodRarity::of(item) {
+        GoodRarity::Common => 40,
+        GoodRarity::Uncommon => 24,
+        GoodRarity::Rare => 8,
+        GoodRarity::Epic => 2,
+    }
+}
+
+/// Норма лимита скупки товара за цикл.
+fn base_buy_limit(item_id: &str) -> u32 {
+    if let Some((_, limit)) = bulk_volume(item_id) {
+        return limit;
+    }
+    let Some(item) = items::item(item_id) else {
+        return 1;
+    };
+    match GoodRarity::of(item) {
+        GoodRarity::Common => 60,
+        GoodRarity::Uncommon => 40,
+        GoodRarity::Rare => 20,
+        GoodRarity::Epic => 6,
+    }
+}
+
+/// Свежий товар, появившийся в лавке.
+fn fresh_good(item_id: &str) -> GoodState {
+    good(
+        item_id,
+        base_stock(item_id),
+        60,
+        45,
+        base_buy_limit(item_id),
+    )
+}
+
 /// Демо-ассортимент торговца по индексу.
+///
+/// В лавке показывается только часть ассортимента: остальные товары могут
+/// появиться при ротации рынка.
 pub fn default_market(index: usize) -> TraderMarket {
     let goods = match index {
         // Марта: товары на продажу и бижутерия.
         0 => vec![
-            good("jug", 20, 55, 40, 20),
+            good("jug", 60, 55, 40, 50),
             good("candle", 40, 30, 70, 30),
             good("cloth", 30, 20, 85, 20),
-            good("board", 30, 35, 60, 20),
-            good("brick", 24, 45, 55, 20),
+            good("board", 100, 35, 60, 80),
+            good("brick", 80, 45, 55, 60),
             good("horseshoe", 8, 60, 40, 8),
-            good("iron_dagger", 3, 70, 35, 4),
             good("silver_ring", 2, 75, 30, 3),
-            good("trader_ring", 1, 80, 25, 2),
-            good("wanderer_pendant", 1, 78, 28, 2),
             good("whetstone", 6, 65, 40, 6),
         ],
         // Странник: ремесло, ферма и редкие находки.
         1 => vec![
             good("leather", 18, 55, 45, 10),
             good("fiber", 40, 25, 70, 30),
-            good("clay", 60, 40, 70, 40),
+            good("clay", 150, 40, 70, 100),
             good("quartz", 6, 70, 40, 5),
             good("silver", 5, 78, 32, 5),
             good("gems", 2, 85, 25, 2),
             good("backpack", 2, 80, 30, 3),
             good("wooden_bucket", 4, 50, 55, 5),
-            good("sickle", 2, 60, 45, 3),
-            good("scythe", 1, 65, 40, 2),
             good("candle", 30, 35, 65, 20),
-            good("map_forest", 1, 90, 20, 1),
-            good("map_mines", 1, 92, 18, 1),
         ],
         // Кузнец: металл, инструменты и оружие.
-        _ => vec![
+        2 => vec![
+            good("iron", 80, 50, 60, 80),
             good("iron_ingot", 12, 50, 55, 8),
             good("gold_ingot", 1, 85, 25, 2),
-            good("nails", 15, 45, 60, 15),
-            good("board", 30, 30, 70, 30),
+            good("nails", 100, 45, 60, 80),
+            good("board", 100, 30, 70, 80),
             good("iron_bucket", 4, 50, 55, 5),
-            good("hoe", 2, 60, 45, 3),
             good("pickaxe", 2, 65, 40, 3),
             good("axe", 2, 60, 40, 3),
-            good("iron_sword", 1, 65, 40, 3),
-            good("chainmail", 1, 85, 25, 2),
             good("iron_bracers", 1, 70, 35, 2),
+        ],
+        // Рудокоп: руды, металлы и шахтёрское снаряжение.
+        _ => vec![
+            good("iron", 120, 55, 50, 100),
+            good("silver", 8, 78, 32, 8),
+            good("quartz", 10, 70, 40, 8),
+            good("gems", 2, 85, 25, 2),
+            good("gold_ore", 3, 88, 22, 3),
+            good("iron_ingot", 10, 50, 55, 8),
+            good("whetstone", 5, 60, 45, 5),
+            good("miner_amulet", 1, 82, 25, 2),
         ],
     };
 
@@ -352,8 +483,8 @@ pub fn buy(
         .and_then(|market| market.good_mut(item_id))
     {
         good.stock -= quantity;
-        good.demand = good.demand.saturating_add(quantity.min(5) as u8).min(100);
-        good.supply = good.supply.saturating_sub(quantity.min(5) as u8).max(5);
+        good.demand = good.demand.saturating_add(quantity.min(20) as u8).min(100);
+        good.supply = good.supply.saturating_sub(quantity.min(20) as u8).max(5);
     }
 
     Ok(())
@@ -405,8 +536,10 @@ pub fn sell(
     {
         good.stock = good.stock.saturating_add(quantity);
         good.buy_limit = good.buy_limit.saturating_sub(quantity);
-        good.supply = good.supply.saturating_add(quantity.min(5) as u8).min(100);
-        good.demand = good.demand.saturating_sub(quantity.min(5) as u8).max(5);
+        // Продажа игрока сильно роняет цену: предложение растёт, спрос падает.
+        let impact = (quantity * 4).min(80) as u8;
+        good.supply = good.supply.saturating_add(impact).min(100);
+        good.demand = good.demand.saturating_sub(impact).max(5);
     }
 
     Ok(())
@@ -440,64 +573,109 @@ pub fn tick_markets(state: &mut GameState, dt: f64) {
     }
 }
 
+/// Бросает редкость товара по весам.
+fn roll_rarity(seed: &mut u64) -> GoodRarity {
+    let rarities = [
+        GoodRarity::Common,
+        GoodRarity::Uncommon,
+        GoodRarity::Rare,
+        GoodRarity::Epic,
+    ];
+    let total: u64 = rarities.iter().map(|rarity| rarity.weight()).sum();
+    let mut roll = next_random(seed) % total;
+    for rarity in rarities {
+        let weight = rarity.weight();
+        if roll < weight {
+            return rarity;
+        }
+        roll -= weight;
+    }
+    GoodRarity::Common
+}
+
+/// Выбирает новый товар нужной редкости, которого ещё нет в лавке.
+///
+/// Если выпавшая редкость уже вся на витрине, пробуем редкость пониже.
+/// Один и тот же товар повторно не ставим.
+fn pick_rotation_item(
+    seed: &mut u64,
+    roster: &'static [&'static str],
+    market: &TraderMarket,
+) -> Option<&'static str> {
+    let mut rarity = roll_rarity(seed);
+    loop {
+        let candidates: Vec<&'static str> = roster
+            .iter()
+            .copied()
+            .filter(|item_id| market.good(item_id).is_none())
+            .filter(|item_id| items::item(item_id).map(GoodRarity::of) == Some(rarity))
+            .collect();
+        if !candidates.is_empty() {
+            let pick = (next_random(seed) as usize) % candidates.len();
+            return Some(candidates[pick]);
+        }
+        rarity = rarity.lower()?;
+    }
+}
+
+/// С шансом [`ROTATION_PERCENT`] заменяет один товар в лавке.
+fn rotate_market(seed: &mut u64, index: usize, market: &mut TraderMarket) {
+    let Some(trader) = TRADERS.get(index) else {
+        return;
+    };
+    if trader.goods.is_empty() || market.goods.is_empty() {
+        return;
+    }
+    if next_random(seed) % 100 >= ROTATION_PERCENT {
+        return;
+    }
+    let Some(item_id) = pick_rotation_item(seed, trader.goods, market) else {
+        return;
+    };
+    let slot = (next_random(seed) as usize) % market.goods.len();
+    market.goods[slot] = fresh_good(item_id);
+}
+
+/// Плавно двигает значение к цели.
+fn approach(value: u8, target: u8, step: u8) -> u8 {
+    if value < target {
+        (value + step).min(target)
+    } else {
+        value.saturating_sub(step).max(target)
+    }
+}
+
 fn market_step(state: &mut GameState) {
     let mut seed = state.market_seed;
 
     for (index, market) in state.traders.iter_mut().enumerate() {
-        // Ротация ассортимента: иногда товар пропадает из лавки, а позже
-        // возвращается. Пропавший товар нельзя продать, пока он не найдётся.
-        let roster = TRADERS.get(index).map(|trader| trader.goods).unwrap_or(&[]);
-        if !roster.is_empty() {
-            let active = market.goods.iter().filter(|good| good.stock > 0).count();
-            if active > 1 && next_random(&mut seed).is_multiple_of(40) {
-                let index = (next_random(&mut seed) as usize) % market.goods.len();
-                if market.goods[index].stock > 0 {
-                    market.goods[index].stock = 0;
-                }
-            }
-            // Пустой слот с шансом 1/4 возвращает товар, если в лавке есть спрос.
-            if next_random(&mut seed).is_multiple_of(4) {
-                let all_gone = market.goods.iter().all(|good| good.stock == 0);
-                if all_gone {
-                    market.goods = default_market(index).goods;
-                } else {
-                    let mut pick = (next_random(&mut seed) as usize) % roster.len();
-                    // Пробуем несколько раз, чтобы шанс не упирался в занятые товары.
-                    for _ in 0..roster.len() {
-                        let item_id = roster[pick];
-                        if let Some(good) = market.good_mut(item_id) {
-                            if good.stock == 0 {
-                                good.stock = 1 + (next_random(&mut seed) % 6) as u32;
-                                break;
-                            }
-                        }
-                        pick = (pick + 1) % roster.len();
-                    }
-                }
-            }
-        }
         if market.goods.is_empty() {
             market.goods = default_market(index).goods;
         }
+        rotate_market(&mut seed, index, market);
 
         for good in market.goods.iter_mut() {
-            let demand_shift = noise(&mut seed, 3);
-            let supply_shift = noise(&mut seed, 3);
-            good.demand = (good.demand as i32 + demand_shift).clamp(5, 95) as u8;
-            good.supply = (good.supply as i32 + supply_shift).clamp(5, 95) as u8;
+            // Небольшой шум спроса и предложения.
+            good.demand = (good.demand as i32 + noise(&mut seed, 1)).clamp(5, 95) as u8;
+            good.supply = (good.supply as i32 + noise(&mut seed, 1)).clamp(5, 95) as u8;
 
-            // Запас тянется к предложению, но не больше трёх штук за шаг.
-            let target = (good.supply as i32 / 3).clamp(0, 40);
-            let gap = target - good.stock as i32;
-            let drift = gap.signum() * gap.unsigned_abs().min(3) as i32;
-            let stock_shift = noise(&mut seed, 1);
-            good.stock = (good.stock as i32 + drift + stock_shift).clamp(0, 99) as u32;
+            // Возврат к равновесию постепенный: 1–2 пункта за шаг рынка.
+            let step = 1 + (next_random(&mut seed) % 2) as u8;
+            good.demand = approach(good.demand, 50, step);
+            good.supply = approach(good.supply, 50, step);
 
-            if good.stock == 0 && next_random(&mut seed).is_multiple_of(6) {
-                good.stock = 1 + (next_random(&mut seed) % 4) as u32;
+            // Запас медленно восстанавливается до нормы.
+            let stock_norm = base_stock(&good.item_id);
+            if good.stock < stock_norm {
+                let step = 1 + (next_random(&mut seed) % 2) as u32;
+                good.stock = (good.stock + step).min(stock_norm);
             }
-            if good.buy_limit == 0 {
-                good.buy_limit = 1 + (next_random(&mut seed) % 5) as u32;
+
+            // Лимит скупки тоже восстанавливается понемногу.
+            let limit_norm = base_buy_limit(&good.item_id);
+            if good.buy_limit < limit_norm {
+                let step = 1 + (next_random(&mut seed) % 2) as u32;
+                good.buy_limit = (good.buy_limit + step).min(limit_norm);
             }
         }
     }
@@ -714,5 +892,97 @@ mod tests {
         // Место под золото ограничивает продажу.
         assert_eq!(max_sell(8, 8, 970.0, 1000.0, 45.0), 0);
         assert_eq!(max_sell(8, 8, 920.0, 1000.0, 45.0), 1);
+    }
+
+    #[test]
+    fn player_sales_flood_the_market() {
+        let mut state = GameState {
+            gold: 0.0,
+            ..GameState::default()
+        };
+        state.add_item("board", 80);
+
+        assert_eq!(sell(&mut state, 0, "board", 80), Ok(()));
+
+        let good = state
+            .traders
+            .get(0)
+            .and_then(|market| market.good("board"))
+            .cloned()
+            .expect("доска осталась в лавке");
+        assert!(good.supply >= 90, "предложение не выросло: {}", good.supply);
+        assert!(good.demand <= 10, "спрос не упал: {}", good.demand);
+    }
+
+    #[test]
+    fn flooded_price_is_well_below_balanced() {
+        let ring = item("trader_ring");
+        let balanced = sell_price(ring, 50, 50, 0.0);
+        let flooded = sell_price(ring, 5, 95, 0.0);
+
+        assert!(flooded <= balanced * 0.55);
+    }
+
+    #[test]
+    fn market_recovers_gradually_after_flood() {
+        let mut state = GameState::default();
+        // Все товары Марты уже на витрине — ротация не сможет ничего заменить.
+        let mut market = TraderMarket { goods: Vec::new() };
+        for item_id in TRADERS[0].goods {
+            market.goods.push(fresh_good(item_id));
+        }
+        if let Some(board) = market.good_mut("board") {
+            board.supply = 95;
+            board.demand = 5;
+        }
+        state.traders = vec![market];
+        state.market_seed = 7;
+
+        market_step(&mut state);
+        let after_one = state
+            .traders
+            .get(0)
+            .and_then(|market| market.good("board"))
+            .cloned()
+            .expect("доска осталась в лавке");
+        // За один шаг рынка цена почти не восстанавливается.
+        assert!(
+            after_one.supply >= 92,
+            "предложение восстановилось слишком быстро: {}",
+            after_one.supply
+        );
+        assert!(
+            after_one.demand <= 8,
+            "спрос восстановился слишком быстро: {}",
+            after_one.demand
+        );
+
+        for _ in 0..60 {
+            market_step(&mut state);
+        }
+        let after_many = state
+            .traders
+            .get(0)
+            .and_then(|market| market.good("board"))
+            .cloned()
+            .expect("доска осталась в лавке");
+        assert!(after_many.supply <= 52);
+        assert!(after_many.demand >= 48);
+    }
+
+    #[test]
+    fn rotation_never_duplicates_goods() {
+        let mut state = GameState::default();
+        for _ in 0..200 {
+            tick_markets(&mut state, MARKET_TICK_SECONDS);
+        }
+
+        for market in &state.traders {
+            assert!(!market.goods.is_empty());
+            let mut seen = std::collections::HashSet::new();
+            for good in &market.goods {
+                assert!(seen.insert(good.item_id.clone()), "товар повторяется");
+            }
+        }
     }
 }

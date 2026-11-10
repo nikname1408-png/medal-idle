@@ -494,6 +494,20 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
 /// Продвигает активный поход в игровом тике. Возвращает `true`, если что-то
 /// изменилось (нашлась добыча, открылась локация, поход закончился).
 pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
+    // Защита от зависшего похода после сворачивания игры: без запаса энергии
+    // поход закрывается, а не крутится вхолостую.
+    if state.energy <= balance::EXPEDITION_MIN_ENERGY {
+        let Some(active) = state.active_expedition.as_mut() else {
+            return false;
+        };
+        if active.done {
+            return false;
+        }
+        active.notice = Some("Поход прерван: мало энергии.".to_string());
+        active.done = true;
+        return true;
+    }
+
     let Some(location_id) = state
         .active_expedition
         .as_ref()
@@ -501,7 +515,8 @@ pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
     else {
         return false;
     };
-    let tick = step_expedition(state, &location_id, dt);
+    // Ограничиваем шаг: после паузы не должно проскакивать много секунд сразу.
+    let tick = step_expedition(state, &location_id, dt.clamp(0.0, 5.0));
     let mut changed = false;
 
     if let Some(active) = state.active_expedition.as_mut() {
@@ -823,5 +838,23 @@ mod tests {
         }
 
         assert!(found, "чертёж паровой машины не выпал");
+    }
+
+    #[test]
+    fn low_energy_closes_active_expedition() {
+        use crate::game::state::ActiveExpedition;
+
+        let mut state = GameState {
+            energy: 3.0,
+            ..GameState::default()
+        };
+        state.active_expedition = Some(ActiveExpedition::new("field"));
+
+        assert!(tick_active_expedition(&mut state, 1.0));
+
+        let active = state.active_expedition.as_ref().expect("поход на месте");
+        assert!(active.done, "поход должен закрыться при малой энергии");
+        assert_eq!(state.energy, 3.0, "энергия не должна тратиться");
+        assert!(active.notice.is_some());
     }
 }

@@ -30,6 +30,119 @@ pub enum BuildResult {
     MaxLevel,
 }
 
+/// Предложение постройки, которое показывается игроку в центре экрана.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OfferDef {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub body: &'static str,
+    /// Короткая подпись с ценой для квадратной кнопки.
+    pub price: &'static str,
+    pub cost: Cost,
+}
+
+pub const OFFER_COAL_PIT: &str = "coal_pit";
+pub const OFFER_FORGE: &str = "forge";
+pub const OFFER_BANK: &str = "bank";
+
+/// Описание предложения по его ID.
+pub fn offer_def(id: &str) -> Option<OfferDef> {
+    match id {
+        OFFER_COAL_PIT => Some(OfferDef {
+            id: OFFER_COAL_PIT,
+            title: "Угольная яма",
+            body: "Дом построен! Рядом можно выкопать угольную яму — она даст уголь для кузницы.",
+            price: "300 золота",
+            cost: balance::coal_pit_cost(0),
+        }),
+        OFFER_FORGE => Some(OfferDef {
+            id: OFFER_FORGE,
+            title: "Кузница",
+            body: "Угольная яма работает. Пора поставить кузницу — в ней плавится руда и куётся снаряжение.",
+            price: "200 дерева · 100 камня · 500 золота · 300 энергии",
+            cost: balance::forge_cost(0),
+        }),
+        OFFER_BANK => Some(OfferDef {
+            id: OFFER_BANK,
+            title: "Банк",
+            body: "У тебя уже 800 золота. Банк поднимет лимит золота и откроет новые возможности.",
+            price: "25 железных слитков · 500 золота",
+            cost: balance::bank_cost(0),
+        }),
+        _ => None,
+    }
+}
+
+/// Показывает предложение, если экран свободен и письма с ним ещё нет.
+fn push_offer(state: &mut GameState, id: &'static str) -> bool {
+    if state.pending_offer.is_some() {
+        return false;
+    }
+    if state
+        .letters
+        .iter()
+        .any(|letter| letter.offer.as_deref() == Some(id))
+    {
+        return false;
+    }
+    state.pending_offer = Some(id.to_string());
+    true
+}
+
+/// Проверяет условия новых предложений построек.
+fn check_offers(state: &mut GameState) {
+    if state.house_level > 0 && state.coal_pit_level == 0 {
+        push_offer(state, OFFER_COAL_PIT);
+    }
+    if state.coal_pit_level > 0 && state.forge_level == 0 {
+        push_offer(state, OFFER_FORGE);
+    }
+    if state.bank_level == 0
+        && !state.bank_seen
+        && state.gold + 1e-9 >= balance::BANK_OFFER_GOLD
+        && push_offer(state, OFFER_BANK)
+    {
+        state.bank_seen = true;
+    }
+}
+
+/// Строит постройку из текущего предложения. При успехе закрывает его.
+pub fn build_pending_offer(state: &mut GameState) -> BuildResult {
+    let Some(id) = state.pending_offer.take() else {
+        return BuildResult::Locked;
+    };
+    let result = match id.as_str() {
+        OFFER_COAL_PIT => build_coal_pit(state),
+        OFFER_FORGE => build_forge(state),
+        OFFER_BANK => build_bank(state),
+        _ => BuildResult::Locked,
+    };
+    if matches!(result, BuildResult::Built(_)) {
+        state
+            .letters
+            .retain(|letter| letter.offer.as_deref() != Some(id.as_str()));
+    } else {
+        state.pending_offer = Some(id);
+    }
+    result
+}
+
+/// Откладывает предложение в колокольчик («Позже»).
+pub fn defer_pending_offer(state: &mut GameState) {
+    let Some(id) = state.pending_offer.take() else {
+        return;
+    };
+    let Some(def) = offer_def(&id) else {
+        return;
+    };
+    state.add_letter(
+        &format!("offer_{}", def.id),
+        def.title,
+        def.body,
+        Some(def.id),
+    );
+}
+
 /// Ошибка крафта.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CraftError {
@@ -59,11 +172,15 @@ pub enum PrestigeResult {
     Locked,
 }
 
-/// Хватает ли ресурсов и золота на постройку.
+/// Хватает ли ресурсов, предметов, энергии и золота на постройку.
 pub fn can_afford(state: &GameState, cost: Cost) -> bool {
     state.active_amount("wood") as f64 >= cost.wood
         && state.active_amount("stone") as f64 >= cost.stone
         && state.gold + 1e-9 >= cost.gold
+        && state.energy + 1e-9 >= cost.energy
+        && state.item_count("nails") >= cost.nails
+        && state.item_count("board") >= cost.boards
+        && state.item_count("iron_ingot") >= cost.iron_ingot
 }
 
 /// Списывает стоимость постройки. Возвращает `false`, если не хватает.
@@ -74,6 +191,10 @@ fn spend_cost(state: &mut GameState, cost: Cost) -> bool {
     state.spend_active("wood", cost.wood as u32);
     state.spend_active("stone", cost.stone as u32);
     state.gold = (state.gold - cost.gold).max(0.0);
+    state.energy = (state.energy - cost.energy).max(0.0);
+    state.remove_item("nails", cost.nails);
+    state.remove_item("board", cost.boards);
+    state.remove_item("iron_ingot", cost.iron_ingot);
     true
 }
 
@@ -85,7 +206,7 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
     if kind == ResourceKind::Stone && !state.stone_unlocked() {
         return GatherResult::Locked;
     }
-    if kind == ResourceKind::Fire {
+    if kind == ResourceKind::Fire || kind == ResourceKind::Coal {
         return GatherResult::Locked;
     }
 
@@ -105,6 +226,7 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
     match kind {
         ResourceKind::Wood => state.stats.wood_gathered += added,
         ResourceKind::Stone => state.stats.stone_gathered += added,
+        ResourceKind::Coal => state.stats.coal_produced += added,
         ResourceKind::Gold => state.stats.gold_earned += added,
         ResourceKind::Fire => {}
     }
@@ -167,6 +289,7 @@ pub fn tick(state: &mut GameState, dt_seconds: f64) {
     tick_coal_pit(state, dt);
     tick_forge_fire(state, dt);
     trader::tick_markets(state, dt);
+    check_offers(state);
 }
 
 /// Продвигает все доступные изучения.
@@ -227,20 +350,30 @@ fn tick_coal_pit(state: &mut GameState, dt: f64) {
     }
 }
 
-/// Гасит огонь кузницы и при необходимости подбрасывает уголь.
+/// Гасит огонь кузницы и при включённом «Авто» подбрасывает уголь.
 fn tick_forge_fire(state: &mut GameState, dt: f64) {
     if state.forge_level == 0 {
         state.current_fire = 0;
+        state.forge_auto_timer = 0.0;
         return;
     }
 
-    // Автоподкидка: один уголь, когда огонь полностью погас.
-    if state.forge_auto_feed && state.current_fire == 0 && state.active_amount("coal") >= 1 {
-        state.spend_active("coal", 1);
-        state.current_fire = state.fire_per_coal().min(state.fire_max());
+    // Автоподкидка: один уголь раз в две секунды, пока огонь не полон.
+    if state.forge_auto_feed {
+        state.forge_auto_timer += dt.max(0.0);
+        while state.forge_auto_timer + 1e-9 >= balance::FORGE_AUTO_FEED_SECONDS {
+            state.forge_auto_timer -= balance::FORGE_AUTO_FEED_SECONDS;
+            if state.current_fire < state.fire_max() && state.active_amount("coal") >= 1 {
+                state.spend_active("coal", 1);
+                state.current_fire =
+                    (state.current_fire + state.fire_per_coal()).min(state.fire_max());
+            }
+        }
+    } else {
+        state.forge_auto_timer = 0.0;
     }
 
-    state.current_fire = (state.current_fire as f64 - dt).max(0.0) as u32;
+    state.current_fire = (state.current_fire as f64 - dt.max(0.0)).max(0.0) as u32;
 }
 
 /// Строит или улучшает свой дом.
@@ -254,6 +387,9 @@ pub fn build_house(state: &mut GameState) -> BuildResult {
         return BuildResult::NotEnough(cost);
     }
     state.house_level += 1;
+    if state.house_level == 1 {
+        push_offer(state, OFFER_COAL_PIT);
+    }
     BuildResult::Built(state.house_level)
 }
 
@@ -295,7 +431,8 @@ pub fn build_worker_house(state: &mut GameState) -> BuildResult {
     BuildResult::Built(state.worker_house_level)
 }
 
-/// Строит или улучшает дом для изучения.
+/// Строит или улучшает дом для изучения (легаси, UI удалён).
+#[allow(dead_code)]
 pub fn build_research_house(state: &mut GameState) -> BuildResult {
     if state.house_level == 0 {
         return BuildResult::Locked;
@@ -323,9 +460,9 @@ pub fn build_sawmill(state: &mut GameState) -> BuildResult {
     BuildResult::Built(state.sawmill_level)
 }
 
-/// Строит или улучшает шахту. Доступна после изучения угольной ямы.
+/// Строит или улучшает шахту. Доступна после постройки угольной ямы.
 pub fn build_mine(state: &mut GameState) -> BuildResult {
-    if !state.coal_pit_researched {
+    if state.coal_pit_level == 0 {
         return BuildResult::Locked;
     }
 
@@ -337,9 +474,9 @@ pub fn build_mine(state: &mut GameState) -> BuildResult {
     BuildResult::Built(state.mine_level)
 }
 
-/// Строит или улучшает угольную яму. Доступна после изучения.
+/// Строит или улучшает угольную яму. Доступна после постройки дома.
 pub fn build_coal_pit(state: &mut GameState) -> BuildResult {
-    if !state.coal_pit_researched {
+    if state.house_level == 0 {
         return BuildResult::Locked;
     }
 
@@ -348,12 +485,17 @@ pub fn build_coal_pit(state: &mut GameState) -> BuildResult {
         return BuildResult::NotEnough(cost);
     }
     state.coal_pit_level += 1;
+    state.coal_pit_researched = true;
+    state.coal_seen = true;
+    if state.coal_pit_level == 1 {
+        push_offer(state, OFFER_FORGE);
+    }
     BuildResult::Built(state.coal_pit_level)
 }
 
-/// Строит или улучшает кузницу. Доступна после изучения.
+/// Строит или улучшает кузницу. Доступна после угольной ямы.
 pub fn build_forge(state: &mut GameState) -> BuildResult {
-    if !state.forge_researched {
+    if state.coal_pit_level == 0 {
         return BuildResult::Locked;
     }
 
@@ -362,12 +504,13 @@ pub fn build_forge(state: &mut GameState) -> BuildResult {
         return BuildResult::NotEnough(cost);
     }
     state.forge_level += 1;
+    state.forge_researched = true;
     BuildResult::Built(state.forge_level)
 }
 
-/// Строит или улучшает банк. Открывается после изучения кузницы.
+/// Строит или улучшает банк. Открывается предложением при 800 золота.
 pub fn build_bank(state: &mut GameState) -> BuildResult {
-    if !state.trader_researched {
+    if !state.bank_seen && state.bank_level == 0 {
         return BuildResult::Locked;
     }
 
@@ -376,7 +519,22 @@ pub fn build_bank(state: &mut GameState) -> BuildResult {
         return BuildResult::NotEnough(cost);
     }
     state.bank_level += 1;
+    state.trader_researched = true;
     BuildResult::Built(state.bank_level)
+}
+
+/// Строит или улучшает амбар. Открывается на 8 уровне склада.
+pub fn build_barn(state: &mut GameState) -> BuildResult {
+    if !state.barn_unlocked() {
+        return BuildResult::Locked;
+    }
+
+    let cost = balance::barn_cost(state.barn_level);
+    if !spend_cost(state, cost) {
+        return BuildResult::NotEnough(cost);
+    }
+    state.barn_level += 1;
+    BuildResult::Built(state.barn_level)
 }
 
 /// Меняет число работников на лесопилке на `delta`, не выходя за лимиты.
@@ -391,7 +549,7 @@ pub fn adjust_sawmill_workers(state: &mut GameState, delta: i32) {
 
 /// Меняет число работников на шахте на `delta`.
 pub fn adjust_mine_workers(state: &mut GameState, delta: i32) {
-    if !state.coal_pit_researched {
+    if state.coal_pit_level == 0 {
         return;
     }
     state.mine_workers = adjust_count(
@@ -404,7 +562,7 @@ pub fn adjust_mine_workers(state: &mut GameState, delta: i32) {
 
 /// Меняет число работников на угольной яме на `delta`.
 pub fn adjust_coal_pit_workers(state: &mut GameState, delta: i32) {
-    if !state.coal_pit_researched {
+    if state.house_level == 0 {
         return;
     }
     state.coal_pit_workers = adjust_count(
@@ -415,7 +573,8 @@ pub fn adjust_coal_pit_workers(state: &mut GameState, delta: i32) {
     );
 }
 
-/// Меняет число исследователей на выбранном направлении.
+/// Меняет число исследователей на выбранном направлении (легаси, UI удалён).
+#[allow(dead_code)]
 pub fn adjust_researchers(state: &mut GameState, kind: ResearchKind, delta: i32) {
     if state.research_done(kind) || !state.research_available(kind) {
         return;
@@ -615,7 +774,8 @@ pub fn time_warp(state: &mut GameState) -> bool {
     true
 }
 
-/// Тратит единицу времени на изучение выбранного направления.
+/// Тратит единицу времени на изучение выбранного направления (легаси, UI удалён).
+#[allow(dead_code)]
 pub fn research_time_warp(state: &mut GameState, kind: ResearchKind) -> bool {
     if state.time + 1e-9 < 1.0 || state.research_done(kind) || !state.research_available(kind) {
         return false;
@@ -898,8 +1058,12 @@ mod tests {
         state.current_fire = 0;
         state.forge_auto_feed = true;
         state.add_active("coal", 1);
+        // «Авто» подбрасывает уголь раз в две секунды, а не мгновенно.
         tick(&mut state, 1.0);
+        assert_eq!(state.active_amount("coal"), 1);
+        assert_eq!(state.current_fire, 0);
 
+        tick(&mut state, 1.0);
         assert_eq!(state.active_amount("coal"), 0);
         assert_eq!(state.current_fire, balance::FIRE_SECONDS_PER_COAL - 1);
     }
@@ -1057,5 +1221,109 @@ mod tests {
         assert!(research_time_warp(&mut state, ResearchKind::CoalPit));
         assert_eq!(state.time, 0.0);
         assert!((state.coal_pit_research - balance::RESEARCH_TIME_WARP).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fractional_gathering_accumulates_over_time() {
+        let mut state = GameState {
+            worker_house_level: 1,
+            sawmill_level: 1,
+            coal_pit_level: 1,
+            mine_level: 1,
+            sawmill_workers: 1,
+            mine_workers: 1,
+            ..GameState::default()
+        };
+
+        // Один работник даёт 0.5/с: за первую секунду целой единицы нет.
+        tick(&mut state, 1.0);
+        assert_eq!(state.active_amount("wood"), 0);
+        assert_eq!(state.active_amount("stone"), 0);
+
+        // За вторую секунду доля догоняет до целого.
+        tick(&mut state, 1.0);
+        assert_eq!(state.active_amount("wood"), 1);
+        assert_eq!(state.active_amount("stone"), 1);
+
+        tick(&mut state, 2.0);
+        assert_eq!(state.active_amount("wood"), 2);
+        assert_eq!(state.active_amount("stone"), 2);
+    }
+
+    #[test]
+    fn house_offer_becomes_letter_and_reopens() {
+        let mut state = GameState {
+            stone_seen: true,
+            ..GameState::default()
+        };
+        state.add_active("wood", 50);
+        state.add_active("stone", 50);
+
+        assert_eq!(build_house(&mut state), BuildResult::Built(1));
+        assert_eq!(state.pending_offer.as_deref(), Some(OFFER_COAL_PIT));
+
+        // «Позже» убирает блок с экрана и кладёт его письмом в колокольчик.
+        defer_pending_offer(&mut state);
+        assert!(state.pending_offer.is_none());
+        assert_eq!(state.unread_letters(), 1);
+
+        // Клик по письму снова открывает предложение.
+        state.open_letter("offer_coal_pit");
+        assert_eq!(state.unread_letters(), 0);
+        assert_eq!(state.pending_offer.as_deref(), Some(OFFER_COAL_PIT));
+    }
+
+    #[test]
+    fn bank_offer_appears_at_eight_hundred_gold() {
+        let mut state = GameState {
+            gold: balance::BANK_OFFER_GOLD - 1.0,
+            ..GameState::default()
+        };
+        tick(&mut state, 0.1);
+        assert!(state.pending_offer.is_none());
+
+        state.gold = balance::BANK_OFFER_GOLD;
+        tick(&mut state, 0.1);
+        assert_eq!(state.pending_offer.as_deref(), Some(OFFER_BANK));
+        assert!(state.bank_seen);
+
+        let cost = balance::bank_cost(0);
+        state.add_item("iron_ingot", cost.iron_ingot);
+        assert_eq!(build_pending_offer(&mut state), BuildResult::Built(1));
+        assert!(state.pending_offer.is_none());
+    }
+
+    #[test]
+    fn equipped_item_leaves_inventory_and_returns_on_unequip() {
+        let mut state = GameState::default();
+        state.add_item("trader_ring", 2);
+
+        assert_eq!(equip_item(&mut state, "trader_ring"), Ok(()));
+        assert_eq!(state.item_count("trader_ring"), 1);
+
+        unequip_slot(&mut state, items::EquipSlot::Accessory);
+        assert_eq!(state.item_count("trader_ring"), 2);
+    }
+
+    #[test]
+    fn barn_unlocks_at_storage_level_eight_and_raises_cap() {
+        let mut state = GameState {
+            storage_level: balance::BARN_UNLOCK_STORAGE_LEVEL - 1,
+            ..GameState::default()
+        };
+        let cost = balance::barn_cost(0);
+        state.add_item("nails", cost.nails);
+        state.add_item("board", cost.boards);
+        state.gold = cost.gold;
+
+        assert_eq!(build_barn(&mut state), BuildResult::Locked);
+
+        state.storage_level = balance::BARN_UNLOCK_STORAGE_LEVEL;
+        let before = state.active_cap("wood");
+        assert_eq!(build_barn(&mut state), BuildResult::Built(1));
+        assert_eq!(
+            state.active_cap("wood"),
+            before + balance::BARN_CAP_PER_LEVEL as u32
+        );
     }
 }

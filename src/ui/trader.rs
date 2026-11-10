@@ -4,9 +4,10 @@ use dioxus::prelude::*;
 
 use crate::game::items::{self, Item};
 use crate::game::state::GameState;
-use crate::game::trader::{self, GoodState, MarketStatus};
+use crate::game::trader::{self, GoodRarity, GoodState, MarketStatus};
 
 use super::app::refresh_view;
+use super::inventory::ItemIcon;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
@@ -254,6 +255,7 @@ fn TradeRow(
             class: "{class}",
             onclick: move |_| on_select.call(item_id.clone()),
             span { class: "trade-name",
+                ItemIcon { item: item.clone(), class: "trade-item-icon".to_string() }
                 span { "{item.name}" }
                 if let Some(reason) = reason {
                     span { class: "trade-reason", " · {reason}" }
@@ -372,6 +374,7 @@ fn ItemCard(
     let sell_all_item_id = item.id.clone();
     let item_name = item.name.clone();
     let rarity = item.rarity();
+    let appearance = GoodRarity::of(&item).label();
     let message_now = message();
 
     rsx! {
@@ -379,6 +382,11 @@ fn ItemCard(
             div { class: "trade-card-head",
                 span { class: "trade-card-title", "{item_name}" }
                 span { class: "trade-rarity", "[редкость: {rarity}]" }
+            }
+
+            div { class: "trade-line",
+                span { "Шанс появления:" }
+                span { class: "trade-line-value", "{appearance}" }
             }
 
             div { class: "trade-line",
