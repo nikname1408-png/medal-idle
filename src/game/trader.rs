@@ -355,14 +355,19 @@ fn base_buy_limit(item_id: &str) -> u32 {
 }
 
 /// Свежий товар, появившийся в лавке.
-fn fresh_good(item_id: &str) -> GoodState {
-    // Новый товар приходит на витрину нейтральным: настроение рынка дальше
-    // гуляет само, без перекоса в дефицит.
+///
+/// Настроение рынка у новинки сразу случайное, поэтому новый товар может
+/// прийти и в дефиците, и в балансе, и в избытке — витрина не выглядит
+/// одинаково ровной.
+fn fresh_good(seed: &mut u64, item_id: &str) -> GoodState {
+    let trend = noise(seed, TREND_LIMIT);
+    let demand = (50 + trend + noise(seed, 10)).clamp(5, 95) as u8;
+    let supply = (50 - trend + noise(seed, 10)).clamp(5, 95) as u8;
     good(
         item_id,
         base_stock(item_id),
-        50,
-        50,
+        demand,
+        supply,
         base_buy_limit(item_id),
     )
 }
@@ -662,7 +667,7 @@ fn rotate_market(seed: &mut u64, index: usize, market: &mut TraderMarket) {
         return;
     };
     let slot = random_below(seed, market.goods.len() as u64) as usize;
-    market.goods[slot] = fresh_good(item_id);
+    market.goods[slot] = fresh_good(seed, item_id);
 }
 
 /// Плавно двигает значение к цели.
@@ -972,12 +977,40 @@ mod tests {
     }
 
     #[test]
+    fn fresh_goods_come_with_different_market_moods() {
+        let mut seed = 42;
+        let mut deficits = 0;
+        let mut surpluses = 0;
+        let mut balances = 0;
+        for _ in 0..300 {
+            match fresh_good(&mut seed, "board").status() {
+                MarketStatus::Deficit => deficits += 1,
+                MarketStatus::Surplus => surpluses += 1,
+                MarketStatus::Balance => balances += 1,
+            }
+        }
+        assert!(
+            deficits > 30,
+            "новинки почти не бывают в дефиците: {deficits}"
+        );
+        assert!(
+            surpluses > 30,
+            "новинки почти не бывают в избытке: {surpluses}"
+        );
+        assert!(
+            balances > 30,
+            "новинки почти не бывают в балансе: {balances}"
+        );
+    }
+
+    #[test]
     fn market_recovers_gradually_after_flood() {
         let mut state = GameState::default();
         // Все товары Марты уже на витрине — ротация не сможет ничего заменить.
         let mut market = TraderMarket { goods: Vec::new() };
+        let mut seed = 7;
         for item_id in TRADERS[0].goods {
-            market.goods.push(fresh_good(item_id));
+            market.goods.push(fresh_good(&mut seed, item_id));
         }
         if let Some(board) = market.good_mut("board") {
             board.supply = 95;

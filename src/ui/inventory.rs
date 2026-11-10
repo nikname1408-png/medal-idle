@@ -105,6 +105,14 @@ pub(crate) fn item_icon_asset(item: &Item) -> Option<Asset> {
         "wanderer_pendant" => asset!("/assets/icons/item_wanderer_pendant.png"),
         "gold_ring" => asset!("/assets/icons/gold_ring.png"),
         "gold_pendant" => asset!("/assets/icons/item_gold_pendant.png"),
+        "sickle" => asset!("/assets/icons/item_sickle.png"),
+        "scythe" => asset!("/assets/icons/item_scythe.png"),
+        "iron_dagger" => asset!("/assets/icons/item_iron_dagger.png"),
+        "pickaxe" => asset!("/assets/icons/item_pickaxe.png"),
+        "axe" => asset!("/assets/icons/item_axe.png"),
+        "iron_sword" => asset!("/assets/icons/item_iron_sword.png"),
+        "horseshoe" => asset!("/assets/icons/item_horseshoe.png"),
+        "nails" => asset!("/assets/icons/item_nails.png"),
         "map_forest" | "map_mines" | "map_quarry" | "map_ruins" => {
             asset!("/assets/icons/item_map.png")
         }
