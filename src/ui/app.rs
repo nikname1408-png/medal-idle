@@ -1866,7 +1866,7 @@ fn BuildRow(
     let is_open = open();
     let chev_class = if is_open { "chev open" } else { "chev" };
     let button_label = if level == 0 {
-        title
+        format!("🔒 {title}")
     } else {
         format!("{title} ({level})")
     };
@@ -1891,7 +1891,9 @@ fn BuildRow(
                 div { class: "build-info",
                     div { class: "build-desc", "{description}" }
                     div { class: "build-cost-line",
-                        span { class: "build-cost-label", "Стоимость" }
+                        span { class: "build-cost-label",
+                            if level == 0 { "Открыть за" } else { "Стоимость" }
+                        }
                         span { class: if affordable { "build-cost" } else { "build-cost poor" },
                             CostLabel { cost }
                         }

@@ -52,21 +52,21 @@ pub fn offer_def(id: &str) -> Option<OfferDef> {
             id: OFFER_COAL_PIT,
             title: "Угольная яма",
             body: "Дом построен! Рядом можно выкопать угольную яму — она даст уголь для кузницы.",
-            price: "300 золота",
+            price: "60 дерева · 40 камня",
             cost: balance::coal_pit_cost(0),
         }),
         OFFER_FORGE => Some(OfferDef {
             id: OFFER_FORGE,
             title: "Кузница",
             body: "Угольная яма работает. Пора поставить кузницу — в ней плавится руда и куётся снаряжение.",
-            price: "200 дерева · 100 камня · 500 золота · 300 энергии",
+            price: "150 дерева · 100 камня",
             cost: balance::forge_cost(0),
         }),
         OFFER_BANK => Some(OfferDef {
             id: OFFER_BANK,
             title: "Банк",
             body: "У тебя уже 800 золота. Банк поднимет лимит золота и откроет новые возможности.",
-            price: "25 железных слитков · 500 золота",
+            price: "200 дерева · 150 камня",
             cost: balance::bank_cost(0),
         }),
         _ => None,
@@ -1012,6 +1012,57 @@ mod tests {
     }
 
     #[test]
+    fn unlock_prices_use_only_wood_and_stone() {
+        for level in 0..=5 {
+            for cost in [
+                balance::coal_pit_cost(level),
+                balance::forge_cost(level),
+                balance::bank_cost(level),
+            ] {
+                assert_eq!(cost.gold, 0.0, "уровень {level}");
+                assert_eq!(cost.energy, 0.0, "уровень {level}");
+                assert_eq!(cost.nails, 0, "уровень {level}");
+                assert_eq!(cost.boards, 0, "уровень {level}");
+                assert_eq!(cost.iron_ingot, 0, "уровень {level}");
+                assert!(cost.wood > 0.0 && cost.stone > 0.0, "уровень {level}");
+            }
+        }
+    }
+
+    #[test]
+    fn storage_upgrade_always_fits_into_storage() {
+        for level in 0..=13 {
+            let cost = balance::storage_cost(level);
+            let capacity = GameState {
+                storage_level: level,
+                ..GameState::default()
+            }
+            .cap(ResourceKind::Wood);
+            assert!(
+                cost.wood <= capacity && cost.stone <= capacity,
+                "склад {level}: нужно {} / {}, вмещается {capacity}",
+                cost.wood,
+                cost.stone
+            );
+        }
+    }
+
+    #[test]
+    fn barn_items_fit_into_stack_limit() {
+        for level in 0..=20 {
+            let cost = balance::barn_cost(level);
+            assert!(
+                cost.nails <= crate::game::items::ITEM_STACK_LIMIT,
+                "амбар {level}"
+            );
+            assert!(
+                cost.boards <= crate::game::items::ITEM_STACK_LIMIT,
+                "амбар {level}"
+            );
+        }
+    }
+
+    #[test]
     fn save_roundtrip_keeps_state() {
         let mut state = rested_state();
         state.add_active("wood", 3);
@@ -1420,6 +1471,7 @@ mod tests {
     fn bank_offer_appears_at_eight_hundred_gold() {
         let mut state = GameState {
             gold: balance::BANK_OFFER_GOLD - 1.0,
+            storage_level: 5,
             ..GameState::default()
         };
         tick(&mut state, 0.1);
@@ -1431,7 +1483,8 @@ mod tests {
         assert!(state.bank_seen);
 
         let cost = balance::bank_cost(0);
-        state.add_item("iron_ingot", cost.iron_ingot);
+        state.add_active("wood", cost.wood as u32);
+        state.add_active("stone", cost.stone as u32);
         assert_eq!(build_pending_offer(&mut state), BuildResult::Built(1));
         assert!(state.pending_offer.is_none());
     }
