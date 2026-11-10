@@ -321,8 +321,8 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let worker_house_affordable = affordable(worker_house_cost);
     let sawmill_affordable = affordable(sawmill_cost);
     let mine_affordable = affordable(mine_cost);
-    let coal_pit_affordable = affordable(coal_pit_cost);
-    let forge_affordable = affordable(forge_cost);
+    let coal_pit_affordable = affordable(coal_pit_cost) && snapshot.house_level > 0;
+    let forge_affordable = affordable(forge_cost) && snapshot.coal_pit_level > 0;
     let bank_affordable = affordable(bank_cost);
     let house_affordable = affordable(house_cost);
     let comfort_affordable = affordable(comfort_cost);
@@ -554,7 +554,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         }
 
-        if snapshot.coal_pit_level > 0 {
+        if snapshot.house_level > 0 {
             CollapsibleSection { title: "Кузница".to_string(),
                 BuildRow {
                     title: "Кузница".to_string(),
@@ -602,7 +602,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         }
 
-        if snapshot.bank_seen || snapshot.bank_level > 0 {
+        if snapshot.house_level > 0 {
             CollapsibleSection { title: "Банк".to_string(),
                 BuildRow {
                     title: "Банк".to_string(),
@@ -1887,13 +1887,19 @@ fn BuildRow(
                     span { class: chev_class }
                 }
             }
+            if level == 0 {
+                div { class: "build-open-cost",
+                    span { class: "build-cost-label", "Открыть за" }
+                    span { class: if affordable { "build-cost" } else { "build-cost poor" },
+                        CostLabel { cost }
+                    }
+                }
+            }
             if is_open {
                 div { class: "build-info",
                     div { class: "build-desc", "{description}" }
                     div { class: "build-cost-line",
-                        span { class: "build-cost-label",
-                            if level == 0 { "Открыть за" } else { "Стоимость" }
-                        }
+                        span { class: "build-cost-label", "Стоимость" }
                         span { class: if affordable { "build-cost" } else { "build-cost poor" },
                             CostLabel { cost }
                         }
