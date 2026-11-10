@@ -512,8 +512,12 @@ pub fn build_forge(state: &mut GameState) -> BuildResult {
     BuildResult::Built(state.forge_level)
 }
 
-/// Строит или улучшает банк. Единственное условие — цена в дереве и камне.
+/// Строит или улучшает банк. Открывается предложением при 800 золота.
 pub fn build_bank(state: &mut GameState) -> BuildResult {
+    if !state.bank_seen && state.bank_level == 0 {
+        return BuildResult::Locked;
+    }
+
     let cost = balance::bank_cost(state.bank_level);
     if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
@@ -1461,20 +1465,6 @@ mod tests {
         state.open_letter("offer_coal_pit");
         assert_eq!(state.unread_letters(), 0);
         assert_eq!(state.pending_offer.as_deref(), Some(OFFER_COAL_PIT));
-    }
-
-    #[test]
-    fn bank_opens_by_price_without_offer() {
-        let mut state = GameState {
-            storage_level: 5,
-            ..GameState::default()
-        };
-        let cost = balance::bank_cost(0);
-        state.add_active("wood", cost.wood as u32);
-        state.add_active("stone", cost.stone as u32);
-
-        assert_eq!(build_bank(&mut state), BuildResult::Built(1));
-        assert_eq!(state.bank_level, 1);
     }
 
     #[test]

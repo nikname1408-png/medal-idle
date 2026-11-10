@@ -464,15 +464,6 @@ button {
     font-variant-numeric: tabular-nums;
 }
 
-.build-open-cost {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding-left: 2px;
-    font-size: 12px;
-    color: var(--muted);
-}
-
 .build-info {
     padding: 10px 12px;
     border-radius: 4px;

@@ -321,8 +321,8 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let worker_house_affordable = affordable(worker_house_cost);
     let sawmill_affordable = affordable(sawmill_cost);
     let mine_affordable = affordable(mine_cost);
-    let coal_pit_affordable = affordable(coal_pit_cost) && snapshot.house_level > 0;
-    let forge_affordable = affordable(forge_cost) && snapshot.coal_pit_level > 0;
+    let coal_pit_affordable = affordable(coal_pit_cost);
+    let forge_affordable = affordable(forge_cost);
     let bank_affordable = affordable(bank_cost);
     let house_affordable = affordable(house_cost);
     let comfort_affordable = affordable(comfort_cost);
@@ -525,21 +525,25 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
 
         if snapshot.house_level > 0 {
             CollapsibleSection { title: "Постройки".to_string(),
-                BuildRow {
-                    title: "Лесопилка".to_string(),
-                    level: snapshot.sawmill_level,
-                    description: sawmill_description,
-                    cost: sawmill_cost,
-                    affordable: sawmill_affordable,
-                    on_build: move |_| do_build_with(state, actions::build_sawmill),
+                if snapshot.house_level > 0 {
+                    BuildRow {
+                        title: "Лесопилка".to_string(),
+                        level: snapshot.sawmill_level,
+                        description: sawmill_description,
+                        cost: sawmill_cost,
+                        affordable: sawmill_affordable,
+                        on_build: move |_| do_build_with(state, actions::build_sawmill),
+                    }
                 }
-                BuildRow {
-                    title: "Угольная яма".to_string(),
-                    level: snapshot.coal_pit_level,
-                    description: coal_pit_description,
-                    cost: coal_pit_cost,
-                    affordable: coal_pit_affordable,
-                    on_build: move |_| do_build_with(state, actions::build_coal_pit),
+                if snapshot.coal_pit_level > 0 {
+                    BuildRow {
+                        title: "Угольная яма".to_string(),
+                        level: snapshot.coal_pit_level,
+                        description: coal_pit_description,
+                        cost: coal_pit_cost,
+                        affordable: coal_pit_affordable,
+                        on_build: move |_| do_build_with(state, actions::build_coal_pit),
+                    }
                 }
                 if snapshot.coal_pit_level > 0 {
                     BuildRow {
@@ -554,7 +558,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         }
 
-        if snapshot.house_level > 0 {
+        if snapshot.forge_level > 0 {
             CollapsibleSection { title: "Кузница".to_string(),
                 BuildRow {
                     title: "Кузница".to_string(),
@@ -602,7 +606,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         }
 
-        if snapshot.house_level > 0 {
+        if snapshot.bank_level > 0 {
             CollapsibleSection { title: "Банк".to_string(),
                 BuildRow {
                     title: "Банк".to_string(),
@@ -1866,7 +1870,7 @@ fn BuildRow(
     let is_open = open();
     let chev_class = if is_open { "chev open" } else { "chev" };
     let button_label = if level == 0 {
-        format!("🔒 {title}")
+        title
     } else {
         format!("{title} ({level})")
     };
@@ -1885,14 +1889,6 @@ fn BuildRow(
                     aria_label: "Подробнее",
                     onclick: move |_| open.set(!open()),
                     span { class: chev_class }
-                }
-            }
-            if level == 0 {
-                div { class: "build-open-cost",
-                    span { class: "build-cost-label", "Открыть за" }
-                    span { class: if affordable { "build-cost" } else { "build-cost poor" },
-                        CostLabel { cost }
-                    }
                 }
             }
             if is_open {
