@@ -291,11 +291,7 @@ pub fn App() -> Element {
             }
             if let Some(offer_id) = snapshot.pending_offer.clone() {
                 if !trader_open() && !menu_open() {
-                    OfferModal {
-                        state,
-                        view: snapshot.clone(),
-                        offer_id,
-                    }
+                    OfferModal { state, view: snapshot.clone(), offer_id }
                 }
             }
             if dev_open() {
@@ -333,7 +329,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let barn_affordable = affordable(barn_cost);
 
     let gather_yield =
-        (balance::CLICK_YIELD + snapshot.dev.gather_yield) * snapshot.production_multiplier();
+        (balance::CLICK_YIELD + snapshot.dev.gather_yield) * (1.0 + snapshot.gather_bonus as f64);
     let rest_available = snapshot.energy < snapshot.max_energy();
     let wood_available = snapshot.energy >= balance::CLICK_ENERGY_COST
         && (snapshot.active_amount("wood") as f64) < snapshot.cap(ResourceKind::Wood);
@@ -445,9 +441,18 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     );
 
     rsx! {
+        CollapsibleSection { title: "Отдых".to_string(),
+            ActionRow {
+                label: "Отдых".to_string(),
+                info: rest_info,
+                available: rest_available,
+                on_press: move |_| do_rest(state),
+            }
+        }
+
         CollapsibleSection { title: "Энергия".to_string(),
             BuildRow {
-                title: "Свой дом".to_string(),
+                title: "Дом".to_string(),
                 level: snapshot.house_level,
                 description: house_description,
                 cost: house_cost,
@@ -463,16 +468,6 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 on_build: move |_| do_build_comfort(state),
             }
         }
-
-        CollapsibleSection { title: "Отдых".to_string(),
-            ActionRow {
-                label: "Отдых".to_string(),
-                info: rest_info,
-                available: rest_available,
-                on_press: move |_| do_rest(state),
-            }
-        }
-
         if snapshot.gathering_unlocked() {
             CollapsibleSection { title: "Сбор".to_string(),
                 ActionRow {
@@ -712,7 +707,11 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                     WorkerRow {
                         title: "Угольная яма".to_string(),
-                        detail: format!("+{}/с угля · −{}/с дерева", format_num(coal_rate), format_num(coal_wood)),
+                        detail: format!(
+                            "+{}/с угля · −{}/с дерева",
+                            format_num(coal_rate),
+                            format_num(coal_wood),
+                        ),
                         assigned: coal_workers,
                         capacity: coal_slots,
                         free,
@@ -792,16 +791,39 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
     let snapshot = view;
     let mut armed = use_signal(|| false);
     let cycles = snapshot.cycles;
-    let bonus = cycles as f64 * balance::CYCLE_BONUS_PER_CYCLE * 100.0;
-    let ready = snapshot.forge_level > 0
-        && snapshot.ingredient_amount("iron") as f64 >= balance::CYCLE_IRON_REQUIREMENT;
-    let requirement = if snapshot.forge_level == 0 {
-        "Построй кузницу.".to_string()
-    } else if (snapshot.ingredient_amount("iron") as f64) < balance::CYCLE_IRON_REQUIREMENT {
+    let multiplier = snapshot.income_multiplier();
+    let next_multiplier = 1.0 + (cycles + 1) as f64 * balance::CYCLE_INCOME_PER_LEVEL;
+    let threshold = snapshot.cycle_threshold();
+    let gathered = snapshot.cycle_gathered();
+    let progress = snapshot.cycle_progress();
+    let progress_fill = format!("width: {:.1}%", progress * 100.0);
+    let threshold_met = gathered + 1e-9 >= threshold;
+
+    let wall_mine_active = cycles >= balance::CYCLE_WALL_LEVEL;
+    let wall_mine_met = snapshot.cycle_wall_mine_met();
+    let wall_stone_active = cycles >= balance::CYCLE_WALL_STONE_LEVEL;
+    let wall_stone_met = snapshot.cycle_wall_stone_met();
+    let stone_need = balance::CYCLE_WALL_EXTRA_STONE;
+    let stone_have = snapshot.cycle_stone;
+
+    let ready = threshold_met && wall_mine_met && wall_stone_met;
+    let requirement = if !threshold_met {
         format!(
-            "Нужно {} железной руды (сейчас {}).",
-            format_num(balance::CYCLE_IRON_REQUIREMENT),
-            format_num(snapshot.ingredient_amount("iron") as f64)
+            "Нужно добыть {} дерева и камня за цикл (сейчас {}).",
+            format_num(threshold),
+            format_num(gathered)
+        )
+    } else if !wall_mine_met {
+        format!(
+            "Стена R={}: построй шахту до уровня {}.",
+            balance::CYCLE_WALL_LEVEL,
+            balance::CYCLE_WALL_MINE_LEVEL
+        )
+    } else if !wall_stone_met {
+        format!(
+            "Стена R={}: нужно {} камня за цикл сверх порога.",
+            balance::CYCLE_WALL_STONE_LEVEL,
+            format_num(balance::CYCLE_WALL_EXTRA_STONE)
         )
     } else {
         "Всё готово для нового цикла.".to_string()
@@ -811,14 +833,62 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
         section { class: "cycle-hero",
             div { class: "cycle-count", "{cycles}" }
             div { class: "cycle-label", "циклов пройдено" }
-            div { class: "cycle-bonus", "Постоянный бонус: +{bonus:.0}%" }
+            div { class: "cycle-bonus", "Множитель дохода: ×{multiplier:.2}" }
         }
 
         section { class: "settings",
             h2 { class: "settings-title", "Новый цикл" }
             p { class: "settings-note",
-                "Сбросит ресурсы, постройки, изучения, работников и сумку. Останутся циклы, время, статистика и достижения."
+                "Сбросит ресурсы, постройки, работников и сумку. Останутся циклы, время, статистика и достижения."
             }
+
+            div { class: "cycle-progress-head",
+                span { "Добыто за цикл" }
+                span { class: "cycle-progress-value",
+                    "{format_num(gathered)} / {format_num(threshold)}"
+                }
+            }
+            div { class: "cycle-progress-track",
+                div { class: "cycle-progress-fill", style: "{progress_fill}" }
+            }
+
+            div { class: "cycle-forecast",
+                div { class: "cycle-forecast-item",
+                    span { class: "cycle-forecast-label", "Сейчас" }
+                    span { class: "cycle-forecast-value", "×{multiplier:.2}" }
+                }
+                div { class: "cycle-forecast-item",
+                    span { class: "cycle-forecast-label", "После цикла" }
+                    span { class: "cycle-forecast-value", "×{next_multiplier:.2}" }
+                }
+                div { class: "cycle-forecast-item",
+                    span { class: "cycle-forecast-label", "При 2× порога" }
+                    span { class: "cycle-forecast-value", "×{next_multiplier:.2}" }
+                }
+            }
+            p { class: "settings-note",
+                "Множитель зависит только от номера цикла: перебор сверх порога X не увеличивает. «Отдых» и «Труд» умножаются на X, ручная добыча — нет."
+            }
+
+            if wall_mine_active {
+                div {
+                    class: if wall_mine_met { "cycle-wall done" } else { "cycle-wall" },
+                    span { class: "cycle-wall-mark", if wall_mine_met { "✓" } else { "•" } }
+                    span { class: "cycle-wall-text",
+                        "Стена R={balance::CYCLE_WALL_LEVEL}: шахта до уровня {balance::CYCLE_WALL_MINE_LEVEL} (сейчас {snapshot.mine_level})"
+                    }
+                }
+            }
+            if wall_stone_active {
+                div {
+                    class: if wall_stone_met { "cycle-wall done" } else { "cycle-wall" },
+                    span { class: "cycle-wall-mark", if wall_stone_met { "✓" } else { "•" } }
+                    span { class: "cycle-wall-text",
+                        "Стена R={balance::CYCLE_WALL_STONE_LEVEL}: {format_num(stone_have)} / {format_num(stone_need)} камня за цикл"
+                    }
+                }
+            }
+
             p { class: "settings-note", "{requirement}" }
             button {
                 class: if armed() { "danger-btn armed" } else { "danger-btn" },
@@ -863,15 +933,42 @@ fn StatsScreen(view: GameState) -> Element {
     rsx! {
         section { class: "settings",
             h2 { class: "settings-title", "Статистика" }
-            StatRow { label: "Время в игре".to_string(), value: format_duration(stats.play_seconds) }
-            StatRow { label: "Кликов добычи".to_string(), value: format_num(stats.clicks as f64) }
-            StatRow { label: "Отдыхов".to_string(), value: format_num(stats.rests as f64) }
-            StatRow { label: "Добыто дерева".to_string(), value: format_num(stats.wood_gathered) }
-            StatRow { label: "Добыто камня".to_string(), value: format_num(stats.stone_gathered) }
-            StatRow { label: "Получено угля".to_string(), value: format_num(stats.coal_produced) }
-            StatRow { label: "Добыто железной руды".to_string(), value: format_num(stats.iron_mined) }
-            StatRow { label: "Заработано золота".to_string(), value: format_num(stats.gold_earned) }
-            StatRow { label: "Пройдено циклов".to_string(), value: format_num(snapshot.cycles as f64) }
+            StatRow {
+                label: "Время в игре".to_string(),
+                value: format_duration(stats.play_seconds),
+            }
+            StatRow {
+                label: "Кликов добычи".to_string(),
+                value: format_num(stats.clicks as f64),
+            }
+            StatRow {
+                label: "Отдыхов".to_string(),
+                value: format_num(stats.rests as f64),
+            }
+            StatRow {
+                label: "Добыто дерева".to_string(),
+                value: format_num(stats.wood_gathered),
+            }
+            StatRow {
+                label: "Добыто камня".to_string(),
+                value: format_num(stats.stone_gathered),
+            }
+            StatRow {
+                label: "Получено угля".to_string(),
+                value: format_num(stats.coal_produced),
+            }
+            StatRow {
+                label: "Добыто железной руды".to_string(),
+                value: format_num(stats.iron_mined),
+            }
+            StatRow {
+                label: "Заработано золота".to_string(),
+                value: format_num(stats.gold_earned),
+            }
+            StatRow {
+                label: "Пройдено циклов".to_string(),
+                value: format_num(snapshot.cycles as f64),
+            }
         }
 
         section { class: "settings",
@@ -949,7 +1046,9 @@ fn SettingsScreen(state: Signal<GameState>, view: GameState) -> Element {
 
         section { class: "settings",
             h2 { class: "settings-title", "Прогресс" }
-            p { class: "settings-note", "Игра сохраняется автоматически каждые 2 секунды." }
+            p { class: "settings-note",
+                "Игра сохраняется автоматически каждые 2 секунды."
+            }
             button {
                 class: if reset_armed() { "danger-btn armed" } else { "danger-btn" },
                 onclick: move |_| reset_progress(state, reset_armed),
@@ -989,7 +1088,9 @@ fn PlaceholderScreen(title: String) -> Element {
         div { class: "placeholder",
             div { class: "placeholder-icon", "🚧" }
             h2 { class: "placeholder-title", "{title}" }
-            p { class: "placeholder-text", "Этот раздел появится в следующих версиях." }
+            p { class: "placeholder-text",
+                "Этот раздел появится в следующих версиях."
+            }
         }
     }
 }
@@ -1060,9 +1161,7 @@ fn BurgerMenu(
     on_dev: EventHandler<()>,
 ) -> Element {
     rsx! {
-        div {
-            class: "menu-overlay",
-            onclick: move |_| on_close.call(()),
+        div { class: "menu-overlay", onclick: move |_| on_close.call(()),
             div {
                 class: "menu-panel",
                 onclick: move |event| event.stop_propagation(),
@@ -1074,10 +1173,12 @@ fn BurgerMenu(
                         "×"
                     }
                 }
-                button {
-                    class: "menu-item",
-                    onclick: move |_| on_trader.call(()),
-                    img { class: "menu-icon icon", src: "{ICON_SCROLL}", alt: "" }
+                button { class: "menu-item", onclick: move |_| on_trader.call(()),
+                    img {
+                        class: "menu-icon icon",
+                        src: "{ICON_SCROLL}",
+                        alt: "",
+                    }
                     span { "Торговец" }
                 }
                 button {
@@ -1086,9 +1187,7 @@ fn BurgerMenu(
                     span { class: "menu-icon", "⚙" }
                     span { "Настройки" }
                 }
-                button {
-                    class: "menu-item",
-                    onclick: move |_| on_dev.call(()),
+                button { class: "menu-item", onclick: move |_| on_dev.call(()),
                     span { class: "menu-icon", "🛠" }
                     span { "Панель разработчика" }
                 }
@@ -1105,9 +1204,7 @@ fn BellPanel(
 ) -> Element {
     let letters = view.letters.clone();
     rsx! {
-        div {
-            class: "notif-overlay",
-            onclick: move |_| on_close.call(()),
+        div { class: "notif-overlay", onclick: move |_| on_close.call(()),
             div {
                 class: "notif-panel",
                 onclick: move |event| event.stop_propagation(),
@@ -1210,7 +1307,9 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         "×"
                     }
                 }
-                p { class: "dev-note", "Временная панель для тестов. В релизе её не будет." }
+                p { class: "dev-note",
+                    "Временная панель для тестов. В релизе её не будет."
+                }
 
                 section { class: "dev-group",
                     h3 { class: "dev-group-title", "Энергия" }
@@ -1624,8 +1723,16 @@ fn DevResourceRow(
                         }
                     },
                 }
-                button { class: "dev-btn", onclick: move |_| on_value.call(value + 10.0), "+10" }
-                button { class: "dev-btn", onclick: move |_| on_value.call(value + 100.0), "+100" }
+                button {
+                    class: "dev-btn",
+                    onclick: move |_| on_value.call(value + 10.0),
+                    "+10"
+                }
+                button {
+                    class: "dev-btn",
+                    onclick: move |_| on_value.call(value + 100.0),
+                    "+100"
+                }
                 button { class: "dev-btn", onclick: move |_| on_value.call(0.0), "0" }
             }
             div { class: "dev-row",
@@ -1665,11 +1772,14 @@ fn CollapsibleSection(title: String, children: Element) -> Element {
 
     rsx! {
         section { class: "section",
-            button {
-                class: "section-head",
-                onclick: move |_| open.set(!open()),
+            div { class: "section-head",
                 span { class: "section-title", "{title}" }
-                span { class: chev_class }
+                button {
+                    class: "chev-btn",
+                    aria_label: "Свернуть или развернуть раздел",
+                    onclick: move |_| open.set(!open()),
+                    span { class: chev_class }
+                }
             }
             if is_open {
                 div { class: "section-body", {children} }
@@ -1782,8 +1892,7 @@ fn BuildRow(
                     div { class: "build-desc", "{description}" }
                     div { class: "build-cost-line",
                         span { class: "build-cost-label", "Стоимость" }
-                        span {
-                            class: if affordable { "build-cost" } else { "build-cost poor" },
+                        span { class: if affordable { "build-cost" } else { "build-cost poor" },
                             CostLabel { cost }
                         }
                     }
@@ -1882,7 +1991,9 @@ fn CurrentGoal(state: GameState) -> Element {
                 },
                 None => rsx! {
                     if let Some(cost) = goal_hint {
-                        div { class: "goal-cost", CostLabel { cost } }
+                        div { class: "goal-cost",
+                            CostLabel { cost }
+                        }
                     }
                 },
             }
@@ -1939,19 +2050,24 @@ fn ResourceBar(view: GameState) -> Element {
     rsx! {
         div { class: "resources",
             if items.is_empty() && state.time <= 0.0 {
-                span { class: "resources-empty", "Ресурсов пока нет — отдохни и начни добывать" }
+                span { class: "resources-empty",
+                    "Ресурсов пока нет — отдохни и начни добывать"
+                }
             } else {
-                for (kind, name, value, cap) in items {
+                for (kind , name , value , cap) in items {
                     div { class: "resource", key: "{name}",
                         if let Some(icon) = resource_icon(kind) {
-                            img { class: "resource-icon icon", src: "{icon}", alt: "" }
+                            img {
+                                class: "resource-icon icon",
+                                src: "{icon}",
+                                alt: "",
+                            }
                         } else {
                             span { class: "resource-icon", "{resource_text_icon(kind)}" }
                         }
                         div { class: "resource-text",
                             span { class: "resource-name", "{name}" }
-                            span {
-                                class: if value >= cap { "resource-value full" } else { "resource-value" },
+                            span { class: if value >= cap { "resource-value full" } else { "resource-value" },
                                 "{format_num(value)} / {format_num(cap)}"
                             }
                         }
@@ -2005,13 +2121,17 @@ fn TabBar(active: Signal<usize>) -> Element {
                 "<"
             }
             nav { class: "tabs",
-                for (i, (_icon, label)) in TABS.iter().enumerate() {
+                for (i , (_icon , label)) in TABS.iter().enumerate() {
                     button {
                         key: "{i}",
                         class: if active() == i { "tab active" } else { "tab" },
                         onclick: move |_| active.set(i),
                         if let Some(icon) = tab_icon(i) {
-                            img { class: "tab-icon icon", src: "{icon}", alt: "" }
+                            img {
+                                class: "tab-icon icon",
+                                src: "{icon}",
+                                alt: "",
+                            }
                         } else {
                             span { class: "tab-icon", "{_icon}" }
                         }

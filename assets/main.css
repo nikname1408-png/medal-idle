@@ -2769,6 +2769,95 @@ button {
     color: var(--gold);
 }
 
+.cycle-progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.cycle-progress-value {
+    color: var(--gold);
+    font-variant-numeric: tabular-nums;
+}
+
+.cycle-progress-track {
+    height: 10px;
+    margin-top: 6px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.42);
+    overflow: hidden;
+}
+
+.cycle-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6f8f1c, var(--energy-bar));
+    transition: width 0.3s linear;
+}
+
+.cycle-forecast {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.cycle-forecast-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 6px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.18);
+    text-align: center;
+}
+
+.cycle-forecast-label {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.cycle-forecast-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--energy);
+    font-variant-numeric: tabular-nums;
+}
+
+.cycle-wall {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--danger);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.18);
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.cycle-wall.done {
+    border-left-color: var(--energy);
+    color: var(--text);
+}
+
+.cycle-wall-mark {
+    line-height: 1.3;
+    color: var(--danger);
+}
+
+.cycle-wall.done .cycle-wall-mark {
+    color: var(--energy);
+}
+
 /* ---------- Статистика и достижения ---------- */
 
 .stat-row {

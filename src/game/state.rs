@@ -343,6 +343,12 @@ pub struct GameState {
 
     /// Сколько циклов (перерождений) пройдено.
     pub cycles: u32,
+    /// Дерево, добытое за текущий цикл (для порога перерождения).
+    #[serde(default)]
+    pub cycle_wood: f64,
+    /// Камень, добытый за текущий цикл.
+    #[serde(default)]
+    pub cycle_stone: f64,
     /// Ресурс «время» за оффлайн-прогресс.
     pub time: f64,
     /// Время последнего сохранения (Unix-секунды) для оффлайн-прогресса.
@@ -443,6 +449,8 @@ impl Default for GameState {
             letters: Vec::new(),
             bank_seen: false,
             cycles: 0,
+            cycle_wood: 0.0,
+            cycle_stone: 0.0,
             time: 0.0,
             last_seen: 0,
             stats: Stats::default(),
@@ -509,11 +517,12 @@ impl GameState {
         self.house_level as f64 * balance::HOUSE_ENERGY_PER_LEVEL + self.dev.energy_regen
     }
 
-    /// Сколько энергии даёт одно нажатие «Отдых».
+    /// Сколько энергии даёт одно нажатие «Отдых». Растёт вместе с X.
     pub fn rest_energy(&self) -> f64 {
-        balance::REST_ENERGY
+        (balance::REST_ENERGY
             + self.house_level as f64 * balance::REST_ENERGY_PER_HOUSE_LEVEL
-            + self.dev.rest_bonus
+            + self.dev.rest_bonus)
+            * self.income_multiplier()
     }
 
     /// Сколько работников дают дома для работников.
@@ -562,19 +571,19 @@ impl GameState {
         self.coal_pit_level
     }
 
-    /// Дерево в секунду с лесопилки.
+    /// Дерево в секунду с лесопилки. Без множителя цикла: он применяется
+    /// один раз в `actions::tick`, чтобы не было двойного умножения.
     pub fn sawmill_wood_per_sec(&self) -> f64 {
         self.sawmill_workers as f64
             * balance::SAWMILL_WOOD_PER_WORKER_PER_SEC
-            * self.production_multiplier()
             * (1.0 + self.gather_bonus as f64)
     }
 
     /// Камень в секунду с шахты (железо теперь только в походах и у торговца).
+    /// Множитель цикла, как и у лесопилки, применяется в тике.
     pub fn mine_stone_per_sec(&self) -> f64 {
         self.mine_workers as f64
             * balance::MINE_STONE_PER_WORKER_PER_SEC
-            * self.production_multiplier()
             * (1.0 + self.gather_bonus as f64)
     }
 
@@ -691,15 +700,16 @@ impl GameState {
     }
 
     /// Максимум энергии с учётом уюта и экипировки.
+    /// Запас энергии растёт вместе с X, чтобы «Отдых» не переполнял
+    /// полосу за один клик; бонус экипировки остаётся плоским.
     pub fn max_energy(&self) -> f64 {
         let equipment_bonus: u32 = EquipSlot::ALL
             .iter()
             .filter_map(|slot| self.equipped_item(*slot))
             .filter_map(|item| item.stats.max_energy)
             .sum();
-        self.energy_max
-            + self.comfort_level as f64 * balance::ENERGY_CAP_PER_COMFORT
-            + equipment_bonus as f64
+        let base = self.energy_max + self.comfort_level as f64 * balance::ENERGY_CAP_PER_COMFORT;
+        base * self.income_multiplier() + equipment_bonus as f64
     }
 
     /// Максимальный запас огня кузницы с учётом уровня.
@@ -794,9 +804,41 @@ impl GameState {
         true
     }
 
-    /// Постоянный множитель производства за пройденные циклы.
-    pub fn production_multiplier(&self) -> f64 {
-        1.0 + self.cycles as f64 * balance::CYCLE_BONUS_PER_CYCLE
+    /// Единственный множитель дохода за пройденные циклы: X = 1 + 0.6 × R.
+    pub fn income_multiplier(&self) -> f64 {
+        1.0 + self.cycles as f64 * balance::CYCLE_INCOME_PER_LEVEL
+    }
+
+    /// Порог перерождения для текущего цикла: П0 × (1 + 0.5R).
+    pub fn cycle_threshold(&self) -> f64 {
+        balance::CYCLE_THRESHOLD_BASE
+            * (1.0 + self.cycles as f64 * balance::CYCLE_THRESHOLD_PER_LEVEL)
+    }
+
+    /// Сколько дерева и камня добыто за текущий цикл.
+    pub fn cycle_gathered(&self) -> f64 {
+        self.cycle_wood + self.cycle_stone
+    }
+
+    /// Прогресс порога перерождения от 0.0 до 1.0.
+    pub fn cycle_progress(&self) -> f64 {
+        let threshold = self.cycle_threshold();
+        if threshold <= 0.0 {
+            1.0
+        } else {
+            (self.cycle_gathered() / threshold).clamp(0.0, 1.0)
+        }
+    }
+
+    /// Стена R = 5: шахта должна быть построена до нужного уровня.
+    pub fn cycle_wall_mine_met(&self) -> bool {
+        self.cycles < balance::CYCLE_WALL_LEVEL || self.mine_level >= balance::CYCLE_WALL_MINE_LEVEL
+    }
+
+    /// Стена R = 10: за цикл нужно добыть камень сверх порога.
+    pub fn cycle_wall_stone_met(&self) -> bool {
+        self.cycles < balance::CYCLE_WALL_STONE_LEVEL
+            || self.cycle_stone + 1e-9 >= balance::CYCLE_WALL_EXTRA_STONE
     }
 
     /// Сколько предметов данного вида в сумке.
@@ -1234,6 +1276,27 @@ impl GameState {
                 added
             }
         }
+    }
+
+    /// Начисляет добытый ресурс: склад, статистика и счётчик текущего цикла.
+    ///
+    /// Единственная точка учёта добычи. Через неё идут клик по ресурсу и
+    /// «Труд» из тика; торговля и походы вызывают `add_resource` напрямую,
+    /// поэтому в порог перерождения не попадают.
+    pub fn add_produced(&mut self, kind: ResourceKind, amount: f64) -> f64 {
+        let added = self.add_resource(kind, amount);
+        match kind {
+            ResourceKind::Wood => {
+                self.cycle_wood += added;
+                self.stats.wood_gathered += added;
+            }
+            ResourceKind::Stone => {
+                self.cycle_stone += added;
+                self.stats.stone_gathered += added;
+            }
+            _ => {}
+        }
+        added
     }
 
     /// Тратит энергию, если её хватает.

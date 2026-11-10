@@ -168,8 +168,12 @@ impl CraftError {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PrestigeResult {
     Done(u32),
+    /// Не добрал дерева и камня до порога цикла.
     NotEnough,
-    Locked,
+    /// Стена R = 5: шахта не построена до нужного уровня.
+    WallMine,
+    /// Стена R = 10: мало камня сверх порога.
+    WallStone,
 }
 
 /// Хватает ли ресурсов, предметов, энергии и золота на постройку.
@@ -218,17 +222,16 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
         return GatherResult::NoEnergy;
     }
 
-    let yield_amount = (balance::CLICK_YIELD + state.dev.gather_yield)
-        * state.production_multiplier()
-        * (1.0 + state.gather_bonus as f64);
-    let added = state.add_resource(kind, yield_amount);
+    // Ручная добыча — фиксированный обмен «энергия → ресурс»: множитель
+    // цикла сюда не входит (он действует на «Отдых» и «Труд»).
+    let yield_amount =
+        (balance::CLICK_YIELD + state.dev.gather_yield) * (1.0 + state.gather_bonus as f64);
+    let added = state.add_produced(kind, yield_amount);
     state.stats.clicks = state.stats.clicks.saturating_add(1);
     match kind {
-        ResourceKind::Wood => state.stats.wood_gathered += added,
-        ResourceKind::Stone => state.stats.stone_gathered += added,
         ResourceKind::Coal => state.stats.coal_produced += added,
         ResourceKind::Gold => state.stats.gold_earned += added,
-        ResourceKind::Fire => {}
+        ResourceKind::Wood | ResourceKind::Stone | ResourceKind::Fire => {}
     }
     state.refresh_unlocks();
     GatherResult::Gathered(added)
@@ -273,16 +276,17 @@ pub fn tick(state: &mut GameState, dt_seconds: f64) {
         state.stats.coal_produced += added as f64;
     }
 
-    let sawmill = state.sawmill_wood_per_sec() * state.production_multiplier() * dt;
+    // Множитель цикла применяется здесь один раз и только к «Труду».
+    let income = state.income_multiplier();
+
+    let sawmill = state.sawmill_wood_per_sec() * income * dt;
     if sawmill > 0.0 {
-        let added = state.add_resource(ResourceKind::Wood, sawmill);
-        state.stats.wood_gathered += added;
+        state.add_produced(ResourceKind::Wood, sawmill);
     }
 
-    let mine = state.mine_stone_per_sec() * dt;
+    let mine = state.mine_stone_per_sec() * income * dt;
     if mine > 0.0 {
-        let added = state.add_resource(ResourceKind::Stone, mine);
-        state.stats.stone_gathered += added;
+        state.add_produced(ResourceKind::Stone, mine);
     }
 
     tick_research(state, dt);
@@ -343,7 +347,7 @@ fn tick_coal_pit(state: &mut GameState, dt: f64) {
         }
 
         state.spend_active("wood", balance::COAL_PIT_WOOD_PER_BATCH as u32);
-        let output = balance::COAL_PIT_COAL_PER_BATCH * state.production_multiplier();
+        let output = balance::COAL_PIT_COAL_PER_BATCH * state.income_multiplier();
         let added = state.add_active("coal", output.round().max(0.0) as u32);
         state.stats.coal_produced += added as f64;
         state.coal_seen = true;
@@ -738,12 +742,18 @@ pub(crate) fn next_random(seed: &mut u64) -> u64 {
 }
 
 /// Начинает новый цикл. Возвращает новый номер цикла.
+///
+/// Жёсткий гейт: за цикл нужно добыть дерево и камень до порога, пройти
+/// стены R = 5 (шахта) и R = 10 (камень сверх порога).
 pub fn prestige(state: &mut GameState) -> PrestigeResult {
-    if state.forge_level == 0 {
-        return PrestigeResult::Locked;
-    }
-    if state.ingredient_amount("iron") as f64 + 1e-9 < balance::CYCLE_IRON_REQUIREMENT {
+    if state.cycle_gathered() + 1e-9 < state.cycle_threshold() {
         return PrestigeResult::NotEnough;
+    }
+    if !state.cycle_wall_mine_met() {
+        return PrestigeResult::WallMine;
+    }
+    if !state.cycle_wall_stone_met() {
+        return PrestigeResult::WallStone;
     }
 
     state.reset_for_cycle();
@@ -1194,18 +1204,131 @@ mod tests {
     #[test]
     fn prestige_resets_progress_and_keeps_cycles() {
         let mut state = GameState {
-            forge_level: 1,
+            cycles: 4,
             ..GameState::default()
         };
-        state.add_item("iron", balance::CYCLE_IRON_REQUIREMENT as u32);
+        state.cycle_wood = state.cycle_threshold();
         state.time = 5.0;
 
-        assert_eq!(prestige(&mut state), PrestigeResult::Done(1));
-        assert_eq!(state.cycles, 1);
-        assert_eq!(state.forge_level, 0);
-        assert_eq!(state.item_count("iron"), 0);
+        assert_eq!(prestige(&mut state), PrestigeResult::Done(5));
+        assert_eq!(state.cycles, 5);
+        assert_eq!(state.cycle_wood, 0.0);
+        assert_eq!(state.cycle_stone, 0.0);
         assert_eq!(state.time, 5.0);
-        assert!((state.production_multiplier() - 1.1).abs() < 1e-9);
+        assert!((state.income_multiplier() - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn income_multiplier_is_seven_on_tenth_cycle() {
+        let state = GameState {
+            cycles: 10,
+            ..GameState::default()
+        };
+        assert!((state.income_multiplier() - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn tick_applies_income_multiplier_once() {
+        let mut state = GameState {
+            cycles: 10,
+            worker_house_level: 1,
+            sawmill_level: 1,
+            sawmill_workers: 2,
+            mine_level: 1,
+            mine_workers: 1,
+            ..GameState::default()
+        };
+
+        // 2 работника × 0.5/с × X(10)=7 → 7 дерева в секунду, за 2 с — 14.
+        // Камень: 1 работник × 0.5/с × 7 → 7 за 2 с.
+        tick(&mut state, 2.0);
+
+        assert!((state.active_amount("wood") as f64 - 14.0).abs() < 1e-9);
+        assert!((state.active_amount("stone") as f64 - 7.0).abs() < 1e-9);
+        assert!((state.cycle_wood - 14.0).abs() < 1e-9);
+        assert!((state.cycle_stone - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn gather_does_not_scale_with_cycles() {
+        let mut state = GameState {
+            cycles: 10,
+            ..rested_state()
+        };
+
+        assert_eq!(
+            gather(&mut state, ResourceKind::Wood),
+            GatherResult::Gathered(1.0)
+        );
+        assert_eq!(state.active_amount("wood"), 1);
+    }
+
+    #[test]
+    fn rest_and_energy_cap_scale_with_cycles() {
+        let mut state = GameState {
+            cycles: 10,
+            ..GameState::default()
+        };
+
+        assert!((state.rest_energy() - 7.0).abs() < 1e-9);
+        assert!((state.max_energy() - 700.0).abs() < 1e-9);
+
+        let gained = rest(&mut state);
+        assert!((gained - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn prestige_needs_cycle_threshold() {
+        let mut state = GameState::default();
+
+        assert_eq!(prestige(&mut state), PrestigeResult::NotEnough);
+        assert_eq!(state.cycles, 0);
+
+        state.cycle_wood = state.cycle_threshold() - 1.0;
+        assert_eq!(prestige(&mut state), PrestigeResult::NotEnough);
+    }
+
+    #[test]
+    fn prestige_wall_needs_mine_after_fifth_cycle() {
+        let mut state = GameState {
+            cycles: balance::CYCLE_WALL_LEVEL,
+            mine_level: balance::CYCLE_WALL_MINE_LEVEL - 1,
+            ..GameState::default()
+        };
+        state.cycle_wood = state.cycle_threshold();
+
+        assert_eq!(prestige(&mut state), PrestigeResult::WallMine);
+
+        state.mine_level = balance::CYCLE_WALL_MINE_LEVEL;
+        assert_eq!(prestige(&mut state), PrestigeResult::Done(6));
+    }
+
+    #[test]
+    fn prestige_wall_needs_extra_stone_after_tenth_cycle() {
+        let mut state = GameState {
+            cycles: balance::CYCLE_WALL_STONE_LEVEL,
+            mine_level: balance::CYCLE_WALL_MINE_LEVEL,
+            ..GameState::default()
+        };
+        state.cycle_stone = balance::CYCLE_WALL_EXTRA_STONE - 1.0;
+        state.cycle_wood = state.cycle_threshold();
+
+        assert_eq!(prestige(&mut state), PrestigeResult::WallStone);
+
+        state.cycle_stone = balance::CYCLE_WALL_EXTRA_STONE;
+        assert_eq!(prestige(&mut state), PrestigeResult::Done(11));
+    }
+
+    #[test]
+    fn cycle_progress_counts_wood_and_stone() {
+        let mut state = rested_state();
+        gather(&mut state, ResourceKind::Wood);
+        gather(&mut state, ResourceKind::Wood);
+        gather(&mut state, ResourceKind::Stone);
+
+        assert!((state.cycle_gathered() - 3.0).abs() < 1e-9);
+        assert!(state.cycle_progress() > 0.0);
+        assert!(state.cycle_progress() < 1.0);
     }
 
     #[test]
