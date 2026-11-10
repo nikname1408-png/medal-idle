@@ -582,7 +582,7 @@ fn roll_rarity(seed: &mut u64) -> GoodRarity {
         GoodRarity::Epic,
     ];
     let total: u64 = rarities.iter().map(|rarity| rarity.weight()).sum();
-    let mut roll = next_random(seed) % total;
+    let mut roll = random_below(seed, total);
     for rarity in rarities {
         let weight = rarity.weight();
         if roll < weight {
@@ -595,27 +595,41 @@ fn roll_rarity(seed: &mut u64) -> GoodRarity {
 
 /// Выбирает новый товар нужной редкости, которого ещё нет в лавке.
 ///
-/// Если выпавшая редкость уже вся на витрине, пробуем редкость пониже.
+/// Сначала пробуем выпавшую редкость и понижаем её, пока не найдём свободный
+/// товар. Если все свободные товары оказались выше выпавшей редкости (так
+/// бывает, когда на витрине остались только дешёвые вещи), берём любой
+/// свободный товар: иначе рынок мог «зависнуть» навсегда на одной редкости.
 /// Один и тот же товар повторно не ставим.
 fn pick_rotation_item(
     seed: &mut u64,
     roster: &'static [&'static str],
     market: &TraderMarket,
 ) -> Option<&'static str> {
-    let mut rarity = roll_rarity(seed);
-    loop {
-        let candidates: Vec<&'static str> = roster
+    let available: Vec<&'static str> = roster
+        .iter()
+        .copied()
+        .filter(|item_id| market.good(item_id).is_none())
+        .collect();
+    if available.is_empty() {
+        return None;
+    }
+
+    let mut rarity = Some(roll_rarity(seed));
+    while let Some(current) = rarity {
+        let candidates: Vec<&'static str> = available
             .iter()
             .copied()
-            .filter(|item_id| market.good(item_id).is_none())
-            .filter(|item_id| items::item(item_id).map(GoodRarity::of) == Some(rarity))
+            .filter(|item_id| items::item(item_id).map(GoodRarity::of) == Some(current))
             .collect();
         if !candidates.is_empty() {
-            let pick = (next_random(seed) as usize) % candidates.len();
+            let pick = random_below(seed, candidates.len() as u64) as usize;
             return Some(candidates[pick]);
         }
-        rarity = rarity.lower()?;
+        rarity = current.lower();
     }
+
+    let pick = random_below(seed, available.len() as u64) as usize;
+    Some(available[pick])
 }
 
 /// С шансом [`ROTATION_PERCENT`] заменяет один товар в лавке.
@@ -626,13 +640,13 @@ fn rotate_market(seed: &mut u64, index: usize, market: &mut TraderMarket) {
     if trader.goods.is_empty() || market.goods.is_empty() {
         return;
     }
-    if next_random(seed) % 100 >= ROTATION_PERCENT {
+    if random_below(seed, 100) >= ROTATION_PERCENT {
         return;
     }
     let Some(item_id) = pick_rotation_item(seed, trader.goods, market) else {
         return;
     };
-    let slot = (next_random(seed) as usize) % market.goods.len();
+    let slot = random_below(seed, market.goods.len() as u64) as usize;
     market.goods[slot] = fresh_good(item_id);
 }
 
@@ -655,26 +669,26 @@ fn market_step(state: &mut GameState) {
         rotate_market(&mut seed, index, market);
 
         for good in market.goods.iter_mut() {
-            // Небольшой шум спроса и предложения.
-            good.demand = (good.demand as i32 + noise(&mut seed, 1)).clamp(5, 95) as u8;
-            good.supply = (good.supply as i32 + noise(&mut seed, 1)).clamp(5, 95) as u8;
+            // Шум спроса и предложения: рынок должен жить, а не стоять на 50/50.
+            good.demand = (good.demand as i32 + noise(&mut seed, 4)).clamp(5, 95) as u8;
+            good.supply = (good.supply as i32 + noise(&mut seed, 4)).clamp(5, 95) as u8;
 
-            // Возврат к равновесию постепенный: 1–2 пункта за шаг рынка.
-            let step = 1 + (next_random(&mut seed) % 2) as u8;
-            good.demand = approach(good.demand, 50, step);
-            good.supply = approach(good.supply, 50, step);
+            // Возврат к равновесию постепенный: 1 пункт за шаг рынка, поэтому
+            // обвал цены после продаж восстанавливается минутами, а не за 5 с.
+            good.demand = approach(good.demand, 50, 1);
+            good.supply = approach(good.supply, 50, 1);
 
             // Запас медленно восстанавливается до нормы.
             let stock_norm = base_stock(&good.item_id);
             if good.stock < stock_norm {
-                let step = 1 + (next_random(&mut seed) % 2) as u32;
+                let step = 1 + random_below(&mut seed, 2) as u32;
                 good.stock = (good.stock + step).min(stock_norm);
             }
 
             // Лимит скупки тоже восстанавливается понемногу.
             let limit_norm = base_buy_limit(&good.item_id);
             if good.buy_limit < limit_norm {
-                let step = 1 + (next_random(&mut seed) % 2) as u32;
+                let step = 1 + random_below(&mut seed, 2) as u32;
                 good.buy_limit = (good.buy_limit + step).min(limit_norm);
             }
         }
@@ -688,6 +702,17 @@ fn next_random(seed: &mut u64) -> u64 {
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
     *seed
+}
+
+/// Случайное число в диапазоне `0..bound` по старшим битам ГПСЧ.
+///
+/// Младшие биты ЛКГ сильно коррелируют: из-за них шанс смены товара и
+/// распределение редкостей получались заметно ниже задуманных.
+fn random_below(seed: &mut u64, bound: u64) -> u64 {
+    if bound == 0 {
+        return 0;
+    }
+    (next_random(seed) >> 33) % bound
 }
 
 /// Детерминированный шум в диапазоне `-range..=range`.
@@ -945,14 +970,15 @@ mod tests {
             .and_then(|market| market.good("board"))
             .cloned()
             .expect("доска осталась в лавке");
-        // За один шаг рынка цена почти не восстанавливается.
+        // За один шаг рынка цена почти не восстанавливается: шум не больше
+        // четырёх пунктов, а к равновесию значение идёт на один пункт.
         assert!(
-            after_one.supply >= 92,
+            after_one.supply >= 90,
             "предложение восстановилось слишком быстро: {}",
             after_one.supply
         );
         assert!(
-            after_one.demand <= 8,
+            after_one.demand <= 10,
             "спрос восстановился слишком быстро: {}",
             after_one.demand
         );
@@ -960,14 +986,23 @@ mod tests {
         for _ in 0..60 {
             market_step(&mut state);
         }
-        let after_many = state
+        let after_minute = state
             .traders
             .get(0)
             .and_then(|market| market.good("board"))
             .cloned()
             .expect("доска осталась в лавке");
-        assert!(after_many.supply <= 52);
-        assert!(after_many.demand >= 48);
+        // За пять минут рынок в основном восстанавливается, но не мгновенно.
+        assert!(
+            after_minute.supply <= 70,
+            "за пять минут предложение почти не упало: {}",
+            after_minute.supply
+        );
+        assert!(
+            after_minute.demand >= 30,
+            "за пять минут спрос почти не вырос: {}",
+            after_minute.demand
+        );
     }
 
     #[test]
@@ -984,5 +1019,74 @@ mod tests {
                 assert!(seen.insert(good.item_id.clone()), "товар повторяется");
             }
         }
+    }
+
+    #[test]
+    fn market_rotates_assortment() {
+        let mut state = GameState::default();
+        let mut changes = vec![0u32; state.traders.len()];
+        let mut prev: Vec<Vec<String>> = state
+            .traders
+            .iter()
+            .map(|market| {
+                market
+                    .goods
+                    .iter()
+                    .map(|good| good.item_id.clone())
+                    .collect()
+            })
+            .collect();
+
+        for _ in 0..200 {
+            market_step(&mut state);
+            for (index, market) in state.traders.iter().enumerate() {
+                let now: Vec<String> = market
+                    .goods
+                    .iter()
+                    .map(|good| good.item_id.clone())
+                    .collect();
+                if now != prev[index] {
+                    changes[index] += 1;
+                }
+                prev[index] = now;
+            }
+        }
+
+        // Шанс смены — 30% за шаг рынка, значит за 200 шагов ожидается ~60.
+        for (index, count) in changes.iter().enumerate() {
+            assert!(
+                *count >= 20,
+                "рынок {index} почти не меняется: {count} смен за 200 шагов"
+            );
+        }
+    }
+
+    #[test]
+    fn rotation_picks_only_missing_goods() {
+        let market = default_market(0);
+        let mut seed = 99;
+        for _ in 0..1000 {
+            let picked = pick_rotation_item(&mut seed, TRADERS[0].goods, &market)
+                .expect("на витрине не весь ассортимент");
+            assert!(
+                market.good(picked).is_none(),
+                "{picked} уже есть в лавке — будет дубль"
+            );
+        }
+    }
+
+    #[test]
+    fn market_values_keep_moving() {
+        let mut state = GameState::default();
+        let mut min = u8::MAX;
+        let mut max = 0u8;
+        for _ in 0..100 {
+            market_step(&mut state);
+            for good in &state.traders[0].goods {
+                min = min.min(good.demand);
+                max = max.max(good.demand);
+            }
+        }
+        assert!(max - min >= 10, "спрос почти не меняется: {min}..{max}");
     }
 }
