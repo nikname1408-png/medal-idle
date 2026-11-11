@@ -420,8 +420,10 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     );
 
     let forge_description = format!(
-        "Огонь из угля нужен для крафта предметов. Один уголь — {} с огня. Уровень повышает запас огня.",
-        format_num(balance::FIRE_SECONDS_PER_COAL as f64)
+        "Огонь из угля нужен для крафта предметов. Один уголь — {} с огня. Уровень повышает и огонь с угля, и запас: сейчас {} / {}.",
+        format_num(balance::FIRE_SECONDS_PER_COAL as f64),
+        format_num(snapshot.fire_per_coal() as f64),
+        format_num(snapshot.fire_max() as f64)
     );
 
     let bank_description = format!(
