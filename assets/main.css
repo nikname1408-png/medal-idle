@@ -706,22 +706,12 @@ button {
 }
 
 .resource-icon {
-    display: flex;
     flex: 0 0 16px;
     width: 16px;
     height: 16px;
-    align-items: center;
-    justify-content: center;
     text-align: center;
     font-size: 13px;
     line-height: 1;
-}
-
-/* Камень шире и ниже остальных иконок ресурсов — чуть сжимаем, чтобы
-   он не выпирал за край бара. */
-.resource-stone.icon {
-    width: 13px;
-    height: 13px;
 }
 
 .resource-text {
@@ -2090,8 +2080,8 @@ button {
 }
 
 .craft-panel-icon .icon {
-    width: 100%;
-    height: 100%;
+    width: 88%;
+    height: 88%;
 }
 
 .craft-panel-bottom {
@@ -2369,7 +2359,7 @@ button {
     border-radius: 3px;
     background: rgba(0, 0, 0, 0.18);
     color: var(--text);
-    font-size: 20px;
+    font-size: 18px;
     line-height: 1;
     cursor: pointer;
 }
@@ -2398,8 +2388,8 @@ button {
 }
 
 .inv-item .icon {
-    width: 70%;
-    height: 70%;
+    width: 62%;
+    height: 62%;
 }
 
 .tab-icon.icon,
@@ -2415,8 +2405,8 @@ button {
 }
 
 .inv-detail-icon.icon {
-    width: 20px;
-    height: 20px;
+    width: 18px;
+    height: 18px;
 }
 
 /* Простой текст счётчика: «Исследователи 1/2», «Работники 0/1». */

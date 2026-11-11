@@ -2228,7 +2228,7 @@ fn ResourceBar(view: GameState) -> Element {
                 for (kind , name , value , cap) in items {
                     div { class: "resource", key: "{name}",
                         img {
-                            class: if kind == ResourceKind::Stone { "resource-icon resource-stone icon" } else { "resource-icon icon" },
+                            class: "resource-icon icon",
                             src: "{resource_icon(kind)}",
                             alt: "",
                         }
