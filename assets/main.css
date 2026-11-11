@@ -449,15 +449,16 @@ button {
     vertical-align: middle;
 }
 
+.cost-part {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
 .cost-img {
     width: 15px;
     height: 15px;
     object-fit: contain;
-}
-
-.cost-icon {
-    font-size: 12px;
-    line-height: 1;
 }
 
 .cost-num {

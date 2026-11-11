@@ -20,8 +20,11 @@ const MAIN_CSS: Asset = asset!("/assets/main.css");
 const ICON_BAG: Asset = asset!("/assets/icons/bag.png");
 const ICON_COAL: Asset = asset!("/assets/icons/coal.png");
 const ICON_FIELD: Asset = asset!("/assets/icons/field.png");
+const ICON_FIRE: Asset = asset!("/assets/icons/fire.png");
 const ICON_GEAR: Asset = asset!("/assets/icons/gear.png");
 const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
+const ICON_BOARD: Asset = asset!("/assets/icons/item_board.png");
+const ICON_IRON_INGOT: Asset = asset!("/assets/icons/item_iron_ingot.png");
 const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
 const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
 const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
@@ -44,15 +47,14 @@ const TABS: [(&str, &str); 7] = [
     ("⚙️", "Настр."),
 ];
 
-/// Текстовая заглушка иконки ресурса.
-#[allow(dead_code)]
-fn resource_text_icon(kind: ResourceKind) -> &'static str {
-    match kind {
-        ResourceKind::Wood => "🪵",
-        ResourceKind::Stone => "🪨",
-        ResourceKind::Coal => "⚫",
-        ResourceKind::Fire => "🔥",
-        ResourceKind::Gold => "🪙",
+/// Одна строка цены: PNG-иконка и количество.
+#[component]
+fn CostPart(icon: Asset, amount: String) -> Element {
+    rsx! {
+        span { class: "cost-part",
+            img { class: "cost-img", src: "{icon}", alt: "" }
+            span { class: "cost-num", "{amount}" }
+        }
     }
 }
 
@@ -1905,28 +1907,22 @@ fn CostLabel(cost: balance::Cost) -> Element {
     rsx! {
         span { class: "cost",
             if cost.wood > 0.0 {
-                span { class: "cost-icon", "🪵" }
-                span { class: "cost-num", "{format_num(cost.wood)}" }
+                CostPart { icon: ICON_WOOD, amount: format_num(cost.wood) }
             }
             if cost.stone > 0.0 {
-                span { class: "cost-icon", "🪨" }
-                span { class: "cost-num", "{format_num(cost.stone)}" }
+                CostPart { icon: ICON_STONE, amount: format_num(cost.stone) }
             }
             if cost.gold > 0.0 {
-                span { class: "cost-icon", "💰" }
-                span { class: "cost-num", "{format_num(cost.gold)}" }
+                CostPart { icon: ICON_GOLD, amount: format_num(cost.gold) }
             }
             if cost.energy > 0.0 {
-                span { class: "cost-icon", "⚡" }
-                span { class: "cost-num", "{format_num(cost.energy)}" }
+                CostPart { icon: ICON_FIRE, amount: format_num(cost.energy) }
             }
             if cost.boards > 0 {
-                span { class: "cost-icon", "🪚" }
-                span { class: "cost-num", "{cost.boards}" }
+                CostPart { icon: ICON_BOARD, amount: cost.boards.to_string() }
             }
             if cost.iron_ingots > 0 {
-                span { class: "cost-icon", "🔩" }
-                span { class: "cost-num", "{cost.iron_ingots}" }
+                CostPart { icon: ICON_IRON_INGOT, amount: cost.iron_ingots.to_string() }
             }
         }
     }
@@ -2153,14 +2149,10 @@ fn ResourceBar(view: GameState) -> Element {
             } else {
                 for (kind , name , value , cap) in items {
                     div { class: "resource", key: "{name}",
-                        if let Some(icon) = resource_icon(kind) {
-                            img {
-                                class: "resource-icon icon",
-                                src: "{icon}",
-                                alt: "",
-                            }
-                        } else {
-                            span { class: "resource-icon", "{resource_text_icon(kind)}" }
+                        img {
+                            class: "resource-icon icon",
+                            src: "{resource_icon(kind)}",
+                            alt: "",
                         }
                         div { class: "resource-text",
                             span { class: "resource-name", "{name}" }
@@ -2438,13 +2430,13 @@ fn tab_icon(index: usize) -> Option<Asset> {
     }
 }
 
-/// Загруженная PNG-иконка ресурса. У огня своего спрайта нет — эмодзи.
-fn resource_icon(kind: ResourceKind) -> Option<Asset> {
+/// Загруженная PNG-иконка ресурса.
+fn resource_icon(kind: ResourceKind) -> Asset {
     match kind {
-        ResourceKind::Wood => Some(ICON_WOOD),
-        ResourceKind::Stone => Some(ICON_STONE),
-        ResourceKind::Coal => Some(ICON_COAL),
-        ResourceKind::Fire => None,
-        ResourceKind::Gold => Some(ICON_GOLD),
+        ResourceKind::Wood => ICON_WOOD,
+        ResourceKind::Stone => ICON_STONE,
+        ResourceKind::Coal => ICON_COAL,
+        ResourceKind::Fire => ICON_FIRE,
+        ResourceKind::Gold => ICON_GOLD,
     }
 }
