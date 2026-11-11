@@ -28,8 +28,10 @@ const ICON_IRON_INGOT: Asset = asset!("/assets/icons/item_iron_ingot.png");
 const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
 const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
 const ICON_TAB_FORGE: Asset = asset!("/assets/icons/tab_forge.png");
+const ICON_TAB_HIKE: Asset = asset!("/assets/icons/tab_hike.png");
 const ICON_TAB_HIRING: Asset = asset!("/assets/icons/tab_hiring.png");
 const ICON_TAB_REBORN: Asset = asset!("/assets/icons/tab_reborn.png");
+const ICON_TAB_STATS: Asset = asset!("/assets/icons/tab_stats.png");
 const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
 
 const TAB_FIELD: usize = 0;
@@ -2226,7 +2228,7 @@ fn ResourceBar(view: GameState) -> Element {
                 for (kind , name , value , cap) in items {
                     div { class: "resource", key: "{name}",
                         img {
-                            class: "resource-icon icon",
+                            class: if kind == ResourceKind::Stone { "resource-icon resource-stone icon" } else { "resource-icon icon" },
                             src: "{resource_icon(kind)}",
                             alt: "",
                         }
@@ -2500,8 +2502,9 @@ fn tab_icon(index: usize) -> Option<Asset> {
         TAB_FIELD => Some(ICON_TAB_FORGE),
         TAB_WORK => Some(ICON_TAB_HIRING),
         TAB_BAG => Some(ICON_BAG),
-        TAB_EXPEDITION => None,
+        TAB_EXPEDITION => Some(ICON_TAB_HIKE),
         TAB_CYCLE => Some(ICON_TAB_REBORN),
+        TAB_STATS => Some(ICON_TAB_STATS),
         TAB_SETTINGS => Some(ICON_GEAR),
         _ => None,
     }

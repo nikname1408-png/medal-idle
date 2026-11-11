@@ -706,12 +706,22 @@ button {
 }
 
 .resource-icon {
+    display: flex;
     flex: 0 0 16px;
     width: 16px;
     height: 16px;
+    align-items: center;
+    justify-content: center;
     text-align: center;
     font-size: 13px;
     line-height: 1;
+}
+
+/* Камень шире и ниже остальных иконок ресурсов — чуть сжимаем, чтобы
+   он не выпирал за край бара. */
+.resource-stone.icon {
+    width: 13px;
+    height: 13px;
 }
 
 .resource-text {
