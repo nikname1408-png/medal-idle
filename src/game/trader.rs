@@ -163,8 +163,17 @@ pub fn market_factor(demand: u8, supply: u8) -> f64 {
 }
 
 /// Цена покупки: всегда выше базовой, растёт при дефиците.
+///
+/// Каменный блок — ходовой стройматериал, поэтому торговец не берёт на нём
+/// свою наценку: цена идёт только от рынка (2% оставлены как заслон, чтобы
+/// покупка не стала дешевле продажи).
 pub fn buy_price(item: &Item, demand: u8, supply: u8) -> f64 {
-    let factor = (market_factor(demand, supply) + BUY_RATE - 1.0).clamp(1.02, 1.75);
+    let markup = if item.id == "stone_block" {
+        0.0
+    } else {
+        BUY_RATE - 1.0
+    };
+    let factor = (market_factor(demand, supply) + markup).clamp(1.02, 1.75);
     (item.base_price as f64 * factor).round().max(1.0)
 }
 
@@ -1180,6 +1189,17 @@ mod tests {
                 "рынок {index} почти не меняется: {count} смен за 200 шагов (пул {pool_size})"
             );
         }
+    }
+
+    #[test]
+    fn stone_block_has_no_trader_markup() {
+        let block = item("stone_block");
+        let base = block.base_price as f64;
+        // Без наценки 1.15: в балансе остаётся только 2% закупки.
+        assert_eq!(buy_price(block, 50, 50), (base * 1.02).round());
+        // Остальные товары наценку сохраняют.
+        let ring = item("trader_ring");
+        assert!(buy_price(ring, 50, 50) > ring.base_price as f64 * 1.1);
     }
 
     #[test]

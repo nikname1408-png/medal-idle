@@ -31,8 +31,11 @@
   цена 150, категория `Goods`. Продаётся у всех четырёх торговцев (в
   `CRAFT_GOODS`, у Странника и Рудокопа тоже) и стоит на витрине с первого
   захода; запас 150, лимит скупки 100 (`bulk_volume`), то есть крупными
-  партиями. Тесты: `stone_block_takes_fifty_stone`,
-  `stone_block_is_sold_by_every_trader_in_bulk`.
+  партиями. Своей торговой наценки 1.15 у блока нет: `buy_price` для него
+  считает цену только от рынка (в балансе 153 вместо 173). Тесты:
+  `stone_block_takes_fifty_stone`,
+  `stone_block_is_sold_by_every_trader_in_bulk`,
+  `stone_block_has_no_trader_markup`.
   У Странника появился «чудо-шанс» `WANDERER_MIRACLE_CHANCE = 1`:
   в `rotate_market` с шансом 1% на витрину ставится `map_quarry`/`map_ruins`,
   если их там нет. Если свободных товаров пула не осталось, а на витрине

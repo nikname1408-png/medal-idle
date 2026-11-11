@@ -85,6 +85,7 @@ pub(crate) fn item_icon_asset(item: &Item) -> Option<Asset> {
         "iron_ingot" => asset!("/assets/icons/item_iron_ingot.png"),
         "silver_ingot" => asset!("/assets/icons/item_silver_ingot.png"),
         "gold_ingot" => asset!("/assets/icons/item_gold_ingot.png"),
+        "stone_block" => asset!("/assets/icons/item_stone_block.png"),
         "backpack" => asset!("/assets/icons/item_backpack.png"),
         "robe" => asset!("/assets/icons/item_robe.png"),
         "leather_gloves" => asset!("/assets/icons/item_leather_gloves.png"),
