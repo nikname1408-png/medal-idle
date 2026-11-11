@@ -381,8 +381,17 @@ pub const EXPEDITION_RARE_WEIGHT: u32 = 80;
 pub const EXPEDITION_EPIC_WEIGHT: u32 = 19;
 pub const EXPEDITION_LEGENDARY_WEIGHT: u32 = 1;
 
-/// Отдельная проверка чертежа паровой машины в Древних руинах: 1% в секунду.
-pub const EXPEDITION_STEAM_BLUEPRINT_CHANCE: u32 = 1;
+/// Отдельная проверка чертежа паровой машины в Древних руинах.
+///
+/// Один бросок из двух тысяч за секунду пути: в среднем одна находка
+/// примерно за 2000 секунд похода.
+pub const EXPEDITION_STEAM_BLUEPRINT_ROLL: u32 = 2_000;
+
+/// Огонь кузницы, который сжигает сборка прототипа паровой машины.
+pub const STEAM_PROTOTYPE_FIRE: u32 = 650;
+
+/// Прибавка к множителю дохода после вступления в Эпоху Пара.
+pub const STEAM_ERA_INCOME_BONUS: f64 = 0.5;
 
 /// Сколько секунд похода в тёмной локации даёт одна свеча.
 pub const CANDLE_SECONDS_PER_ITEM: u32 = 200;

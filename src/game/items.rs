@@ -7,11 +7,20 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
+use super::balance;
+
 /// Базовое число ячеек инвентаря без экипировки.
 pub const BASE_INVENTORY_SLOTS: u32 = 10;
 
 /// Сколько штук одного предмета помещается в одну ячейку.
 pub const ITEM_STACK_LIMIT: u32 = 9_999;
+
+/// Чертёж паровой машины — особая находка Древних руин.
+pub const STEAM_BLUEPRINT_ID: &str = "steam_blueprint";
+/// Прототип паровой машины: результат крафта и ключ к Эпохе Пара.
+pub const STEAM_PROTOTYPE_ID: &str = "steam_prototype";
+/// ID рецепта прототипа (совпадает с ID предмета).
+pub const STEAM_PROTOTYPE_RECIPE: &str = "steam_prototype";
 
 /// Категория предмета.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,12 +359,20 @@ fn build_catalog() -> Vec<Item> {
             "Открывает поход в Древние руины. Нужен факел или свеча.",
         ),
         item_def(
-            "steam_blueprint",
+            STEAM_BLUEPRINT_ID,
             "Чертёж паровой машины",
             Category::Material,
             5000,
             None,
-            "Особая находка Древних руин. Пригодится в будущих эпохах.",
+            "Особая находка Древних руин. Изучи чертёж в сумке — в кузнице откроется рецепт прототипа паровой машины.",
+        ),
+        item_def(
+            STEAM_PROTOTYPE_ID,
+            "Прототип паровой машины",
+            Category::Material,
+            0,
+            None,
+            "Первый шаг к новой эре. Собран в кузнице по изученному чертежу и больше не помещается в сумку.",
         ),
         // ---------- Промежуточные материалы ----------
         item_def(
@@ -1521,6 +1538,20 @@ fn build_recipes() -> Vec<Recipe> {
             80,
             vec![need("gold_ingot", 1), need("gems", 2)],
         ),
+        // Финал Средневековья: прототип паровой машины.
+        make_recipe(
+            STEAM_PROTOTYPE_RECIPE,
+            "Прототип паровой машины",
+            STEAM_PROTOTYPE_ID,
+            1,
+            balance::STEAM_PROTOTYPE_FIRE,
+            vec![
+                need("iron_ingot", 100),
+                need("silver", 50),
+                need("gems", 10),
+                need("quartz", 50),
+            ],
+        ),
     ]
 }
 
@@ -1713,6 +1744,7 @@ mod tests {
             ("gold_ring", 757),
             ("gold_pendant", 933),
             ("silver_ingot", 96),
+            ("steam_prototype", 0),
         ];
         for (id, price) in expected {
             assert_eq!(item(id).map(|item| item.base_price), Some(price), "{id}");

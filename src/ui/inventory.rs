@@ -55,6 +55,7 @@ pub(crate) fn item_icon(item: &Item) -> &'static str {
         "map_quarry" => "🗺",
         "map_ruins" => "🗺",
         "steam_blueprint" => "📜",
+        "steam_prototype" => "⚙️",
         _ => match item.category {
             Category::Gear => "🎽",
             Category::Jewelry => "💍",
@@ -544,7 +545,9 @@ pub fn CraftScreen(
                 "Недостаточно огня! Нужно {fire}, есть {}. Подбросьте уголь в кузницу на «Поле».",
                 view.current_fire
             ))
-        } else if !view.can_add_item(recipe.result_id, recipe.result_quantity) {
+        } else if recipe.id != items::STEAM_PROTOTYPE_RECIPE
+            && !view.can_add_item(recipe.result_id, recipe.result_quantity)
+        {
             Some("Нет места в сумке".to_string())
         } else {
             None
@@ -562,7 +565,7 @@ pub fn CraftScreen(
                 button { class: "inv-tool", onclick: move |_| on_close.call(()), "Назад" }
             }
             div { class: "inv-grid",
-                for recipe in items::recipes() {
+                for recipe in items::recipes().iter().filter(|recipe| actions::recipe_visible(&view, recipe)) {
                     RecipeCell {
                         key: "{recipe.id}",
                         recipe_id: recipe.id,
@@ -674,15 +677,21 @@ fn CraftPanel(
     let can_hundred = can_one && crafts_now >= 100;
     let recipe_id = recipe.id.to_string();
     let result_quantity = recipe.result_quantity;
+    let single_label = if recipe.id == items::STEAM_PROTOTYPE_RECIPE {
+        "Создать".to_string()
+    } else {
+        "Крафт".to_string()
+    };
     let make_button = move |times: u32| -> Element {
         let recipe_id = recipe_id.clone();
+        let single_label = single_label.clone();
         let enabled = match times {
             1 => can_one,
             10 => can_ten,
             _ => can_hundred,
         };
         let label = match times {
-            1 => "Крафт".to_string(),
+            1 => single_label,
             other => format!("Крафт {other}"),
         };
         rsx! {
@@ -804,6 +813,10 @@ fn InventoryCard(
         .map(|location_id| view.location_unlocked(location_id))
         .unwrap_or(false);
     let can_study_map = map_location.is_some() && count > 0 && !map_open;
+    let is_blueprint = item.id == items::STEAM_BLUEPRINT_ID;
+    let blueprint_item_id = item_id.clone();
+    let blueprint_studied = view.steam_blueprint_studied;
+    let can_study_blueprint = is_blueprint && count > 0 && !blueprint_studied;
     let mut map_ok = use_signal(|| false);
 
     rsx! {
@@ -833,6 +846,9 @@ fn InventoryCard(
                     if map_open {
                         span { "Уже открыта" }
                     }
+                }
+                if is_blueprint {
+                    span { if blueprint_studied { "Чертёж изучен" } else { "Чертёж ещё не изучен" } }
                 }
             }
 
@@ -868,6 +884,31 @@ fn InventoryCard(
                             refresh_view(state);
                         },
                         "Изучить карту"
+                    }
+                }
+                if is_blueprint {
+                    button {
+                        class: if can_study_blueprint { "inv-tool" } else { "inv-tool disabled" },
+                        disabled: !can_study_blueprint,
+                        onclick: move |_| {
+                            let result = {
+                                let mut guard = state.write();
+                                actions::study_blueprint(&mut guard, &blueprint_item_id)
+                            };
+                            map_ok.set(result.is_ok());
+                            message
+                                .set(
+                                    match result {
+                                        Ok(()) => {
+                                            "Чертёж изучен. Рецепт прототипа открыт в кузнице."
+                                                .to_string()
+                                        }
+                                        Err(error) => error.text().to_string(),
+                                    },
+                                );
+                            refresh_view(state);
+                        },
+                        if blueprint_studied { "Чертёж изучен" } else { "Изучить чертёж" }
                     }
                 }
                 if slot.is_some() {

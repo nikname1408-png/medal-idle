@@ -10,6 +10,32 @@
 
 ## Текущий статус
 
+- v0.9.0: переход в Эпоху Пара. Чертёж `steam_blueprint` падает только в
+  «Древних руинах» с шансом 1 к 2000 за секунду пути
+  (`EXPEDITION_STEAM_BLUEPRINT_ROLL = 2000`), то есть в среднем раз в
+  ~2000 с похода. Чертеж нужно изучить: `actions::study_blueprint` тратит
+  1 шт. и ставит `steam_blueprint_studied` (ошибки `StudyBlueprintError`:
+  `NotBlueprint`, `Missing`, `AlreadyStudied`), в карточке предмета — кнопка
+  «Изучить чертёж», после изучения рецепт появляется в «Крафте» (уже
+  изученный чертёж повторно не тратится). Рецепт `steam_prototype`:
+  100 `iron_ingot` + 50 `silver` + 10 `gems` + 50 `quartz` и
+  `STEAM_PROTOTYPE_FIRE = 650` огня, мгновенный. Сборка идёт отдельной
+  веткой `craft_steam_prototype` в `craft_times`: место в сумке не нужно,
+  ресурсы и огонь списываются, предмет в рюкзак не попадает, зато встают
+  `steam_prototype_built` и `steam_prototype_event`; повторная сборка —
+  `CraftError::AlreadyBuilt`, без изученного чертежа — `BlueprintLocked`.
+  `recipe_visible` прячет рецепт пока чертёж не изучен и после сборки.
+  После закрытия модального окна («Лязг металла и шипение пара…») на «Поле»
+  и в «Труде» появляется раздел «Эпоха Пара» с кнопкой
+  `[ Вступить в Эпоху Пара ]`: `enter_steam_era` ставит `steam_era` и даёт
+  `STEAM_ERA_INCOME_BONUS = 0.5` в `income_multiplier()` (X = 1 + 0.6R + 0.5),
+  плюс письмо в колокольчик. Новые поля `GameState` — с `#[serde(default)]`,
+  `migrate` выводит изучение из `steam_prototype_built`/`steam_era`.
+  Тесты: `study_blueprint_unlocks_the_prototype_recipe`,
+  `steam_prototype_is_built_but_not_stored`,
+  `steam_prototype_needs_all_ingredients`,
+  `entering_the_steam_era_raises_income_once`,
+  `steam_blueprint_falls_about_once_per_two_thousand_seconds`.
 - v0.8.1: рынок перераспределён. `TRADERS`: Марта и Кузнец делят общий
   список `CRAFT_GOODS` (61 товар — весь крафт, кроме карт), Странник продаёт
   обычные товары (кожа, волокно, глина, кварц, серебро, камни, рюкзак, ведро,

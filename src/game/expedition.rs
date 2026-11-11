@@ -442,9 +442,9 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
         state.market_seed = state.market_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut seed = state.market_seed;
 
-        // Особый лут Древних руин: отдельная проверка 1% в секунду.
+        // Особый лут Древних руин: отдельная проверка 1 к 2000 за секунду.
         if location.id == "ancient_ruins"
-            && roll(&mut seed, 100) < balance::EXPEDITION_STEAM_BLUEPRINT_CHANCE as u64
+            && roll(&mut seed, balance::EXPEDITION_STEAM_BLUEPRINT_ROLL as u64) == 0
         {
             if !state.add_item("steam_blueprint", 1) {
                 tick.interrupted = true;
@@ -870,29 +870,62 @@ mod tests {
         assert!(found);
     }
 
+    /// Поход с одной секундой пути за вызов: так перебираются сотни
+    /// независимых зёрен без слишком долгого похода.
+    fn one_second_ruins_state() -> GameState {
+        let mut state = endless_state();
+        state.add_item("candle", 100_000);
+        state.unlock_location("ancient_ruins");
+        state
+    }
+
+    fn probe_ruins(state: &mut GameState) -> bool {
+        let before = state.item_count("steam_blueprint");
+        run_expedition(state, "ancient_ruins", 1).expect("поход");
+        let found = state.item_count("steam_blueprint") > before;
+        state.inventory.clear();
+        state.active_resources.clear();
+        state.add_item("candle", 100_000);
+        found
+    }
+
     #[test]
     fn ruins_drop_steam_blueprint() {
-        let mut state = endless_state();
-        state.add_item("candle", 10_000);
-        state.unlock_location("ancient_ruins");
+        let mut state = one_second_ruins_state();
         let mut found = false;
 
-        for seed in 0..500u64 {
-            state.market_seed = seed;
-            let report = run_expedition(&mut state, "ancient_ruins", 200).expect("поход");
-            if report
-                .loot
-                .iter()
-                .any(|loot| loot.item_id == "steam_blueprint")
-            {
+        // Шанс 1 к 2000 за секунду пути.
+        for seed in 0..20_000u64 {
+            state.market_seed = seed * 7_919;
+            if probe_ruins(&mut state) {
                 found = true;
                 break;
             }
-            state.active_resources.clear();
-            state.inventory.clear();
         }
 
         assert!(found, "чертёж паровой машины не выпал");
+    }
+
+    #[test]
+    fn steam_blueprint_falls_about_once_per_two_thousand_seconds() {
+        let mut state = one_second_ruins_state();
+        let mut found = 0u32;
+        let mut seconds = 0u32;
+
+        for seed in 0..20_000u64 {
+            state.market_seed = seed * 3_571;
+            seconds += 1;
+            if probe_ruins(&mut state) {
+                found += 1;
+            }
+        }
+
+        assert!(found > 0, "чертёж не выпал вовсе");
+        let average = seconds as f64 / found as f64;
+        assert!(
+            (1_400.0..=2_900.0).contains(&average),
+            "чертёж падает в среднем раз в {average:.0} с пути, ждал около 2000"
+        );
     }
 
     #[test]

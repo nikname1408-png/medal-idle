@@ -296,6 +296,9 @@ pub fn App() -> Element {
                     OfferModal { state, view: snapshot.clone(), offer_id }
                 }
             }
+            if snapshot.steam_prototype_event && !trader_open() && !menu_open() {
+                SteamEventModal { state }
+            }
             if dev_open() {
                 DevPanel { state, on_close: move |_| dev_open.set(false) }
             }
@@ -455,6 +458,8 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 on_press: move |_| do_rest(state),
             }
         }
+
+        SteamEraSection { state, view: snapshot.clone() }
 
         CollapsibleSection { title: "Энергия".to_string(),
             BuildRow {
@@ -756,6 +761,7 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         div { class: "count-note", "Работники: {free} / {slots}" }
+        SteamEraSection { state, view: snapshot.clone() }
     }
 }
 
@@ -1302,6 +1308,73 @@ fn OfferModal(state: Signal<GameState>, view: GameState, offer_id: String) -> El
                         },
                         "Позже"
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Модальное окно с текстовым событием: прототип паровой машины собран.
+#[component]
+fn SteamEventModal(state: Signal<GameState>) -> Element {
+    let mut state = state;
+
+    rsx! {
+        div { class: "offer-overlay",
+            div { class: "offer-card steam-card",
+                div { class: "offer-title", "Прототип собран" }
+                div { class: "offer-body",
+                    "Лязг металла и шипение пара оглашают мастерскую. Прототип собран. Вы сделали первый шаг к новой эре!"
+                }
+                div { class: "offer-actions",
+                    button {
+                        class: "offer-price",
+                        onclick: move |_| {
+                            actions::dismiss_steam_event(&mut state.write());
+                            refresh_view(state);
+                        },
+                        "Далее"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Раздел «Эпоха Пара» на «Поле» и в «Труде».
+///
+/// Пока прототип собран, здесь горит большая кнопка перехода; после перехода
+/// остаётся строка с новым множителем дохода.
+#[component]
+fn SteamEraSection(state: Signal<GameState>, view: GameState) -> Element {
+    let mut state = state;
+    let built = view.steam_prototype_built;
+    let era = view.steam_era;
+    if !built && !era {
+        return rsx! {};
+    }
+    let bonus = balance::STEAM_ERA_INCOME_BONUS * 100.0;
+
+    rsx! {
+        CollapsibleSection { title: "Эпоха Пара".to_string(),
+            if !era {
+                div { class: "steam-intro",
+                    "Прототип паровой машины собран и ждёт своего часа. Пора перевернуть страницу истории."
+                }
+                button {
+                    class: "steam-cta",
+                    onclick: move |_| {
+                        actions::enter_steam_era(&mut state.write());
+                        refresh_view(state);
+                    },
+                    "[ Вступить в Эпоху Пара ]"
+                }
+            } else {
+                div { class: "steam-intro",
+                    "Машина работает: пар гонит станки, и вся добыча идёт быстрее."
+                }
+                div { class: "steam-era-line",
+                    "Множитель дохода: +{bonus:.0}% к прежнему."
                 }
             }
         }

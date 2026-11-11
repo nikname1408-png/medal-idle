@@ -52,6 +52,27 @@ impl StudyMapError {
     }
 }
 
+/// Почему чертёж паровой машины не удалось изучить.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StudyBlueprintError {
+    /// Предмет не является чертежом паровой машины.
+    NotBlueprint,
+    /// Чертёж уже изучен — рецепт открыт.
+    AlreadyStudied,
+    /// Чертежа нет в сумке.
+    Missing,
+}
+
+impl StudyBlueprintError {
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::NotBlueprint => "Это не чертёж паровой машины.",
+            Self::AlreadyStudied => "Этот чертёж уже изучен.",
+            Self::Missing => "В сумке нет такого чертежа.",
+        }
+    }
+}
+
 /// Предложение постройки, которое показывается игроку в центре экрана.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OfferDef {
@@ -174,6 +195,10 @@ pub enum CraftError {
     NoSpace,
     /// Не хватает огня кузницы.
     NoFire,
+    /// Чертёж паровой машины ещё не изучен.
+    BlueprintLocked,
+    /// Прототип паровой машины уже собран.
+    AlreadyBuilt,
 }
 
 impl CraftError {
@@ -183,6 +208,8 @@ impl CraftError {
             Self::NotEnough => "Не хватает ингредиентов.",
             Self::NoSpace => "В сумке нет места для результата.",
             Self::NoFire => "Недостаточно огня!",
+            Self::BlueprintLocked => "Сначала изучите чертёж паровой машины.",
+            Self::AlreadyBuilt => "Прототип паровой машины уже собран.",
         }
     }
 }
@@ -282,6 +309,56 @@ pub fn study_map(state: &mut GameState, item_id: &str) -> Result<&'static str, S
     }
     state.unlock_location(location_id);
     Ok(location_id)
+}
+
+/// Изучает чертёж паровой машины: тратит одну штуку и открывает рецепт
+/// прототипа в кузнице.
+pub fn study_blueprint(state: &mut GameState, item_id: &str) -> Result<(), StudyBlueprintError> {
+    if item_id != items::STEAM_BLUEPRINT_ID {
+        return Err(StudyBlueprintError::NotBlueprint);
+    }
+    if state.steam_blueprint_studied {
+        return Err(StudyBlueprintError::AlreadyStudied);
+    }
+    if !state.remove_item(items::STEAM_BLUEPRINT_ID, 1) {
+        return Err(StudyBlueprintError::Missing);
+    }
+    state.steam_blueprint_studied = true;
+    Ok(())
+}
+
+/// Виден ли рецепт в сетке крафта.
+///
+/// Рецепт прототипа скрыт, пока чертёж не изучен, и исчезает после сборки:
+/// машина собирается один раз.
+pub fn recipe_visible(state: &GameState, recipe: &items::Recipe) -> bool {
+    if recipe.id == items::STEAM_PROTOTYPE_RECIPE {
+        state.steam_blueprint_studied && !state.steam_prototype_built
+    } else {
+        true
+    }
+}
+
+/// Закрывает модальное окно «Прототип собран».
+pub fn dismiss_steam_event(state: &mut GameState) {
+    state.steam_prototype_event = false;
+}
+
+/// Переход в Эпоху Пара: паровая машина начинает работать на игрока.
+///
+/// Возвращает `false`, если прототип ещё не собран или эра уже начата.
+pub fn enter_steam_era(state: &mut GameState) -> bool {
+    if !state.steam_prototype_built || state.steam_era {
+        return false;
+    }
+    state.steam_era = true;
+    state.add_letter(
+        "steam_era",
+        "Эпоха Пара",
+        "Машина работает. Пар движет станки, и вся добыча идёт быстрее. Начинается новая эра.",
+        None,
+    );
+    true
 }
 
 /// Один игровой тик: энергия, лесопилка, исследование и угольная яма.
@@ -709,6 +786,9 @@ pub fn affordable_crafts(state: &GameState, recipe: &items::Recipe) -> u32 {
     if recipe.fire_cost > 0 && state.forge_level == 0 {
         return 0;
     }
+    if recipe.id == items::STEAM_PROTOTYPE_RECIPE {
+        return u32::from(can_build_steam_prototype(state, recipe));
+    }
     let mut limit = u32::MAX;
     // Огонь уже входит в ингредиенты рецепта и берётся из `current_fire`.
     for ingredient in &recipe.ingredients {
@@ -732,6 +812,68 @@ pub fn affordable_crafts(state: &GameState, recipe: &items::Recipe) -> u32 {
     limit
 }
 
+/// Хватает ли всего для сборки прототипа паровой машины.
+///
+/// Место в сумке не проверяется: прототип не кладут в рюкзак.
+fn can_build_steam_prototype(state: &GameState, recipe: &items::Recipe) -> bool {
+    if !state.steam_blueprint_studied || state.steam_prototype_built {
+        return false;
+    }
+    if fire_cost(state, recipe) > state.current_fire {
+        return false;
+    }
+    recipe
+        .ingredients
+        .iter()
+        .filter(|ingredient| ingredient.item_id != "fire")
+        .all(|ingredient| state.ingredient_amount(ingredient.item_id) >= ingredient.quantity)
+}
+
+/// Сборка прототипа паровой машины: ресурсы и огонь списываются, а сам
+/// прототип в сумку не попадает — вместо этого включается событие.
+fn craft_steam_prototype(
+    state: &mut GameState,
+    recipe: &items::Recipe,
+    times: u32,
+) -> Result<u32, CraftError> {
+    if !state.steam_blueprint_studied {
+        return Err(CraftError::BlueprintLocked);
+    }
+    if state.steam_prototype_built {
+        return Err(CraftError::AlreadyBuilt);
+    }
+    if times == 0 {
+        return Ok(0);
+    }
+    if fire_cost(state, recipe) > state.current_fire {
+        return Err(CraftError::NoFire);
+    }
+    for ingredient in &recipe.ingredients {
+        if ingredient.item_id != "fire"
+            && state.ingredient_amount(ingredient.item_id) < ingredient.quantity
+        {
+            return Err(CraftError::NotEnough);
+        }
+    }
+
+    let fire = fire_cost(state, recipe);
+    for ingredient in &recipe.ingredients {
+        if ingredient.item_id == "fire" {
+            continue;
+        }
+        if !state.spend_ingredient(ingredient.item_id, ingredient.quantity) {
+            return Err(CraftError::NotEnough);
+        }
+    }
+    if !state.spend_ingredient("fire", fire) {
+        return Err(CraftError::NoFire);
+    }
+
+    state.steam_prototype_built = true;
+    state.steam_prototype_event = true;
+    Ok(1)
+}
+
 /// Создаёт предмет по рецепту один раз.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn craft(state: &mut GameState, recipe_id: &str) -> Result<(), CraftError> {
@@ -743,6 +885,9 @@ pub fn craft(state: &mut GameState, recipe_id: &str) -> Result<(), CraftError> {
 /// Если на все повторы не хватает, не делает ничего.
 pub fn craft_times(state: &mut GameState, recipe_id: &str, times: u32) -> Result<u32, CraftError> {
     let recipe = items::recipe(recipe_id).ok_or(CraftError::UnknownRecipe)?;
+    if recipe.id == items::STEAM_PROTOTYPE_RECIPE {
+        return craft_steam_prototype(state, recipe, times);
+    }
     if times == 0 {
         return Ok(0);
     }
@@ -1614,6 +1759,129 @@ mod tests {
         assert!(research_time_warp(&mut state, ResearchKind::CoalPit));
         assert_eq!(state.time, 0.0);
         assert!((state.coal_pit_research - balance::RESEARCH_TIME_WARP).abs() < 1e-9);
+    }
+
+    #[test]
+    fn study_blueprint_unlocks_the_prototype_recipe() {
+        let mut state = GameState::default();
+        assert!(!recipe_visible(
+            &state,
+            items::recipe(items::STEAM_PROTOTYPE_RECIPE).expect("рецепт")
+        ));
+
+        assert_eq!(
+            study_blueprint(&mut state, "wood"),
+            Err(StudyBlueprintError::NotBlueprint)
+        );
+        assert_eq!(
+            study_blueprint(&mut state, items::STEAM_BLUEPRINT_ID),
+            Err(StudyBlueprintError::Missing)
+        );
+
+        state.add_item(items::STEAM_BLUEPRINT_ID, 2);
+        assert_eq!(
+            study_blueprint(&mut state, items::STEAM_BLUEPRINT_ID),
+            Ok(())
+        );
+        assert_eq!(state.item_count(items::STEAM_BLUEPRINT_ID), 1);
+        assert!(state.steam_blueprint_studied);
+        assert!(recipe_visible(
+            &state,
+            items::recipe(items::STEAM_PROTOTYPE_RECIPE).expect("рецепт")
+        ));
+
+        // Повторный чертёж не тратится.
+        assert_eq!(
+            study_blueprint(&mut state, items::STEAM_BLUEPRINT_ID),
+            Err(StudyBlueprintError::AlreadyStudied)
+        );
+        assert_eq!(state.item_count(items::STEAM_BLUEPRINT_ID), 1);
+    }
+
+    #[test]
+    fn steam_prototype_is_built_but_not_stored() {
+        let mut state = GameState {
+            forge_level: 1,
+            ..GameState::default()
+        };
+        state.add_item("iron_ingot", 100);
+        state.add_item("silver", 50);
+        state.add_item("gems", 10);
+        state.add_item("quartz", 50);
+        state.current_fire = balance::STEAM_PROTOTYPE_FIRE;
+
+        // Без изученного чертежа рецепта нет.
+        assert_eq!(
+            craft(&mut state, items::STEAM_PROTOTYPE_RECIPE),
+            Err(CraftError::BlueprintLocked)
+        );
+        assert_eq!(state.item_count("iron_ingot"), 100);
+
+        state.add_item(items::STEAM_BLUEPRINT_ID, 1);
+        assert_eq!(
+            study_blueprint(&mut state, items::STEAM_BLUEPRINT_ID),
+            Ok(())
+        );
+
+        assert_eq!(craft(&mut state, items::STEAM_PROTOTYPE_RECIPE), Ok(()));
+        assert!(state.steam_prototype_built);
+        assert!(state.steam_prototype_event);
+        // Ресурсы и огонь списаны, предмет в сумку не попал.
+        assert_eq!(state.item_count("iron_ingot"), 0);
+        assert_eq!(state.item_count("silver"), 0);
+        assert_eq!(state.item_count("gems"), 0);
+        assert_eq!(state.item_count("quartz"), 0);
+        assert_eq!(state.current_fire, 0);
+        assert_eq!(state.item_count(items::STEAM_PROTOTYPE_ID), 0);
+        assert!(!recipe_visible(
+            &state,
+            items::recipe(items::STEAM_PROTOTYPE_RECIPE).expect("рецепт")
+        ));
+        assert_eq!(
+            craft(&mut state, items::STEAM_PROTOTYPE_RECIPE),
+            Err(CraftError::AlreadyBuilt)
+        );
+    }
+
+    #[test]
+    fn steam_prototype_needs_all_ingredients() {
+        let mut state = GameState {
+            forge_level: 1,
+            steam_blueprint_studied: true,
+            ..GameState::default()
+        };
+        state.add_item("iron_ingot", 99);
+        state.add_item("silver", 50);
+        state.add_item("gems", 10);
+        state.add_item("quartz", 50);
+        state.current_fire = balance::STEAM_PROTOTYPE_FIRE;
+        assert_eq!(
+            craft(&mut state, items::STEAM_PROTOTYPE_RECIPE),
+            Err(CraftError::NotEnough)
+        );
+
+        state.add_item("iron_ingot", 1);
+        state.current_fire = balance::STEAM_PROTOTYPE_FIRE - 1;
+        assert_eq!(
+            craft(&mut state, items::STEAM_PROTOTYPE_RECIPE),
+            Err(CraftError::NoFire)
+        );
+        assert!(!state.steam_prototype_built);
+    }
+
+    #[test]
+    fn entering_the_steam_era_raises_income_once() {
+        let mut state = GameState::default();
+        assert!(!enter_steam_era(&mut state));
+
+        state.steam_prototype_built = true;
+        let before = state.income_multiplier();
+        assert!(enter_steam_era(&mut state));
+        assert!(state.steam_era);
+        assert!(
+            (state.income_multiplier() - (before + balance::STEAM_ERA_INCOME_BONUS)).abs() < 1e-9
+        );
+        assert!(!enter_steam_era(&mut state));
     }
 
     #[test]

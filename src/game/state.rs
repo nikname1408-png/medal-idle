@@ -368,6 +368,18 @@ pub struct GameState {
     /// Предложение постройки, которое сейчас показано в центре экрана.
     #[serde(default)]
     pub pending_offer: Option<String>,
+    /// Чертёж паровой машины изучен — в кузнице открыт рецепт прототипа.
+    #[serde(default)]
+    pub steam_blueprint_studied: bool,
+    /// Прототип паровой машины собран.
+    #[serde(default)]
+    pub steam_prototype_built: bool,
+    /// Модальное окно «Прототип собран» ещё не закрыто.
+    #[serde(default)]
+    pub steam_prototype_event: bool,
+    /// Игрок вступил в Эпоху Пара.
+    #[serde(default)]
+    pub steam_era: bool,
     /// Письма в колокольчике.
     #[serde(default)]
     pub letters: Vec<Letter>,
@@ -488,6 +500,10 @@ impl Default for GameState {
             active_expedition: None,
             unlocked_locations: Vec::new(),
             pending_offer: None,
+            steam_blueprint_studied: false,
+            steam_prototype_built: false,
+            steam_prototype_event: false,
+            steam_era: false,
             letters: Vec::new(),
             bank_seen: false,
             cycles: 0,
@@ -849,8 +865,16 @@ impl GameState {
     }
 
     /// Единственный множитель дохода за пройденные циклы: X = 1 + 0.6 × R.
+    ///
+    /// После вступления в Эпоху Пара паровая машина добавляет к множителю
+    /// ещё [`balance::STEAM_ERA_INCOME_BONUS`].
     pub fn income_multiplier(&self) -> f64 {
-        1.0 + self.cycles as f64 * balance::CYCLE_INCOME_PER_LEVEL
+        let era = if self.steam_era {
+            balance::STEAM_ERA_INCOME_BONUS
+        } else {
+            0.0
+        };
+        1.0 + self.cycles as f64 * balance::CYCLE_INCOME_PER_LEVEL + era
     }
 
     /// Порог перерождения для текущего цикла: П0 × (1 + 0.5R).
@@ -1436,6 +1460,13 @@ impl GameState {
         }
         if !self.bank_unlocked && (self.bank_level > 0 || self.trader_researched) {
             self.bank_unlocked = true;
+        }
+        // Собранный прототип (или уже начатая эра) означает изученный чертёж.
+        if self.steam_prototype_built || self.steam_era {
+            self.steam_blueprint_studied = true;
+        }
+        if self.steam_era {
+            self.steam_prototype_built = true;
         }
         self.inventory.retain(|_, quantity| *quantity > 0);
         self.ensure_markets();

@@ -999,6 +999,45 @@ button {
     font-weight: 600;
 }
 
+/* ---------- Эпоха Пара ---------- */
+
+.steam-intro {
+    padding: 8px 12px 10px;
+    font-size: 12px;
+    line-height: 1.45;
+    opacity: 0.82;
+}
+
+.steam-cta {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 0 12px 12px;
+    padding: 16px 12px;
+    border: 1px solid var(--select);
+    border-radius: 6px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.steam-cta:active {
+    background: var(--select);
+}
+
+.steam-era-line {
+    padding: 0 12px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--select);
+}
+
+.steam-card {
+    border-top-color: var(--select);
+}
+
 .notif-overlay {
     position: absolute;
     inset: 0;

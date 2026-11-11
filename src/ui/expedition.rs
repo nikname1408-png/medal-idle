@@ -208,7 +208,7 @@ fn ExpeditionCard(
             }
             if location.id == "ancient_ruins" {
                 div { class: "exp-card-desc",
-                    "Особый лут: Чертёж паровой машины — {balance::EXPEDITION_STEAM_BLUEPRINT_CHANCE}% в секунду"
+                    "Особый лут: Чертёж паровой машины — в среднем раз в {format_num(balance::EXPEDITION_STEAM_BLUEPRINT_ROLL as f64)} секунд пути"
                 }
             }
             div { class: "exp-card-foot",
