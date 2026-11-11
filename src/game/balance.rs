@@ -311,13 +311,13 @@ pub const FORGE_RESEARCH_COST: f64 = 120.0;
 pub const BANK_RESEARCH_COST: f64 = 200.0;
 
 /// Максимальный запас огня кузницы без амулета.
-pub const FORGE_FIRE_MAX_SECONDS: u32 = 60;
+pub const FORGE_FIRE_MAX_SECONDS: u32 = 65;
 /// Сколько секунд огня даёт один уголь.
 pub const FIRE_SECONDS_PER_COAL: u32 = 20;
 /// Прибавка к огню с одного угля за каждый уровень кузницы выше первого.
 pub const FIRE_PER_COAL_PER_LEVEL: u32 = 10;
 /// Прибавка к запасу огня за каждый уровень кузницы выше первого.
-pub const FORGE_FIRE_PER_LEVEL: u32 = 50;
+pub const FORGE_FIRE_PER_LEVEL: u32 = 65;
 /// Как часто кнопка «Авто» подбрасывает один уголь.
 pub const FORGE_AUTO_FEED_SECONDS: f64 = 2.0;
 
