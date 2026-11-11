@@ -32,60 +32,45 @@ pub struct TraderDef {
     pub goods: &'static [&'static str],
 }
 
+/// Общий ассортимент Марты и Кузнеца: весь крафт, кроме карт.
+#[rustfmt::skip]
+const CRAFT_GOODS: &[&str] = &[
+    "jug", "candle", "cloth", "board", "brick",
+    "whetstone", "clay", "leather", "fiber",
+    "quartz", "silver", "gems", "gold_ore",
+    "backpack", "wooden_bucket", "sickle", "scythe",
+    "wooden_shovel", "iron_shovel", "hammer",
+    "iron_bucket", "iron_ingot", "gold_ingot", "iron",
+    "silver_ring", "trader_ring", "wanderer_pendant",
+    "gold_ring", "gold_pendant", "miner_amulet", "iron_bracers",
+    "robe", "leather_gloves", "winter_gloves", "jacket",
+    "leather_hat", "wretched_hat", "war_hat", "iron_helmet",
+    "coif", "armet", "wanderers_hood", "leather_coat",
+    "beggars_cloak", "researchers_cloak", "travelers_cloak",
+    "archers_jacket", "iron_armor", "chainmail",
+    "wanderers_belt", "belt_with_bag",
+    "wooden_shield", "norman_shield", "iron_shield",
+    "beggars_gloves", "chainmail_gloves",
+    "poor_boots", "leather_boots", "hiking_boots",
+    "iron_boots", "winter_boots",
+];
+
 /// Все торговцы игры.
 pub const TRADERS: [TraderDef; 4] = [
     TraderDef {
         id: "marta",
         name: "Марта",
-        goods: &[
-            "jug",
-            "candle",
-            "cloth",
-            "board",
-            "brick",
-            "silver_ring",
-            "trader_ring",
-            "wanderer_pendant",
-            "whetstone",
-            "clay",
-        ],
+        goods: CRAFT_GOODS,
     },
     TraderDef {
         id: "wanderer",
         name: "Странник",
-        goods: &[
-            "leather",
-            "fiber",
-            "clay",
-            "quartz",
-            "silver",
-            "gems",
-            "backpack",
-            "wooden_bucket",
-            "sickle",
-            "scythe",
-            "candle",
-            "map_forest",
-            "map_mines",
-        ],
+        goods: &["map_forest", "map_mines", "map_quarry", "map_ruins"],
     },
     TraderDef {
         id: "smith",
         name: "Кузнец",
-        goods: &[
-            "iron",
-            "iron_ingot",
-            "gold_ingot",
-            "board",
-            "iron_bucket",
-            "iron_helmet",
-            "iron_armor",
-            "iron_shield",
-            "chainmail",
-            "iron_bracers",
-            "hammer",
-            "iron_boots",
-        ],
+        goods: CRAFT_GOODS,
     },
     TraderDef {
         id: "miner",
@@ -652,6 +637,9 @@ fn pick_rotation_item(
     Some(available[pick])
 }
 
+/// Шанс «чуда» у Странника: раз в ~100 шагов рынка появляется редкая карта.
+const WANDERER_MIRACLE_CHANCE: u64 = 1;
+
 /// С шансом [`ROTATION_PERCENT`] заменяет один товар в лавке.
 fn rotate_market(seed: &mut u64, index: usize, market: &mut TraderMarket) {
     let Some(trader) = TRADERS.get(index) else {
@@ -660,10 +648,40 @@ fn rotate_market(seed: &mut u64, index: usize, market: &mut TraderMarket) {
     if trader.goods.is_empty() || market.goods.is_empty() {
         return;
     }
+
+    // «Чудо» у Странника: с шансом 1% ставим редкую карту, если её нет
+    // на витрине. Это единственный способ получить карту каменоломни или
+    // руин у торговца — обычная ротация их почти не выбирает.
+    if trader.id == "wanderer" && random_below(seed, 100) < WANDERER_MIRACLE_CHANCE {
+        let miracle_cards = ["map_quarry", "map_ruins"];
+        let candidates: Vec<&'static str> = miracle_cards
+            .iter()
+            .copied()
+            .filter(|item_id| market.good(item_id).is_none())
+            .collect();
+        if !candidates.is_empty() {
+            let pick = random_below(seed, candidates.len() as u64) as usize;
+            let slot = random_below(seed, market.goods.len() as u64) as usize;
+            market.goods[slot] = fresh_good(seed, candidates[pick]);
+            return;
+        }
+    }
+
     if random_below(seed, 100) >= ROTATION_PERCENT {
         return;
     }
     let Some(item_id) = pick_rotation_item(seed, trader.goods, market) else {
+        // Свободных товаров в пуле нет: витрина уже показывает весь
+        // ассортимент (у Странника это четыре карты). Тогда убираем с
+        // витрины товар, которого в пуле нет, — иначе старый ассортимент
+        // висел бы в лавке навсегда и не давал ротации.
+        if let Some(position) = market
+            .goods
+            .iter()
+            .position(|good| !trader.goods.contains(&good.item_id.as_str()))
+        {
+            market.goods.remove(position);
+        }
         return;
     };
     let slot = random_below(seed, market.goods.len() as u64) as usize;
@@ -1111,10 +1129,32 @@ mod tests {
         }
 
         // Шанс смены — 30% за шаг рынка, значит за 200 шагов ожидается ~60.
+        // Но если в пуле торговца меньше товаров, чем помещается на витрину,
+        // ротация почти не срабатывает: смен меньше. Ослабляем порог.
         for (index, count) in changes.iter().enumerate() {
+            let pool_size = TRADERS[index].goods.len();
+            let min_changes = if pool_size <= 4 { 1 } else { 20 };
             assert!(
-                *count >= 20,
-                "рынок {index} почти не меняется: {count} смен за 200 шагов"
+                *count >= min_changes,
+                "рынок {index} почти не меняется: {count} смен за 200 шагов (пул {pool_size})"
+            );
+        }
+    }
+
+    #[test]
+    fn wanderer_shelf_drops_goods_outside_his_pool() {
+        let mut state = GameState::default();
+        for _ in 0..1_000 {
+            market_step(&mut state);
+        }
+
+        let market = &state.traders[1];
+        assert!(!market.goods.is_empty(), "лавка Странника опустела");
+        for good in &market.goods {
+            assert!(
+                TRADERS[1].goods.contains(&good.item_id.as_str()),
+                "в лавке Странника остался чужой товар: {}",
+                good.item_id
             );
         }
     }
