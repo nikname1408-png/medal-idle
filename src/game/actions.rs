@@ -245,6 +245,7 @@ pub fn rest(state: &mut GameState) -> f64 {
 pub fn tick(state: &mut GameState, dt_seconds: f64) {
     let dt = dt_seconds.max(0.0);
     state.stats.play_seconds += dt;
+    state.total_play_seconds += dt;
 
     let regen = state.energy_regen();
     if regen > 0.0 {

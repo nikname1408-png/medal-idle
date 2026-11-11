@@ -351,6 +351,10 @@ pub struct GameState {
     pub cycle_stone: f64,
     /// Ресурс «время» за оффлайн-прогресс.
     pub time: f64,
+    /// Общее время, проведённое в игре (секунды). Копится в тике и не
+    /// сбрасывается ни перерождением, ни сбросом прогресса.
+    #[serde(default)]
+    pub total_play_seconds: f64,
     /// Время последнего сохранения (Unix-секунды) для оффлайн-прогресса.
     pub last_seen: u64,
     /// Статистика за всё время.
@@ -452,6 +456,7 @@ impl Default for GameState {
             cycle_wood: 0.0,
             cycle_stone: 0.0,
             time: 0.0,
+            total_play_seconds: 0.0,
             last_seen: 0,
             stats: Stats::default(),
             sawmill_workers: 0,
@@ -1384,6 +1389,11 @@ impl GameState {
         }
         self.ensure_equipment_owned();
         self.drop_trader_research();
+        // Игры до v0.7.16 считали общее время только в статистике; переносим
+        // его, чтобы после обновления счётчик не начинался с нуля.
+        if self.total_play_seconds <= 0.0 {
+            self.total_play_seconds = self.stats.play_seconds;
+        }
         self.recalculate_stats();
         // Поход, застрявший после сворачивания игры, закрываем при малой энергии.
         if self.active_expedition.is_some() && self.energy <= balance::EXPEDITION_MIN_ENERGY {
@@ -1470,6 +1480,7 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::actions;
 
     #[test]
     fn new_game_starts_empty() {
@@ -1481,6 +1492,32 @@ mod tests {
         assert_eq!(state.item_count("iron"), 0);
         assert_eq!(state.active_amount("coal"), 0);
         assert_eq!(state.energy, balance::START_ENERGY);
+    }
+
+    #[test]
+    fn play_time_is_counted_and_saved() {
+        let mut state = GameState::default();
+        actions::tick(&mut state, 3600.0);
+        assert!((state.total_play_seconds - 3600.0).abs() < 1e-9);
+        actions::tick(&mut state, 30.0);
+        assert!((state.total_play_seconds - 3630.0).abs() < 1e-9);
+
+        // Счётчик попадает в сохранение.
+        let json = serde_json::to_string(&state).expect("сериализация");
+        let restored: GameState = serde_json::from_str(&json).expect("десериализация");
+        assert!((restored.total_play_seconds - 3630.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn old_save_keeps_play_time_from_stats() {
+        // Сохранение до появления счётчика: время лежит только в статистике.
+        let mut state = GameState {
+            total_play_seconds: 0.0,
+            ..GameState::default()
+        };
+        state.stats.play_seconds = 5000.0;
+        state.migrate();
+        assert!((state.total_play_seconds - 5000.0).abs() < 1e-9);
     }
 
     #[test]

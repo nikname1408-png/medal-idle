@@ -843,7 +843,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
         section { class: "settings",
             h2 { class: "settings-title", "Новый цикл" }
             p { class: "settings-note",
-                "Сбросит ресурсы, постройки, работников и сумку. Останутся циклы, время, статистика и достижения."
+                "Сбросит ресурсы, постройки, работников и сумку. Останутся циклы, время в игре, статистика и достижения."
             }
 
             div { class: "cycle-progress-head",
@@ -927,6 +927,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
 fn StatsScreen(view: GameState) -> Element {
     let snapshot = view;
     let stats = &snapshot.stats;
+    let time_played = snapshot.total_play_seconds.max(stats.play_seconds);
     let achievements = snapshot.achievements();
     let done_count = achievements
         .iter()
@@ -939,7 +940,7 @@ fn StatsScreen(view: GameState) -> Element {
             h2 { class: "settings-title", "Статистика" }
             StatRow {
                 label: "Время в игре".to_string(),
-                value: format_duration(stats.play_seconds),
+                value: format_duration(time_played),
             }
             StatRow {
                 label: "Кликов добычи".to_string(),
@@ -2275,8 +2276,11 @@ fn format_duration(seconds: f64) -> String {
 fn reset_progress(mut state: Signal<GameState>, mut reset_armed: Signal<bool>) {
     if *reset_armed.peek() {
         let theme = state.peek().theme;
+        // Наигранное время — не прогресс, его сброс не трогает.
+        let total_play_seconds = state.peek().total_play_seconds;
         let fresh = GameState {
             theme,
+            total_play_seconds,
             ..GameState::default()
         };
         state.set(fresh);
