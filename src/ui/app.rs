@@ -19,7 +19,6 @@ const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 const ICON_BAG: Asset = asset!("/assets/icons/bag.png");
 const ICON_COAL: Asset = asset!("/assets/icons/coal.png");
-const ICON_FIELD: Asset = asset!("/assets/icons/field.png");
 const ICON_FIRE: Asset = asset!("/assets/icons/fire.png");
 const ICON_GEAR: Asset = asset!("/assets/icons/gear.png");
 const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
@@ -27,6 +26,8 @@ const ICON_BOARD: Asset = asset!("/assets/icons/item_board.png");
 const ICON_IRON_INGOT: Asset = asset!("/assets/icons/item_iron_ingot.png");
 const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
 const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
+const ICON_TAB_FORGE: Asset = asset!("/assets/icons/tab_forge.png");
+const ICON_TAB_HIRING: Asset = asset!("/assets/icons/tab_hiring.png");
 const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
 
 const TAB_FIELD: usize = 0;
@@ -38,7 +39,7 @@ const TAB_STATS: usize = 5;
 const TAB_SETTINGS: usize = 6;
 
 const TABS: [(&str, &str); 7] = [
-    ("🌾", "Поле"),
+    ("🔨", "Кузница"),
     ("👷", "Труд"),
     ("🎒", "Сумка"),
     ("🧭", "Походы"),
@@ -199,7 +200,7 @@ pub fn App() -> Element {
         TAB_EXPEDITION => "Походы",
         TAB_CYCLE => "Цикл",
         TAB_STATS => "Статы",
-        _ => "Поле",
+        _ => "Кузница",
     };
 
     let screen = if trader_open() || menu_open() {
@@ -1341,7 +1342,7 @@ fn SteamEventModal(state: Signal<GameState>) -> Element {
     }
 }
 
-/// Раздел «Эпоха Пара» на «Поле» и в «Труде».
+/// Раздел «Эпоха Пара» на «Кузнице» и в «Труде».
 ///
 /// Пока прототип собран, здесь горит большая кнопка перехода; после перехода
 /// остаётся строка с новым множителем дохода.
@@ -2494,8 +2495,8 @@ pub(crate) fn format_num(value: f64) -> String {
 /// Загруженная PNG-иконка вкладки (`None` — рисуем эмодзи).
 fn tab_icon(index: usize) -> Option<Asset> {
     match index {
-        TAB_FIELD => Some(ICON_FIELD),
-        TAB_WORK => None,
+        TAB_FIELD => Some(ICON_TAB_FORGE),
+        TAB_WORK => Some(ICON_TAB_HIRING),
         TAB_BAG => Some(ICON_BAG),
         TAB_EXPEDITION => None,
         TAB_SETTINGS => Some(ICON_GEAR),

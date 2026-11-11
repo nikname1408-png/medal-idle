@@ -539,10 +539,10 @@ pub fn CraftScreen(
         let recipe = items::recipe(recipe_id)?;
         let fire = actions::fire_cost(&view, recipe);
         if recipe.fire_cost > 0 && view.forge_level == 0 {
-            Some("Нужна кузница. Постройте её на вкладке «Поле».".to_string())
+            Some("Нужна кузница. Постройте её на вкладке «Кузница».".to_string())
         } else if view.current_fire < fire {
             Some(format!(
-                "Недостаточно огня! Нужно {fire}, есть {}. Подбросьте уголь в кузницу на «Поле».",
+                "Недостаточно огня! Нужно {fire}, есть {}. Подбросьте уголь в кузницу на «Кузнице».",
                 view.current_fire
             ))
         } else if recipe.id != items::STEAM_PROTOTYPE_RECIPE

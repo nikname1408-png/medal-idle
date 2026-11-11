@@ -467,6 +467,7 @@ button {
     width: 15px;
     height: 15px;
     object-fit: contain;
+    image-rendering: pixelated;
 }
 
 .cost-num {
@@ -2390,10 +2391,15 @@ button {
 }
 
 .tab-icon.icon,
-.resource-icon.icon,
 .equip-slot .icon {
+    width: 20px;
+    height: 20px;
+}
+
+.resource-icon.icon {
     width: 16px;
     height: 16px;
+    image-rendering: pixelated;
 }
 
 .inv-detail-icon.icon {
