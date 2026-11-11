@@ -60,6 +60,8 @@ pub struct Cost {
     pub energy: f64,
     /// Доски (предмет `board`).
     pub boards: u32,
+    /// Железные слитки (предмет `iron_ingot`).
+    pub iron_ingots: u32,
 }
 
 /// Стоимость из дерева, камня и золота без предметов и энергии.
@@ -70,6 +72,7 @@ fn cost(wood: f64, stone: f64, gold: f64) -> Cost {
         gold,
         energy: 0.0,
         boards: 0,
+        iron_ingots: 0,
     }
 }
 
@@ -170,26 +173,72 @@ fn unlock_with_gold(gold: f64, wood: f64, stone: f64, growth: f64, level: u32) -
     cost((wood * factor).ceil(), (stone * factor).ceil(), 0.0)
 }
 
-/// Открытие угольной ямы и её улучшения.
+/// Угольная яма.
+///
+/// - `0` — открытие (письмо): 300 золота.
+/// - `1` — постройка 0→1 («Поле»): 180 дерева, 100 камня.
+/// - `2+` — улучшения: старые цены (60×1.8^(n−2) дерева, 40×1.8^(n−2) камня).
 pub fn coal_pit_cost(level: u32) -> Cost {
-    unlock_with_gold(
-        COAL_PIT_UNLOCK_GOLD,
-        COAL_PIT_UNLOCK_WOOD,
-        COAL_PIT_UNLOCK_STONE,
-        COAL_PIT_COST_GROWTH,
-        level,
-    )
+    match level {
+        0 => Cost {
+            wood: 0.0,
+            stone: 0.0,
+            gold: COAL_PIT_UNLOCK_GOLD,
+            energy: 0.0,
+            boards: 0,
+            iron_ingots: 0,
+        },
+        1 => Cost {
+            wood: COAL_PIT_FIRST_WOOD,
+            stone: COAL_PIT_FIRST_STONE,
+            gold: 0.0,
+            energy: 0.0,
+            boards: 0,
+            iron_ingots: 0,
+        },
+        _ => {
+            let factor = COAL_PIT_COST_GROWTH.powi(level as i32 - 2);
+            cost(
+                (COAL_PIT_UPGRADE_WOOD * factor).ceil(),
+                (COAL_PIT_UPGRADE_STONE * factor).ceil(),
+                0.0,
+            )
+        }
+    }
 }
 
-/// Открытие кузницы и её улучшения.
+/// Кузница.
+///
+/// - `0` — открытие (письмо): 200 дерева, 100 камня, 300 энергии, 500 золота.
+/// - `1` — постройка 0→1 («Поле»): 300 дерева, 250 камня.
+/// - `2+` — улучшения: старые цены (150×1.8^(n−2) дерева, 100×1.8^(n−2) камня).
 pub fn forge_cost(level: u32) -> Cost {
-    unlock_with_gold(
-        FORGE_UNLOCK_GOLD,
-        FORGE_UNLOCK_WOOD,
-        FORGE_UNLOCK_STONE,
-        FORGE_COST_GROWTH,
-        level,
-    )
+    match level {
+        0 => Cost {
+            wood: FORGE_UNLOCK_WOOD,
+            stone: FORGE_UNLOCK_STONE,
+            gold: FORGE_UNLOCK_GOLD,
+            energy: FORGE_UNLOCK_ENERGY,
+            boards: 0,
+            iron_ingots: 0,
+        },
+        1 => Cost {
+            wood: FORGE_FIRST_WOOD,
+            stone: FORGE_FIRST_STONE,
+            gold: 0.0,
+            energy: 0.0,
+            boards: 0,
+            iron_ingots: 0,
+        },
+        _ => {
+            let factor = FORGE_COST_GROWTH.powi(level as i32 - 2);
+            cost(
+                (FORGE_UPGRADE_WOOD * factor).ceil(),
+                (FORGE_UPGRADE_STONE * factor).ceil(),
+                0.0,
+            )
+        }
+    }
 }
 
 /// Стоимость следующего уровня шахты.
@@ -202,16 +251,38 @@ pub fn mine_cost(level: u32) -> Cost {
     )
 }
 
-/// Открытие банка и его улучшения. Открытие платится золотом, уровни —
-/// деревом и камнем: иначе банк упирался бы в свой же лимит золота.
+/// Банк.
+///
+/// - `0` — открытие (письмо): 25 железных слитков, 500 золота.
+/// - `1` — постройка 0→1 («Поле»): 300 дерева, 200 камня, 300 золота.
+/// - `2+` — улучшения: старые цены (200×1.8^(n−2) дерева, 150×1.8^(n−2) камня).
 pub fn bank_cost(level: u32) -> Cost {
-    unlock_with_gold(
-        BANK_UNLOCK_GOLD,
-        BANK_UNLOCK_WOOD,
-        BANK_UNLOCK_STONE,
-        BANK_COST_GROWTH,
-        level,
-    )
+    match level {
+        0 => Cost {
+            wood: 0.0,
+            stone: 0.0,
+            gold: BANK_UNLOCK_GOLD,
+            energy: 0.0,
+            boards: 0,
+            iron_ingots: BANK_UNLOCK_IRON_INGOTS,
+        },
+        1 => Cost {
+            wood: BANK_FIRST_WOOD,
+            stone: BANK_FIRST_STONE,
+            gold: BANK_FIRST_GOLD,
+            energy: 0.0,
+            boards: 0,
+            iron_ingots: 0,
+        },
+        _ => {
+            let factor = BANK_COST_GROWTH.powi(level as i32 - 2);
+            cost(
+                (BANK_UPGRADE_WOOD * factor).ceil(),
+                (BANK_UPGRADE_STONE * factor).ceil(),
+                0.0,
+            )
+        }
+    }
 }
 
 /// Сколько работников даёт один уровень дома для работников.
@@ -384,13 +455,24 @@ const SAWMILL_BASE_COST_STONE: f64 = 12.0;
 const SAWMILL_COST_GROWTH: f64 = 2.2;
 
 const COAL_PIT_UNLOCK_GOLD: f64 = 300.0;
-const COAL_PIT_UNLOCK_WOOD: f64 = 60.0;
-const COAL_PIT_UNLOCK_STONE: f64 = 40.0;
+
+const COAL_PIT_FIRST_WOOD: f64 = 180.0;
+const COAL_PIT_FIRST_STONE: f64 = 100.0;
+
+const COAL_PIT_UPGRADE_WOOD: f64 = 60.0;
+const COAL_PIT_UPGRADE_STONE: f64 = 40.0;
 const COAL_PIT_COST_GROWTH: f64 = 1.8;
 
-const FORGE_UNLOCK_GOLD: f64 = 300.0;
-const FORGE_UNLOCK_WOOD: f64 = 150.0;
+const FORGE_UNLOCK_WOOD: f64 = 200.0;
 const FORGE_UNLOCK_STONE: f64 = 100.0;
+const FORGE_UNLOCK_ENERGY: f64 = 300.0;
+const FORGE_UNLOCK_GOLD: f64 = 500.0;
+
+const FORGE_FIRST_WOOD: f64 = 300.0;
+const FORGE_FIRST_STONE: f64 = 250.0;
+
+const FORGE_UPGRADE_WOOD: f64 = 150.0;
+const FORGE_UPGRADE_STONE: f64 = 100.0;
 const FORGE_COST_GROWTH: f64 = 1.8;
 
 const MINE_BASE_COST_WOOD: f64 = 45.0;
@@ -398,7 +480,13 @@ const MINE_BASE_COST_GOLD: f64 = 80.0;
 const MINE_BASE_COST_STONE: f64 = 30.0;
 const MINE_COST_GROWTH: f64 = 2.2;
 
-const BANK_UNLOCK_GOLD: f64 = 800.0;
-const BANK_UNLOCK_WOOD: f64 = 200.0;
-const BANK_UNLOCK_STONE: f64 = 150.0;
+const BANK_UNLOCK_GOLD: f64 = 500.0;
+const BANK_UNLOCK_IRON_INGOTS: u32 = 25;
+
+const BANK_FIRST_WOOD: f64 = 300.0;
+const BANK_FIRST_STONE: f64 = 200.0;
+const BANK_FIRST_GOLD: f64 = 300.0;
+
+const BANK_UPGRADE_WOOD: f64 = 200.0;
+const BANK_UPGRADE_STONE: f64 = 150.0;
 const BANK_COST_GROWTH: f64 = 1.8;

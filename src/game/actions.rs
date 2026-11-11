@@ -52,21 +52,21 @@ pub fn offer_def(id: &str) -> Option<OfferDef> {
             id: OFFER_COAL_PIT,
             title: "Угольная яма",
             body: "Дом построен! Рядом можно выкопать угольную яму — она даст уголь для кузницы.",
-            price: "60 дерева · 40 камня",
+            price: "300 золота",
             cost: balance::coal_pit_cost(0),
         }),
         OFFER_FORGE => Some(OfferDef {
             id: OFFER_FORGE,
             title: "Кузница",
-            body: "Угольная яма работает. Пора поставить кузницу — в ней плавится руда и куётся снаряжение.",
-            price: "150 дерева · 100 камня",
+            body: "Угольная яма работает. Открой кузницу — после этого её можно будет построить на «Поле».",
+            price: "200 дерева · 100 камня · 300 энергии · 500 золота",
             cost: balance::forge_cost(0),
         }),
         OFFER_BANK => Some(OfferDef {
             id: OFFER_BANK,
             title: "Банк",
-            body: "У тебя уже 800 золота. Банк поднимет лимит золота и откроет новые возможности.",
-            price: "200 дерева · 150 камня",
+            body: "У тебя уже 800 золота. Открой банк — после этого его можно будет построить на «Поле».",
+            price: "25 железных слитков · 500 золота",
             cost: balance::bank_cost(0),
         }),
         _ => None,
@@ -91,14 +91,14 @@ fn push_offer(state: &mut GameState, id: &'static str) -> bool {
 
 /// Проверяет условия новых предложений построек.
 fn check_offers(state: &mut GameState) {
-    if state.house_level > 0 && state.coal_pit_level == 0 {
+    if state.house_level > 0 && !state.coal_pit_unlocked {
         push_offer(state, OFFER_COAL_PIT);
     }
-    if state.coal_pit_level > 0 && state.forge_level == 0 {
+    if state.coal_pit_level > 0 && !state.forge_unlocked {
         push_offer(state, OFFER_FORGE);
     }
-    if state.bank_level == 0
-        && !state.bank_seen
+    if !state.bank_seen
+        && !state.bank_unlocked
         && state.gold + 1e-9 >= balance::BANK_OFFER_GOLD
         && push_offer(state, OFFER_BANK)
     {
@@ -106,15 +106,16 @@ fn check_offers(state: &mut GameState) {
     }
 }
 
-/// Строит постройку из текущего предложения. При успехе закрывает его.
+/// Оплачивает открытие постройки из текущего предложения.
+/// При успехе закрывает письмо. Уровень остаётся 0 — строить нужно отдельно.
 pub fn build_pending_offer(state: &mut GameState) -> BuildResult {
     let Some(id) = state.pending_offer.take() else {
         return BuildResult::Locked;
     };
     let result = match id.as_str() {
-        OFFER_COAL_PIT => build_coal_pit(state),
-        OFFER_FORGE => build_forge(state),
-        OFFER_BANK => build_bank(state),
+        OFFER_COAL_PIT => unlock_coal_pit(state),
+        OFFER_FORGE => unlock_forge(state),
+        OFFER_BANK => unlock_bank(state),
         _ => BuildResult::Locked,
     };
     if matches!(result, BuildResult::Built(_)) {
@@ -183,6 +184,7 @@ pub fn can_afford(state: &GameState, cost: Cost) -> bool {
         && state.gold + 1e-9 >= cost.gold
         && state.energy + 1e-9 >= cost.energy
         && state.item_count("board") >= cost.boards
+        && state.item_count("iron_ingot") >= cost.iron_ingots
 }
 
 /// Списывает стоимость постройки. Возвращает `false`, если не хватает.
@@ -195,6 +197,7 @@ fn spend_cost(state: &mut GameState, cost: Cost) -> bool {
     state.gold = (state.gold - cost.gold).max(0.0);
     state.energy = (state.energy - cost.energy).max(0.0);
     state.remove_item("board", cost.boards);
+    state.remove_item("iron_ingot", cost.iron_ingots);
     true
 }
 
@@ -475,13 +478,27 @@ pub fn build_mine(state: &mut GameState) -> BuildResult {
     BuildResult::Built(state.mine_level)
 }
 
-/// Строит или улучшает угольную яму. Доступна после постройки дома.
+/// Оплата открытия угольной ямы (письмо). Уровень остаётся 0.
+pub(crate) fn unlock_coal_pit(state: &mut GameState) -> BuildResult {
+    if state.house_level == 0 || state.coal_pit_unlocked {
+        return BuildResult::Locked;
+    }
+    let cost = balance::coal_pit_cost(0);
+    if !spend_cost(state, cost) {
+        return BuildResult::NotEnough(cost);
+    }
+    state.coal_pit_unlocked = true;
+    state.coal_seen = true;
+    BuildResult::Built(0)
+}
+
+/// Строит или улучшает угольную яму. Доступна после оплаты открытия.
 pub fn build_coal_pit(state: &mut GameState) -> BuildResult {
-    if state.house_level == 0 {
+    if !state.coal_pit_unlocked {
         return BuildResult::Locked;
     }
 
-    let cost = balance::coal_pit_cost(state.coal_pit_level);
+    let cost = balance::coal_pit_cost(state.coal_pit_level + 1);
     if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
@@ -494,13 +511,26 @@ pub fn build_coal_pit(state: &mut GameState) -> BuildResult {
     BuildResult::Built(state.coal_pit_level)
 }
 
-/// Строит или улучшает кузницу. Доступна после угольной ямы.
+/// Оплата открытия кузницы (письмо). Уровень остаётся 0.
+pub(crate) fn unlock_forge(state: &mut GameState) -> BuildResult {
+    if state.coal_pit_level == 0 || state.forge_unlocked {
+        return BuildResult::Locked;
+    }
+    let cost = balance::forge_cost(0);
+    if !spend_cost(state, cost) {
+        return BuildResult::NotEnough(cost);
+    }
+    state.forge_unlocked = true;
+    BuildResult::Built(0)
+}
+
+/// Строит или улучшает кузницу. Доступна после оплаты открытия.
 pub fn build_forge(state: &mut GameState) -> BuildResult {
-    if state.coal_pit_level == 0 {
+    if !state.forge_unlocked {
         return BuildResult::Locked;
     }
 
-    let cost = balance::forge_cost(state.forge_level);
+    let cost = balance::forge_cost(state.forge_level + 1);
     if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
@@ -509,13 +539,26 @@ pub fn build_forge(state: &mut GameState) -> BuildResult {
     BuildResult::Built(state.forge_level)
 }
 
-/// Строит или улучшает банк. Открывается предложением при 800 золота.
+/// Оплата открытия банка (письмо). Уровень остаётся 0.
+pub(crate) fn unlock_bank(state: &mut GameState) -> BuildResult {
+    if state.bank_unlocked {
+        return BuildResult::Locked;
+    }
+    let cost = balance::bank_cost(0);
+    if !spend_cost(state, cost) {
+        return BuildResult::NotEnough(cost);
+    }
+    state.bank_unlocked = true;
+    BuildResult::Built(0)
+}
+
+/// Строит или улучшает банк. Доступен после оплаты открытия.
 pub fn build_bank(state: &mut GameState) -> BuildResult {
-    if !state.bank_seen && state.bank_level == 0 {
+    if !state.bank_unlocked {
         return BuildResult::Locked;
     }
 
-    let cost = balance::bank_cost(state.bank_level);
+    let cost = balance::bank_cost(state.bank_level + 1);
     if !spend_cost(state, cost) {
         return BuildResult::NotEnough(cost);
     }
@@ -809,6 +852,21 @@ fn adjust_count(current: u32, delta: i32, free: u32, capacity: u32) -> u32 {
 }
 
 #[cfg(test)]
+fn unlock_coal_pit_for_test(state: &mut GameState) -> BuildResult {
+    unlock_coal_pit(state)
+}
+
+#[cfg(test)]
+fn unlock_forge_for_test(state: &mut GameState) -> BuildResult {
+    unlock_forge(state)
+}
+
+#[cfg(test)]
+fn unlock_bank_for_test(state: &mut GameState) -> BuildResult {
+    unlock_bank(state)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::game::state::Theme;
@@ -1009,20 +1067,29 @@ mod tests {
     }
 
     #[test]
-    fn unlock_prices_are_gold_only() {
-        // Открытие построек — разблокировка кнопки за золото, без дерева и камня.
-        for (name, cost) in [
-            ("угольная яма", balance::coal_pit_cost(0)),
-            ("кузница", balance::forge_cost(0)),
-            ("банк", balance::bank_cost(0)),
-        ] {
-            assert!(cost.gold > 0.0, "{name}");
-            assert_eq!(cost.wood, 0.0, "{name}");
-            assert_eq!(cost.stone, 0.0, "{name}");
-            assert_eq!(cost.boards, 0, "{name}");
-            assert_eq!(cost.energy, 0.0, "{name}");
-        }
-        // Цены открытия укладываются в стартовый лимит золота без банка.
+    fn unlock_prices_match_the_new_design() {
+        // Кузница: 200 дерева, 100 камня, 300 энергии, 500 золота.
+        let forge = balance::forge_cost(0);
+        assert_eq!(forge.wood, 200.0);
+        assert_eq!(forge.stone, 100.0);
+        assert_eq!(forge.energy, 300.0);
+        assert_eq!(forge.gold, 500.0);
+        assert_eq!(forge.iron_ingots, 0);
+
+        // Угольная яма: 300 золота.
+        let coal = balance::coal_pit_cost(0);
+        assert_eq!(coal.gold, 300.0);
+        assert_eq!(coal.wood, 0.0);
+        assert_eq!(coal.iron_ingots, 0);
+
+        // Банк: 25 железных слитков и 500 золота.
+        let bank = balance::bank_cost(0);
+        assert_eq!(bank.gold, 500.0);
+        assert_eq!(bank.iron_ingots, 25);
+        assert_eq!(bank.wood, 0.0);
+        assert_eq!(bank.stone, 0.0);
+
+        // Открытие всех трёх построек укладывается в стартовый лимит золота без банка.
         for (name, cost) in [
             ("угольная яма", balance::coal_pit_cost(0)),
             ("кузница", balance::forge_cost(0)),
@@ -1033,8 +1100,31 @@ mod tests {
     }
 
     #[test]
-    fn upgrades_after_unlock_use_wood_and_stone() {
-        for level in 1..=5 {
+    fn first_level_prices_match_the_new_design() {
+        // Постройка 0→1: кузница — 300 дерева, 250 камня.
+        let forge = balance::forge_cost(1);
+        assert_eq!(forge.wood, 300.0);
+        assert_eq!(forge.stone, 250.0);
+        assert_eq!(forge.gold, 0.0);
+        assert_eq!(forge.energy, 0.0);
+
+        // Угольная яма — 180 дерева, 100 камня.
+        let coal = balance::coal_pit_cost(1);
+        assert_eq!(coal.wood, 180.0);
+        assert_eq!(coal.stone, 100.0);
+        assert_eq!(coal.gold, 0.0);
+
+        // Банк — 300 дерева, 200 камня, 300 золота.
+        let bank = balance::bank_cost(1);
+        assert_eq!(bank.wood, 300.0);
+        assert_eq!(bank.stone, 200.0);
+        assert_eq!(bank.gold, 300.0);
+        assert_eq!(bank.iron_ingots, 0);
+    }
+
+    #[test]
+    fn upgrades_after_first_level_use_wood_and_stone() {
+        for level in 2..=5 {
             for cost in [
                 balance::coal_pit_cost(level),
                 balance::forge_cost(level),
@@ -1043,6 +1133,7 @@ mod tests {
                 assert_eq!(cost.gold, 0.0, "уровень {level}");
                 assert_eq!(cost.energy, 0.0, "уровень {level}");
                 assert_eq!(cost.boards, 0, "уровень {level}");
+                assert_eq!(cost.iron_ingots, 0, "уровень {level}");
                 assert!(cost.wood > 0.0 && cost.stone > 0.0, "уровень {level}");
             }
         }
@@ -1502,11 +1593,14 @@ mod tests {
         assert_eq!(state.pending_offer.as_deref(), Some(OFFER_BANK));
         assert!(state.bank_seen);
 
+        // Открытие банка требует 25 железных слитков и 500 золота.
         let cost = balance::bank_cost(0);
-        state.add_active("wood", cost.wood as u32);
-        state.add_active("stone", cost.stone as u32);
-        assert_eq!(build_pending_offer(&mut state), BuildResult::Built(1));
+        state.add_item("iron_ingot", cost.iron_ingots);
+        // Золота достаточно (800 >= 500).
+        assert_eq!(build_pending_offer(&mut state), BuildResult::Built(0));
         assert!(state.pending_offer.is_none());
+        assert!(state.bank_unlocked);
+        assert_eq!(state.bank_level, 0);
     }
 
     #[test]
@@ -1541,5 +1635,81 @@ mod tests {
             state.active_cap("wood"),
             before + balance::BARN_CAP_PER_LEVEL as u32
         );
+    }
+
+    #[test]
+    fn forge_unlock_does_not_build_first_level() {
+        let mut state = GameState {
+            coal_pit_level: 1,
+            gold: 10_000.0,
+            energy: 10_000.0,
+            storage_level: 2,
+            ..GameState::default()
+        };
+        state.add_active("wood", 200);
+        state.add_active("stone", 100);
+
+        // Открытие: 200/100/300⚡/500💰 → уровень 0.
+        assert_eq!(unlock_forge_for_test(&mut state), BuildResult::Built(0));
+        assert!(state.forge_unlocked);
+        assert_eq!(state.forge_level, 0);
+        // Ресурсы списаны.
+        assert_eq!(state.active_amount("wood"), 0);
+        assert_eq!(state.active_amount("stone"), 0);
+        assert!(state.gold < 10_000.0);
+
+        // Постройка 0→1: 300/250 → уровень 1.
+        state.add_active("wood", 300);
+        state.add_active("stone", 250);
+        assert_eq!(build_forge(&mut state), BuildResult::Built(1));
+        assert_eq!(state.forge_level, 1);
+    }
+
+    #[test]
+    fn coal_pit_unlock_does_not_build_first_level() {
+        let mut state = GameState {
+            house_level: 1,
+            gold: 1_000.0,
+            storage_level: 2,
+            ..GameState::default()
+        };
+
+        // Открытие: 300 золота → уровень 0.
+        assert_eq!(unlock_coal_pit_for_test(&mut state), BuildResult::Built(0));
+        assert!(state.coal_pit_unlocked);
+        assert_eq!(state.coal_pit_level, 0);
+
+        // Постройка 0→1: 180/100 → уровень 1.
+        state.add_active("wood", 180);
+        state.add_active("stone", 100);
+        assert_eq!(build_coal_pit(&mut state), BuildResult::Built(1));
+        assert_eq!(state.coal_pit_level, 1);
+        assert!(state.coal_pit_researched);
+    }
+
+    #[test]
+    fn bank_unlock_does_not_build_first_level() {
+        let mut state = GameState {
+            gold: 10_000.0,
+            storage_level: 2,
+            ..GameState::default()
+        };
+        state.add_item("iron_ingot", 25);
+
+        // Открытие: 25 🔩 / 500 💰 → уровень 0.
+        assert_eq!(unlock_bank_for_test(&mut state), BuildResult::Built(0));
+        assert!(state.bank_unlocked);
+        assert_eq!(state.bank_level, 0);
+        assert_eq!(state.item_count("iron_ingot"), 0);
+        assert!(state.gold < 10_000.0);
+
+        // Постройка 0→1: 300 🪵 / 200 🪨 / 300 💰 → уровень 1.
+        state.add_active("wood", 300);
+        state.add_active("stone", 200);
+        assert_eq!(state.active_amount("wood"), 300);
+        assert_eq!(state.active_amount("stone"), 200);
+        assert_eq!(build_bank(&mut state), BuildResult::Built(1));
+        assert_eq!(state.bank_level, 1);
+        assert!(state.trader_researched);
     }
 }

@@ -309,9 +309,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let worker_house_cost = balance::worker_house_cost(snapshot.worker_house_level);
     let sawmill_cost = balance::sawmill_cost(snapshot.sawmill_level);
     let mine_cost = balance::mine_cost(snapshot.mine_level);
-    let coal_pit_cost = balance::coal_pit_cost(snapshot.coal_pit_level);
-    let forge_cost = balance::forge_cost(snapshot.forge_level);
-    let bank_cost = balance::bank_cost(snapshot.bank_level);
+    let coal_pit_cost = balance::coal_pit_cost(snapshot.coal_pit_level + 1);
+    let forge_cost = balance::forge_cost(snapshot.forge_level + 1);
+    let bank_cost = balance::bank_cost(snapshot.bank_level + 1);
     let house_cost = balance::house_cost(snapshot.house_level);
     let comfort_cost = balance::comfort_cost(snapshot.comfort_level);
     let barn_cost = balance::barn_cost(snapshot.barn_level);
@@ -535,7 +535,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                         on_build: move |_| do_build_with(state, actions::build_sawmill),
                     }
                 }
-                if snapshot.coal_pit_level > 0 {
+                if snapshot.coal_pit_unlocked {
                     BuildRow {
                         title: "Угольная яма".to_string(),
                         level: snapshot.coal_pit_level,
@@ -558,7 +558,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         }
 
-        if snapshot.forge_level > 0 {
+        if snapshot.forge_unlocked {
             CollapsibleSection { title: "Кузница".to_string(),
                 BuildRow {
                     title: "Кузница".to_string(),
@@ -606,7 +606,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         }
 
-        if snapshot.bank_level > 0 {
+        if snapshot.bank_unlocked {
             CollapsibleSection { title: "Банк".to_string(),
                 BuildRow {
                     title: "Банк".to_string(),
@@ -848,9 +848,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
 
             div { class: "cycle-progress-head",
                 span { "Добыто за цикл" }
-                span { class: "cycle-progress-value",
-                    "{format_num(gathered)} / {format_num(threshold)}"
-                }
+                span { class: "cycle-progress-value", "{format_num(gathered)} / {format_num(threshold)}" }
             }
             div { class: "cycle-progress-track",
                 div { class: "cycle-progress-fill", style: "{progress_fill}" }
@@ -875,18 +873,28 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
 
             if wall_mine_active {
-                div {
-                    class: if wall_mine_met { "cycle-wall done" } else { "cycle-wall" },
-                    span { class: "cycle-wall-mark", if wall_mine_met { "✓" } else { "•" } }
+                div { class: if wall_mine_met { "cycle-wall done" } else { "cycle-wall" },
+                    span { class: "cycle-wall-mark",
+                        if wall_mine_met {
+                            "✓"
+                        } else {
+                            "•"
+                        }
+                    }
                     span { class: "cycle-wall-text",
                         "Стена R={balance::CYCLE_WALL_LEVEL}: шахта до уровня {balance::CYCLE_WALL_MINE_LEVEL} (сейчас {snapshot.mine_level})"
                     }
                 }
             }
             if wall_stone_active {
-                div {
-                    class: if wall_stone_met { "cycle-wall done" } else { "cycle-wall" },
-                    span { class: "cycle-wall-mark", if wall_stone_met { "✓" } else { "•" } }
+                div { class: if wall_stone_met { "cycle-wall done" } else { "cycle-wall" },
+                    span { class: "cycle-wall-mark",
+                        if wall_stone_met {
+                            "✓"
+                        } else {
+                            "•"
+                        }
+                    }
                     span { class: "cycle-wall-text",
                         "Стена R={balance::CYCLE_WALL_STONE_LEVEL}: {format_num(stone_have)} / {format_num(stone_need)} камня за цикл"
                     }
@@ -1274,7 +1282,7 @@ fn OfferModal(state: Signal<GameState>, view: GameState, offer_id: String) -> El
                             }
                             refresh_view(state);
                         },
-                        "{def.price}"
+                        CostLabel { cost: def.cost }
                     }
                     button {
                         class: "offer-later",
@@ -1492,6 +1500,7 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                             let mut guard = state.write();
                             guard.coal_pit_researched = !guard.coal_pit_researched;
                             if guard.coal_pit_researched {
+                                guard.coal_pit_unlocked = true;
                                 guard.coal_pit_level = guard.coal_pit_level.max(1);
                                 guard.coal_pit_research = balance::COAL_PIT_RESEARCH_COST;
                                 guard.coal_seen = true;
@@ -1508,9 +1517,11 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         onclick: move |_| {
                             let mut guard = state.write();
                             guard.coal_pit_researched = true;
+                            guard.coal_pit_unlocked = true;
                             guard.coal_pit_level = guard.coal_pit_level.max(1);
                             guard.forge_researched = !guard.forge_researched;
                             if guard.forge_researched {
+                                guard.forge_unlocked = true;
                                 guard.forge_level = guard.forge_level.max(1);
                             }
                         },
@@ -1525,8 +1536,15 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         onclick: move |_| {
                             let mut guard = state.write();
                             guard.coal_pit_researched = true;
+                            guard.coal_pit_unlocked = true;
+                            guard.coal_pit_level = guard.coal_pit_level.max(1);
                             guard.forge_researched = true;
+                            guard.forge_unlocked = true;
+                            guard.forge_level = guard.forge_level.max(1);
                             guard.trader_researched = !guard.trader_researched;
+                            if guard.trader_researched {
+                                guard.bank_unlocked = true;
+                            }
                         },
                         if snapshot.trader_researched {
                             "Сбросить изучение банка"
@@ -1846,6 +1864,10 @@ fn CostLabel(cost: balance::Cost) -> Element {
                 span { class: "cost-icon", "🪚" }
                 span { class: "cost-num", "{cost.boards}" }
             }
+            if cost.iron_ingots > 0 {
+                span { class: "cost-icon", "🔩" }
+                span { class: "cost-num", "{cost.iron_ingots}" }
+            }
         }
     }
 }
@@ -1937,22 +1959,40 @@ fn CurrentGoal(state: GameState) -> Element {
             None,
             None,
         )
+    } else if !state.coal_pit_unlocked {
+        (
+            "Открой угольную яму — письмо в колокольчике.".to_string(),
+            Some(balance::coal_pit_cost(0)),
+            None,
+        )
     } else if state.coal_pit_level == 0 {
         (
             "Построй угольную яму — она даст уголь для кузницы.".to_string(),
-            Some(balance::coal_pit_cost(0)),
+            Some(balance::coal_pit_cost(1)),
+            None,
+        )
+    } else if !state.forge_unlocked {
+        (
+            "Открой кузницу — письмо в колокольчике.".to_string(),
+            Some(balance::forge_cost(0)),
             None,
         )
     } else if state.forge_level == 0 {
         (
             "Построй кузницу, чтобы плавить руду и крафтить снаряжение.".to_string(),
-            Some(balance::forge_cost(0)),
+            Some(balance::forge_cost(1)),
             None,
         )
-    } else if state.bank_seen && state.bank_level == 0 {
+    } else if state.bank_seen && !state.bank_unlocked {
+        (
+            "Открой банк — письмо в колокольчике.".to_string(),
+            Some(balance::bank_cost(0)),
+            None,
+        )
+    } else if state.bank_unlocked && state.bank_level == 0 {
         (
             "Построй банк, чтобы поднять лимит золота.".to_string(),
-            Some(balance::bank_cost(0)),
+            Some(balance::bank_cost(1)),
             None,
         )
     } else if state.active_amount("wood") as f64 >= state.cap(ResourceKind::Wood)

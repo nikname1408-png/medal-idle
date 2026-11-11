@@ -273,6 +273,15 @@ pub struct GameState {
     pub mine_level: u32,
     /// Уровень банка (повышает лимит золота).
     pub bank_level: u32,
+    /// Открыта ли угольная яма (оплачено письмо). Постройка 0→1 — отдельно.
+    #[serde(default)]
+    pub coal_pit_unlocked: bool,
+    /// Открыта ли кузница (оплачено письмо). Постройка 0→1 — отдельно.
+    #[serde(default)]
+    pub forge_unlocked: bool,
+    /// Открыт ли банк (оплачено письмо). Постройка 0→1 — отдельно.
+    #[serde(default)]
+    pub bank_unlocked: bool,
     /// Уровень угольной ямы (открывается исследованием).
     pub coal_pit_level: u32,
 
@@ -423,6 +432,9 @@ impl Default for GameState {
             sawmill_level: 0,
             mine_level: 0,
             bank_level: 0,
+            coal_pit_unlocked: false,
+            forge_unlocked: false,
+            bank_unlocked: false,
             coal_pit_level: 0,
             forge_researched: false,
             forge_research: 0.0,
@@ -1372,6 +1384,18 @@ impl GameState {
         // Одна ячейка — не больше лимита штук.
         for quantity in self.inventory.values_mut() {
             *quantity = (*quantity).min(items::ITEM_STACK_LIMIT);
+        }
+        // Старые сохранения: если постройка уже построена или исследована,
+        // считаем её открытой, чтобы кнопка «Построить 0→1» не появлялась
+        // повторно и не требовала оплаты открытия заново.
+        if !self.coal_pit_unlocked && (self.coal_pit_researched || self.coal_pit_level > 0) {
+            self.coal_pit_unlocked = true;
+        }
+        if !self.forge_unlocked && (self.forge_researched || self.forge_level > 0) {
+            self.forge_unlocked = true;
+        }
+        if !self.bank_unlocked && (self.bank_level > 0 || self.trader_researched) {
+            self.bank_unlocked = true;
         }
         self.inventory.retain(|_, quantity| *quantity > 0);
         self.ensure_markets();
