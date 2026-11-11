@@ -26,6 +26,7 @@ const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
 const ICON_BOARD: Asset = asset!("/assets/icons/item_board.png");
 const ICON_IRON_INGOT: Asset = asset!("/assets/icons/item_iron_ingot.png");
 const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
+const ICON_STEAM_PROTOTYPE: Asset = asset!("/assets/icons/item_steam_prototype.png");
 const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
 const ICON_TAB_FORGE: Asset = asset!("/assets/icons/tab_forge.png");
 const ICON_TAB_HIKE: Asset = asset!("/assets/icons/tab_hike.png");
@@ -1327,6 +1328,7 @@ fn SteamEventModal(state: Signal<GameState>) -> Element {
     rsx! {
         div { class: "offer-overlay",
             div { class: "offer-card steam-card",
+                img { class: "steam-card-icon", src: "{ICON_STEAM_PROTOTYPE}", alt: "" }
                 div { class: "offer-title", "Прототип собран" }
                 div { class: "offer-body",
                     "Лязг металла и шипение пара оглашают мастерскую. Прототип собран. Вы сделали первый шаг к новой эре!"

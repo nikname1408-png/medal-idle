@@ -1041,6 +1041,14 @@ button {
     border-top-color: var(--select);
 }
 
+.steam-card-icon {
+    display: block;
+    width: 48px;
+    height: 57px;
+    margin: 0 auto 6px;
+    object-fit: contain;
+}
+
 .notif-overlay {
     position: absolute;
     inset: 0;

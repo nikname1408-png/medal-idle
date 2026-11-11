@@ -10,6 +10,11 @@
 
 ## Текущий статус
 
+- v0.9.5: у паровой машины появилась иконка `steam boiler.aseprite` →
+  `assets/icons/item_steam_prototype.png` (70×83): она стоит в карточке
+  рецепта `steam_prototype` и в модальном окне «Прототип собран»
+  (48×57, класс `steam-card-icon`). В `item_icon_asset` добавлена строка
+  `"steam_prototype"`; эмодзи ⚙️ осталось только запасным вариантом.
 - v0.9.4: у кирпича появилась иконка `brick.aseprite` →
   `assets/icons/item_brick.png` (60×43), в `item_icon_asset` добавлена
   строка `"brick"`. Иконки в сумке и крафте ещё меньше: PNG в ячейке 55%
