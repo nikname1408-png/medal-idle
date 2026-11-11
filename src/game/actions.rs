@@ -1009,8 +1009,32 @@ mod tests {
     }
 
     #[test]
-    fn unlock_prices_use_only_wood_and_stone() {
-        for level in 0..=5 {
+    fn unlock_prices_are_gold_only() {
+        // Открытие построек — разблокировка кнопки за золото, без дерева и камня.
+        for (name, cost) in [
+            ("угольная яма", balance::coal_pit_cost(0)),
+            ("кузница", balance::forge_cost(0)),
+            ("банк", balance::bank_cost(0)),
+        ] {
+            assert!(cost.gold > 0.0, "{name}");
+            assert_eq!(cost.wood, 0.0, "{name}");
+            assert_eq!(cost.stone, 0.0, "{name}");
+            assert_eq!(cost.boards, 0, "{name}");
+            assert_eq!(cost.energy, 0.0, "{name}");
+        }
+        // Цены открытия укладываются в стартовый лимит золота без банка.
+        for (name, cost) in [
+            ("угольная яма", balance::coal_pit_cost(0)),
+            ("кузница", balance::forge_cost(0)),
+            ("банк", balance::bank_cost(0)),
+        ] {
+            assert!(cost.gold <= balance::BASE_GOLD_CAP, "{name}");
+        }
+    }
+
+    #[test]
+    fn upgrades_after_unlock_use_wood_and_stone() {
+        for level in 1..=5 {
             for cost in [
                 balance::coal_pit_cost(level),
                 balance::forge_cost(level),

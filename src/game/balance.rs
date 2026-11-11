@@ -147,7 +147,7 @@ pub fn sawmill_cost(level: u32) -> Cost {
     )
 }
 
-/// Цена постройки: нулевой уровень — разовая цена открытия, дальше —
+/// Цена постройки: нулевой уровень — разовая цена открытия (золото), дальше —
 /// цена улучшения, которая растёт от базовой.
 fn unlock_then_upgrade(wood: f64, stone: f64, growth: f64, level: u32) -> Cost {
     if level == 0 {
@@ -157,9 +157,23 @@ fn unlock_then_upgrade(wood: f64, stone: f64, growth: f64, level: u32) -> Cost {
     cost((wood * factor).ceil(), (stone * factor).ceil(), 0.0)
 }
 
-/// Открытие угольной ямы и её улучшения. Только дерево и камень.
+/// Открытие постройки за золото, затем улучшения за дерево и камень.
+///
+/// Открытие — это разблокировка кнопки постройки: пока золото не уплачено,
+/// кнопки нет, а после оплаты постройка появляется без уровней и её можно
+/// улучшать за дерево и камень.
+fn unlock_with_gold(gold: f64, wood: f64, stone: f64, growth: f64, level: u32) -> Cost {
+    if level == 0 {
+        return cost(0.0, 0.0, gold);
+    }
+    let factor = growth.powi(level as i32 - 1);
+    cost((wood * factor).ceil(), (stone * factor).ceil(), 0.0)
+}
+
+/// Открытие угольной ямы и её улучшения.
 pub fn coal_pit_cost(level: u32) -> Cost {
-    unlock_then_upgrade(
+    unlock_with_gold(
+        COAL_PIT_UNLOCK_GOLD,
         COAL_PIT_UNLOCK_WOOD,
         COAL_PIT_UNLOCK_STONE,
         COAL_PIT_COST_GROWTH,
@@ -167,9 +181,10 @@ pub fn coal_pit_cost(level: u32) -> Cost {
     )
 }
 
-/// Открытие кузницы и её улучшения. Только дерево и камень.
+/// Открытие кузницы и её улучшения.
 pub fn forge_cost(level: u32) -> Cost {
-    unlock_then_upgrade(
+    unlock_with_gold(
+        FORGE_UNLOCK_GOLD,
         FORGE_UNLOCK_WOOD,
         FORGE_UNLOCK_STONE,
         FORGE_COST_GROWTH,
@@ -187,10 +202,16 @@ pub fn mine_cost(level: u32) -> Cost {
     )
 }
 
-/// Открытие банка и его улучшения. Без золота: иначе банк упирается
-/// в собственный лимит золота и не может себя улучшить.
+/// Открытие банка и его улучшения. Открытие платится золотом, уровни —
+/// деревом и камнем: иначе банк упирался бы в свой же лимит золота.
 pub fn bank_cost(level: u32) -> Cost {
-    unlock_then_upgrade(BANK_UNLOCK_WOOD, BANK_UNLOCK_STONE, BANK_COST_GROWTH, level)
+    unlock_with_gold(
+        BANK_UNLOCK_GOLD,
+        BANK_UNLOCK_WOOD,
+        BANK_UNLOCK_STONE,
+        BANK_COST_GROWTH,
+        level,
+    )
 }
 
 /// Сколько работников даёт один уровень дома для работников.
@@ -362,10 +383,12 @@ const SAWMILL_BASE_COST_GOLD: f64 = 60.0;
 const SAWMILL_BASE_COST_STONE: f64 = 12.0;
 const SAWMILL_COST_GROWTH: f64 = 2.2;
 
+const COAL_PIT_UNLOCK_GOLD: f64 = 300.0;
 const COAL_PIT_UNLOCK_WOOD: f64 = 60.0;
 const COAL_PIT_UNLOCK_STONE: f64 = 40.0;
 const COAL_PIT_COST_GROWTH: f64 = 1.8;
 
+const FORGE_UNLOCK_GOLD: f64 = 300.0;
 const FORGE_UNLOCK_WOOD: f64 = 150.0;
 const FORGE_UNLOCK_STONE: f64 = 100.0;
 const FORGE_COST_GROWTH: f64 = 1.8;
@@ -375,6 +398,7 @@ const MINE_BASE_COST_GOLD: f64 = 80.0;
 const MINE_BASE_COST_STONE: f64 = 30.0;
 const MINE_COST_GROWTH: f64 = 2.2;
 
+const BANK_UNLOCK_GOLD: f64 = 800.0;
 const BANK_UNLOCK_WOOD: f64 = 200.0;
 const BANK_UNLOCK_STONE: f64 = 150.0;
 const BANK_COST_GROWTH: f64 = 1.8;
