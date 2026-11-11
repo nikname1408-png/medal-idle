@@ -531,7 +531,8 @@ impl GameState {
 
     /// Регенерация энергии в секунду. Без дома — ноль.
     pub fn energy_regen(&self) -> f64 {
-        self.house_level as f64 * balance::HOUSE_ENERGY_PER_LEVEL + self.dev.energy_regen
+        self.house_level as f64 * balance::HOUSE_ENERGY_PER_LEVEL * self.income_multiplier()
+            + self.dev.energy_regen
     }
 
     /// Сколько энергии даёт одно нажатие «Отдых». Растёт вместе с X.

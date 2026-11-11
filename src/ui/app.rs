@@ -422,16 +422,19 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let house_description = if snapshot.house_level == 0 {
         format!(
             "После постройки: +{} энергии за отдых и +{}/с.",
-            format_num(snapshot.rest_energy() + balance::REST_ENERGY_PER_HOUSE_LEVEL),
-            format_num(balance::HOUSE_ENERGY_PER_LEVEL)
+            format_num(
+                snapshot.rest_energy()
+                    + balance::REST_ENERGY_PER_HOUSE_LEVEL * snapshot.income_multiplier()
+            ),
+            format_num(balance::HOUSE_ENERGY_PER_LEVEL * snapshot.income_multiplier())
         )
     } else {
         format!(
             "Сейчас: +{} за отдых, +{}/с. Улучшение даст ещё +{} за отдых и +{}/с.",
             format_num(snapshot.rest_energy()),
             format_num(snapshot.energy_regen()),
-            format_num(balance::REST_ENERGY_PER_HOUSE_LEVEL),
-            format_num(balance::HOUSE_ENERGY_PER_LEVEL)
+            format_num(balance::REST_ENERGY_PER_HOUSE_LEVEL * snapshot.income_multiplier()),
+            format_num(balance::HOUSE_ENERGY_PER_LEVEL * snapshot.income_multiplier())
         )
     };
 
@@ -646,13 +649,14 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
     let free = snapshot.workers_free();
     let sawmill_workers = snapshot.sawmill_workers;
     let sawmill_slots = snapshot.sawmill_slots();
-    let sawmill_rate = snapshot.sawmill_wood_per_sec();
+    let income = snapshot.income_multiplier();
+    let sawmill_rate = snapshot.sawmill_wood_per_sec() * income;
     let mine_workers = snapshot.mine_workers;
     let mine_slots = snapshot.mine_slots();
-    let mine_rate = snapshot.mine_stone_per_sec();
+    let mine_rate = snapshot.mine_stone_per_sec() * income;
     let coal_workers = snapshot.coal_pit_workers;
     let coal_slots = snapshot.coal_pit_slots();
-    let coal_rate = snapshot.coal_pit_coal_per_sec();
+    let coal_rate = snapshot.coal_pit_coal_per_sec() * income;
     let coal_wood = snapshot.coal_pit_wood_per_sec();
     let batch_percent = format!("{:.0}%", snapshot.coal_pit_progress.clamp(0.0, 1.0) * 100.0);
     let batch_fill = format!(

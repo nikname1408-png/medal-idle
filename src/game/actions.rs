@@ -1442,6 +1442,18 @@ mod tests {
     }
 
     #[test]
+    fn passive_energy_regen_scales_with_cycles() {
+        let state = GameState {
+            cycles: 10,
+            house_level: 1,
+            ..GameState::default()
+        };
+
+        // Дом даёт 0.5/с, X на R = 10 равен 7 → 3.5/с.
+        assert!((state.energy_regen() - 3.5).abs() < 1e-9);
+    }
+
+    #[test]
     fn prestige_needs_cycle_threshold() {
         let mut state = GameState::default();
 
