@@ -58,12 +58,8 @@ pub struct Cost {
     pub gold: f64,
     /// Энергия, которую тратит постройка.
     pub energy: f64,
-    /// Гвозди (предмет `nails`).
-    pub nails: u32,
     /// Доски (предмет `board`).
     pub boards: u32,
-    /// Железные слитки (предмет `iron_ingot`).
-    pub iron_ingot: u32,
 }
 
 /// Стоимость из дерева, камня и золота без предметов и энергии.
@@ -73,9 +69,7 @@ fn cost(wood: f64, stone: f64, gold: f64) -> Cost {
         stone,
         gold,
         energy: 0.0,
-        nails: 0,
         boards: 0,
-        iron_ingot: 0,
     }
 }
 
@@ -99,14 +93,17 @@ pub fn storage_cost(level: u32) -> Cost {
     )
 }
 
-/// Стоимость следующего уровня амбара. Гвозди и доски фиксированы:
-/// стопка предмета ограничена 1000, поэтому рост цены только золотом.
+/// Стоимость следующего уровня амбара. Доски фиксированы (стопка ограничена),
+/// дерево тоже, а дорожает только золото.
 pub fn barn_cost(level: u32) -> Cost {
     let factor = BARN_COST_GROWTH.powi(level as i32);
     Cost {
-        nails: BARN_BASE_COST_NAILS,
         boards: BARN_BASE_COST_BOARDS,
-        ..cost(0.0, 0.0, (BARN_BASE_COST_GOLD * factor).ceil())
+        ..cost(
+            BARN_BASE_COST_WOOD,
+            0.0,
+            (BARN_BASE_COST_GOLD * factor).ceil(),
+        )
     }
 }
 
@@ -340,8 +337,8 @@ const STORAGE_BASE_COST_STONE: f64 = 15.0;
 /// оставаться ниже лимита хранения, иначе улучшение невозможно купить.
 const STORAGE_COST_GROWTH: f64 = 1.45;
 
-const BARN_BASE_COST_NAILS: u32 = 100;
-const BARN_BASE_COST_BOARDS: u32 = 40;
+pub const BARN_BASE_COST_WOOD: f64 = 300.0;
+pub const BARN_BASE_COST_BOARDS: u32 = 50;
 const BARN_BASE_COST_GOLD: f64 = 200.0;
 const BARN_COST_GROWTH: f64 = 1.35;
 

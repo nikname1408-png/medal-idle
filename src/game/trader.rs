@@ -43,8 +43,6 @@ pub const TRADERS: [TraderDef; 4] = [
             "cloth",
             "board",
             "brick",
-            "horseshoe",
-            "iron_dagger",
             "silver_ring",
             "trader_ring",
             "wanderer_pendant",
@@ -78,15 +76,15 @@ pub const TRADERS: [TraderDef; 4] = [
             "iron",
             "iron_ingot",
             "gold_ingot",
-            "nails",
             "board",
             "iron_bucket",
-            "hoe",
-            "pickaxe",
-            "axe",
-            "iron_sword",
+            "iron_helmet",
+            "iron_armor",
+            "iron_shield",
             "chainmail",
             "iron_bracers",
+            "hammer",
+            "iron_boots",
         ],
     },
     TraderDef {
@@ -316,7 +314,6 @@ fn bulk_volume(item_id: &str) -> Option<(u32, u32)> {
         "brick" => Some((80, 60)),
         "jug" => Some((60, 50)),
         "board" => Some((100, 80)),
-        "nails" => Some((100, 80)),
         "iron" => Some((120, 100)),
         _ => None,
     }
@@ -385,7 +382,8 @@ pub fn default_market(index: usize) -> TraderMarket {
             good("cloth", 30, 20, 85, 20),
             good("board", 100, 35, 60, 80),
             good("brick", 80, 45, 55, 60),
-            good("horseshoe", 8, 60, 40, 8),
+            good("leather_hat", 3, 60, 40, 4),
+            good("beggars_cloak", 3, 55, 45, 4),
             good("silver_ring", 2, 75, 30, 3),
             good("whetstone", 6, 65, 40, 6),
         ],
@@ -399,18 +397,20 @@ pub fn default_market(index: usize) -> TraderMarket {
             good("gems", 2, 85, 25, 2),
             good("backpack", 2, 80, 30, 3),
             good("wooden_bucket", 4, 50, 55, 5),
+            good("wanderers_hood", 2, 60, 40, 4),
+            good("hiking_boots", 1, 70, 35, 2),
             good("candle", 30, 35, 65, 20),
         ],
-        // Кузнец: металл, инструменты и оружие.
+        // Кузнец: металл, доспехи и инструменты.
         2 => vec![
             good("iron", 80, 50, 60, 80),
             good("iron_ingot", 12, 50, 55, 8),
             good("gold_ingot", 1, 85, 25, 2),
-            good("nails", 100, 45, 60, 80),
             good("board", 100, 30, 70, 80),
             good("iron_bucket", 4, 50, 55, 5),
-            good("pickaxe", 2, 65, 40, 3),
-            good("axe", 2, 60, 40, 3),
+            good("iron_helmet", 1, 70, 35, 2),
+            good("iron_shield", 1, 75, 30, 2),
+            good("hammer", 2, 60, 40, 3),
             good("iron_bracers", 1, 70, 35, 2),
         ],
         // Рудокоп: руды, металлы и шахтёрское снаряжение.
@@ -775,7 +775,7 @@ mod tests {
             Some(MarketStatus::Balance)
         );
         assert_eq!(
-            market.good("horseshoe").map(GoodState::status),
+            market.good("leather_hat").map(GoodState::status),
             Some(MarketStatus::Deficit)
         );
         assert_eq!(

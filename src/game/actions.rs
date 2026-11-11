@@ -182,9 +182,7 @@ pub fn can_afford(state: &GameState, cost: Cost) -> bool {
         && state.active_amount("stone") as f64 >= cost.stone
         && state.gold + 1e-9 >= cost.gold
         && state.energy + 1e-9 >= cost.energy
-        && state.item_count("nails") >= cost.nails
         && state.item_count("board") >= cost.boards
-        && state.item_count("iron_ingot") >= cost.iron_ingot
 }
 
 /// Списывает стоимость постройки. Возвращает `false`, если не хватает.
@@ -196,9 +194,7 @@ fn spend_cost(state: &mut GameState, cost: Cost) -> bool {
     state.spend_active("stone", cost.stone as u32);
     state.gold = (state.gold - cost.gold).max(0.0);
     state.energy = (state.energy - cost.energy).max(0.0);
-    state.remove_item("nails", cost.nails);
     state.remove_item("board", cost.boards);
-    state.remove_item("iron_ingot", cost.iron_ingot);
     true
 }
 
@@ -1021,9 +1017,7 @@ mod tests {
             ] {
                 assert_eq!(cost.gold, 0.0, "уровень {level}");
                 assert_eq!(cost.energy, 0.0, "уровень {level}");
-                assert_eq!(cost.nails, 0, "уровень {level}");
                 assert_eq!(cost.boards, 0, "уровень {level}");
-                assert_eq!(cost.iron_ingot, 0, "уровень {level}");
                 assert!(cost.wood > 0.0 && cost.stone > 0.0, "уровень {level}");
             }
         }
@@ -1048,13 +1042,14 @@ mod tests {
     }
 
     #[test]
-    fn barn_items_fit_into_stack_limit() {
+    fn barn_price_uses_wood_boards_and_gold() {
+        let cost = balance::barn_cost(0);
+        assert_eq!(cost.wood, balance::BARN_BASE_COST_WOOD);
+        assert_eq!(cost.boards, balance::BARN_BASE_COST_BOARDS);
+        assert_eq!(cost.stone, 0.0);
+        assert!(cost.gold > 0.0);
         for level in 0..=20 {
             let cost = balance::barn_cost(level);
-            assert!(
-                cost.nails <= crate::game::items::ITEM_STACK_LIMIT,
-                "амбар {level}"
-            );
             assert!(
                 cost.boards <= crate::game::items::ITEM_STACK_LIMIT,
                 "амбар {level}"
@@ -1204,9 +1199,9 @@ mod tests {
     #[test]
     fn tools_are_craftable_with_ingredients_and_fire() {
         for (recipe_id, ingredients) in [
-            ("hoe", [("iron_ingot", 2), ("nails", 4), ("board", 2)]),
-            ("sickle", [("iron_ingot", 3), ("nails", 2), ("board", 1)]),
-            ("scythe", [("iron_ingot", 3), ("nails", 5), ("board", 2)]),
+            ("sickle", [("iron_ingot", 3), ("board", 1)]),
+            ("scythe", [("iron_ingot", 3), ("board", 2)]),
+            ("hammer", [("board", 2), ("iron_ingot", 1)]),
         ] {
             let mut state = GameState {
                 forge_level: 1,
@@ -1508,7 +1503,7 @@ mod tests {
             ..GameState::default()
         };
         let cost = balance::barn_cost(0);
-        state.add_item("nails", cost.nails);
+        state.add_active("wood", cost.wood as u32);
         state.add_item("board", cost.boards);
         state.gold = cost.gold;
 

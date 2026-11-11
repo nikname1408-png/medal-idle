@@ -1841,17 +1841,9 @@ fn CostLabel(cost: balance::Cost) -> Element {
                 span { class: "cost-icon", "⚡" }
                 span { class: "cost-num", "{format_num(cost.energy)}" }
             }
-            if cost.nails > 0 {
-                span { class: "cost-icon", "📌" }
-                span { class: "cost-num", "{cost.nails}" }
-            }
             if cost.boards > 0 {
                 span { class: "cost-icon", "🪚" }
                 span { class: "cost-num", "{cost.boards}" }
-            }
-            if cost.iron_ingot > 0 {
-                span { class: "cost-icon", "🔩" }
-                span { class: "cost-num", "{cost.iron_ingot}" }
             }
         }
     }
