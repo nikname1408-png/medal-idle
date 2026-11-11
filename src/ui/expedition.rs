@@ -56,7 +56,7 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                 }
                 p { class: "exp-hint",
-                    "Каждую секунду пути есть {balance::EXPEDITION_LOOT_CHANCE}% шанс находки — поход идёт даже с закрытой вкладкой. Карты новых локаций падают только в последней открытой."
+                    "Каждую секунду пути есть {balance::EXPEDITION_LOOT_CHANCE}% шанс находки — поход идёт даже с закрытой вкладкой. Карты новых локаций падают только в последней открытой; карту нужно изучить в сумке."
                 }
                 div { class: "exp-stats",
                     span { class: "exp-stat",
@@ -163,7 +163,12 @@ fn ExpeditionCard(
         "В поход"
     };
     let unlock_text = expedition::unlock_map(location.id)
-        .map(|map_id| format!("Карта: {} (дроп или торговец)", ingredient_name(map_id)))
+        .map(|map_id| {
+            format!(
+                "Карта: {} (дроп или торговец, изучить в сумке)",
+                ingredient_name(map_id)
+            )
+        })
         .unwrap_or_default();
 
     rsx! {

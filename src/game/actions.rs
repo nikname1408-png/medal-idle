@@ -1,4 +1,5 @@
 use super::balance::{self, Cost};
+use super::expedition;
 use super::items;
 use super::state::{EquipError, GameState, ResearchKind, ResourceKind};
 use super::trader;
@@ -28,6 +29,27 @@ pub enum BuildResult {
     /// Достигнут максимальный уровень (заготовка на будущее).
     #[allow(dead_code)]
     MaxLevel,
+}
+
+/// Почему карту локации не удалось изучить.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StudyMapError {
+    /// Предмет не является картой локации.
+    NotMap,
+    /// Такой карты нет в сумке.
+    Missing,
+    /// Локация уже открыта — карту тратить не нужно.
+    AlreadyOpen,
+}
+
+impl StudyMapError {
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::NotMap => "Это не карта локации.",
+            Self::Missing => "В сумке нет такой карты.",
+            Self::AlreadyOpen => "Эта локация уже открыта.",
+        }
+    }
 }
 
 /// Предложение постройки, которое показывается игроку в центре экрана.
@@ -242,6 +264,24 @@ pub fn rest(state: &mut GameState) -> f64 {
     state.rest_clicks = state.rest_clicks.saturating_add(1);
     state.stats.rests = state.stats.rests.saturating_add(1);
     gained
+}
+
+/// Изучает карту локации: тратит одну карту и открывает поход.
+///
+/// Неважно, куплена карта или найдена в походе — открывает именно изучение.
+/// Если локация уже открыта, карта не тратится.
+pub fn study_map(state: &mut GameState, item_id: &str) -> Result<&'static str, StudyMapError> {
+    let Some(location_id) = expedition::location_for_map(item_id) else {
+        return Err(StudyMapError::NotMap);
+    };
+    if state.location_unlocked(location_id) {
+        return Err(StudyMapError::AlreadyOpen);
+    }
+    if !state.remove_item(item_id, 1) {
+        return Err(StudyMapError::Missing);
+    }
+    state.unlock_location(location_id);
+    Ok(location_id)
 }
 
 /// Один игровой тик: энергия, лесопилка, исследование и угольная яма.
@@ -1725,5 +1765,44 @@ mod tests {
         assert_eq!(build_bank(&mut state), BuildResult::Built(1));
         assert_eq!(state.bank_level, 1);
         assert!(state.trader_researched);
+    }
+
+    #[test]
+    fn map_study_opens_location_and_spends_one_map() {
+        let mut state = GameState::default();
+        state.add_item("map_forest", 2);
+        assert!(!state.location_unlocked("deep_forest"));
+
+        assert_eq!(study_map(&mut state, "map_forest"), Ok("deep_forest"));
+        assert!(state.location_unlocked("deep_forest"));
+        assert_eq!(state.item_count("map_forest"), 1);
+
+        // Повторное изучение уже открытой локации карту не тратит.
+        assert_eq!(
+            study_map(&mut state, "map_forest"),
+            Err(StudyMapError::AlreadyOpen)
+        );
+        assert_eq!(state.item_count("map_forest"), 1);
+    }
+
+    #[test]
+    fn bought_map_opens_the_same_way() {
+        // Карта из торговца — обычный предмет в сумке: открывает изучение.
+        let mut state = GameState::default();
+        state.add_item("map_mines", 1);
+        assert_eq!(study_map(&mut state, "map_mines"), Ok("deep_mines"));
+        assert!(state.location_unlocked("deep_mines"));
+        assert_eq!(state.item_count("map_mines"), 0);
+    }
+
+    #[test]
+    fn study_map_rejects_non_maps_and_missing_maps() {
+        let mut state = GameState::default();
+        assert_eq!(study_map(&mut state, "wood"), Err(StudyMapError::NotMap));
+        assert_eq!(
+            study_map(&mut state, "map_ruins"),
+            Err(StudyMapError::Missing)
+        );
+        assert!(!state.location_unlocked("ancient_ruins"));
     }
 }

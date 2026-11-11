@@ -3,6 +3,7 @@
 use dioxus::prelude::*;
 
 use crate::game::actions::{self, CraftError};
+use crate::game::expedition;
 use crate::game::items::{self, Category, EquipSlot, Item};
 use crate::game::state::{EquipError, GameState};
 
@@ -650,6 +651,7 @@ fn InventoryCard(
         .unwrap_or(false);
     let can_equip = item.slot.is_some() && count > 0 && !equipped;
     let item_id = item.id.clone();
+    let study_item_id = item_id.clone();
     let item_name = item.name.clone();
     let category = item.category.label();
     let rarity = item.rarity();
@@ -658,6 +660,12 @@ fn InventoryCard(
     let base_price = item.base_price;
     let slot = item.slot;
     let message_now = message();
+    let map_location = expedition::location_for_map(&item.id);
+    let map_open = map_location
+        .map(|location_id| view.location_unlocked(location_id))
+        .unwrap_or(false);
+    let can_study_map = map_location.is_some() && count > 0 && !map_open;
+    let mut map_ok = use_signal(|| false);
 
     rsx! {
         section { class: "inv-detail",
@@ -679,13 +687,45 @@ fn InventoryCard(
                 if let Some(slot) = slot {
                     span { "Слот: {slot.label()}" }
                 }
+                if let Some(location_id) = map_location {
+                    if let Some(location) = expedition::location(location_id) {
+                        span { "Локация: {location.name}" }
+                    }
+                    if map_open {
+                        span { "Уже открыта" }
+                    }
+                }
             }
 
             if !message_now.is_empty() {
-                div { class: "trade-error", "{message_now}" }
+                div { class: if map_ok() { "trade-error ok" } else { "trade-error" }, "{message_now}" }
             }
 
             div { class: "inv-detail-actions",
+                if map_location.is_some() {
+                    button {
+                        class: if can_study_map { "inv-tool" } else { "inv-tool disabled" },
+                        disabled: !can_study_map,
+                        onclick: move |_| {
+                            let result = {
+                                let mut guard = state.write();
+                                actions::study_map(&mut guard, &study_item_id)
+                            };
+                            map_ok.set(result.is_ok());
+                            message.set(match result {
+                                Ok(location_id) => format!(
+                                    "Открыта локация: {}.",
+                                    expedition::location(location_id)
+                                        .map(|location| location.name)
+                                        .unwrap_or("новая")
+                                ),
+                                Err(error) => error.text().to_string(),
+                            });
+                            refresh_view(state);
+                        },
+                        "Изучить карту"
+                    }
+                }
                 if let Some(slot) = slot {
                     if equipped {
                         button {

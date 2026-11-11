@@ -303,8 +303,6 @@ pub struct ExpeditionReport {
     pub out_of_energy: bool,
     /// Часть добычи не поместилась на склад и сгорела.
     pub overflow: bool,
-    /// Карты новых локаций, выпавшие и открывшие новые локации.
-    pub unlocked: Vec<&'static str>,
 }
 
 /// Итог одного тика похода.
@@ -312,8 +310,6 @@ pub struct ExpeditionReport {
 pub struct ExpeditionTick {
     /// Найденное за этот тик.
     pub loot: Vec<Loot>,
-    /// Открытые этим тиком локации.
-    pub unlocked: Vec<&'static str>,
     /// Найдено за время шага, сек (для счётчика времени в пути).
     pub seconds: f64,
     /// Рюкзак заполнился — поход прерван.
@@ -376,17 +372,12 @@ fn roll_loot_entry(
     Some(candidates[index])
 }
 
-/// Карта открывает локацию и попадает в рюкзак.
+/// Карта падает в рюкзак и ждёт, пока её изучат в сумке.
 fn grant_map(state: &mut GameState, tick: &mut ExpeditionTick, map_id: &'static str) {
     if !state.add_item(map_id, 1) {
         return;
     }
     push_loot(&mut tick.loot, map_id, 1, false);
-    if let Some(location_id) = location_for_map(map_id) {
-        if state.unlock_location(location_id) {
-            tick.unlocked.push(location_id);
-        }
-    }
 }
 
 /// Один шаг похода длительностью `dt` секунд.
@@ -529,13 +520,17 @@ pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
             }
             changed = true;
         }
-        if !tick.unlocked.is_empty() {
-            let names: Vec<&str> = tick
-                .unlocked
-                .iter()
-                .filter_map(|id| location(id).map(|location| location.name))
-                .collect();
-            active.notice = Some(format!("Открыта новая локация: {}.", names.join(", ")));
+        if let Some(map_id) = tick
+            .loot
+            .iter()
+            .map(|loot| loot.item_id.as_str())
+            .find(|item_id| location_for_map(item_id).is_some())
+        {
+            let name = location_for_map(map_id)
+                .and_then(location)
+                .map(|location| location.name)
+                .unwrap_or("новая локация");
+            active.notice = Some(format!("Найдена карта: «{name}». Изучи её в сумке."));
             changed = true;
         }
         if tick.overflow {
@@ -580,7 +575,6 @@ pub fn run_expedition(
         for loot in tick.loot {
             push_loot(&mut report.loot, &loot.item_id, loot.quantity, loot.active);
         }
-        report.unlocked.extend(tick.unlocked);
         report.overflow |= tick.overflow;
         if tick.interrupted {
             report.interrupted = true;
@@ -761,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn quarry_map_unlocks_forgotten_quarry() {
+    fn quarry_map_drops_but_opens_only_when_studied() {
         // Карта — редкая находка: меряем средний интервал до первой карты,
         // а не каждый отдельный бросок.
         let mut total = 0.0;
@@ -779,9 +773,15 @@ mod tests {
                     total += second as f64;
                     assert!(state.item_count("map_quarry") >= 1);
                     assert!(
-                        state.location_unlocked("forgotten_quarry"),
-                        "карта не открыла каменоломню"
+                        !state.location_unlocked("forgotten_quarry"),
+                        "карта не должна открывать локацию сама"
                     );
+                    // Изучение тратит одну карту и открывает каменоломню.
+                    let opened =
+                        crate::game::actions::study_map(&mut state, "map_quarry").expect("карта");
+                    assert_eq!(opened, "forgotten_quarry");
+                    assert!(state.location_unlocked("forgotten_quarry"));
+                    assert!(!state.location_unlocked("ancient_ruins"));
                     break;
                 }
                 // Рюкзак не должен переполняться и рвать долгий замер.
@@ -791,9 +791,9 @@ mod tests {
 
         assert!(found > 0, "карта каменоломни ни разу не выпала");
         let average = total / found as f64;
-        // По концепту карта — примерно раз в 2000 секунд пути.
+        // По концепту карта — примерно раз в 1400 секунд пути.
         assert!(
-            (1_200.0..=3_500.0).contains(&average),
+            (1_000.0..=2_000.0).contains(&average),
             "карта падает не по концепту: раз в {average:.0} с"
         );
     }

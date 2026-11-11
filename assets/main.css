@@ -1766,6 +1766,10 @@ button {
     color: var(--unavailable-text);
 }
 
+.trade-error.ok {
+    color: #7fcf7a;
+}
+
 .trade-actions {
     display: flex;
     flex-wrap: wrap;
