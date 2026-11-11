@@ -27,6 +27,7 @@ pub(crate) fn item_icon(item: &Item) -> &'static str {
         "cloth" => "🧵",
         "whetstone" => "🔪",
         "brick" => "🧱",
+        "stone_block" => "🪨",
         "iron_ingot" => "🔩",
         "silver_ingot" => "🥈",
         "gold_ingot" => "🟡",

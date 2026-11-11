@@ -35,7 +35,7 @@ pub struct TraderDef {
 /// Общий ассортимент Марты и Кузнеца: весь крафт, кроме карт.
 #[rustfmt::skip]
 const CRAFT_GOODS: &[&str] = &[
-    "jug", "candle", "cloth", "board", "brick",
+    "jug", "candle", "cloth", "board", "brick", "stone_block",
     "whetstone", "clay", "leather", "fiber",
     "quartz", "silver", "gems", "gold_ore",
     "backpack", "wooden_bucket", "sickle", "scythe",
@@ -69,7 +69,7 @@ pub const TRADERS: [TraderDef; 4] = [
         goods: &[
             // Ремесло и походное.
             "leather", "fiber", "clay", "quartz", "silver", "gems",
-            "backpack", "wooden_bucket", "sickle", "scythe", "candle",
+            "backpack", "wooden_bucket", "sickle", "scythe", "candle", "stone_block",
             "hiking_boots", "winter_boots", "leather_boots",
             // Карты локаций.
             "map_forest", "map_mines", "map_quarry", "map_ruins",
@@ -92,6 +92,7 @@ pub const TRADERS: [TraderDef; 4] = [
             "iron_ingot",
             "gold_ingot",
             "silver_ingot",
+            "stone_block",
             "whetstone",
             "miner_amulet",
             "iron_bracers",
@@ -309,6 +310,7 @@ fn bulk_volume(item_id: &str) -> Option<(u32, u32)> {
         "jug" => Some((60, 50)),
         "board" => Some((100, 80)),
         "iron" => Some((120, 100)),
+        "stone_block" => Some((150, 100)),
         _ => None,
     }
 }
@@ -386,6 +388,7 @@ pub fn default_market(index: usize) -> TraderMarket {
             good("cloth", 30, 20, 85, 20),
             good("board", 100, 35, 60, 80),
             good("brick", 80, 45, 55, 60),
+            good("stone_block", 150, 45, 55, 100),
             good("leather_hat", 3, 60, 40, 4),
             good("beggars_cloak", 3, 55, 45, 4),
             good("silver_ring", 2, 75, 30, 3),
@@ -404,6 +407,7 @@ pub fn default_market(index: usize) -> TraderMarket {
             good("wanderers_hood", 2, 60, 40, 4),
             good("hiking_boots", 1, 70, 35, 2),
             good("candle", 30, 35, 65, 20),
+            good("stone_block", 150, 45, 55, 100),
         ],
         // Кузнец: металл, доспехи и инструменты.
         2 => vec![
@@ -416,6 +420,7 @@ pub fn default_market(index: usize) -> TraderMarket {
             good("iron_shield", 1, 75, 30, 2),
             good("hammer", 2, 60, 40, 3),
             good("iron_bracers", 1, 70, 35, 2),
+            good("stone_block", 150, 45, 55, 100),
         ],
         // Рудокоп: руды, металлы и шахтёрское снаряжение.
         _ => vec![
@@ -426,6 +431,7 @@ pub fn default_market(index: usize) -> TraderMarket {
             good("gold_ore", 3, 88, 22, 3),
             good("iron_ingot", 10, 50, 55, 8),
             good("whetstone", 5, 60, 45, 5),
+            good("stone_block", 150, 45, 55, 100),
             good("miner_amulet", 1, 82, 25, 2),
         ],
     };
@@ -1174,6 +1180,23 @@ mod tests {
                 "рынок {index} почти не меняется: {count} смен за 200 шагов (пул {pool_size})"
             );
         }
+    }
+
+    #[test]
+    fn stone_block_is_sold_by_every_trader_in_bulk() {
+        assert!(items::item("stone_block").is_some(), "нет каменного блока");
+        for (index, trader) in TRADERS.iter().enumerate() {
+            assert!(
+                trader.goods.contains(&"stone_block"),
+                "у торговца {index} нет каменного блока"
+            );
+            assert!(
+                default_market(index).good("stone_block").is_some(),
+                "у торговца {index} блок не на витрине"
+            );
+        }
+        assert_eq!(base_stock("stone_block"), 150);
+        assert_eq!(base_buy_limit("stone_block"), 100);
     }
 
     #[test]

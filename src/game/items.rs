@@ -392,6 +392,14 @@ fn build_catalog() -> Vec<Item> {
         )
         .with_fire_cost(10),
         item_def(
+            "stone_block",
+            "Каменный блок",
+            Category::Goods,
+            150,
+            None,
+            "Тёсаный блок из пятидесяти камней. Готовая кладка для стройки.",
+        ),
+        item_def(
             "iron_ingot",
             "Железный слиток",
             Category::Material,
@@ -1108,6 +1116,14 @@ fn build_recipes() -> Vec<Recipe> {
             vec![need("clay", 2), need("coal", 1)],
         ),
         make_recipe(
+            "stone_block",
+            "Каменный блок",
+            "stone_block",
+            1,
+            0,
+            vec![need("stone", 50)],
+        ),
+        make_recipe(
             "iron_ingot",
             "Железный слиток",
             "iron_ingot",
@@ -1646,6 +1662,7 @@ mod tests {
             ("cloth", 11),
             ("whetstone", 26),
             ("brick", 16),
+            ("stone_block", 150),
             ("iron_ingot", 24),
             ("gold_ingot", 528),
             ("backpack", 51),

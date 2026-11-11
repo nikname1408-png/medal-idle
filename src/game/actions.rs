@@ -1299,6 +1299,20 @@ mod tests {
     }
 
     #[test]
+    fn stone_block_takes_fifty_stone() {
+        let mut state = GameState::default();
+        state.inventory.clear();
+        state.active_resources.clear();
+        state.add_active("stone", 49);
+        assert_eq!(craft(&mut state, "stone_block"), Err(CraftError::NotEnough));
+
+        state.add_active("stone", 1);
+        assert_eq!(craft(&mut state, "stone_block"), Ok(()));
+        assert_eq!(state.active_amount("stone"), 0);
+        assert_eq!(state.item_count("stone_block"), 1);
+    }
+
+    #[test]
     fn craft_rejects_missing_ingredients() {
         let mut state = GameState {
             forge_level: 1,
