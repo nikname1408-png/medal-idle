@@ -1812,20 +1812,75 @@ fn CollapsibleSection(title: String, children: Element) -> Element {
     }
 }
 
+/// Кнопка с автоповтором при удержании.
+///
+/// Первое нажатие срабатывает сразу, дальше — каждые `interval_ms`
+/// миллисекунд, пока палец (или мышь) не отпущен.
+#[component]
+fn HoldButton(
+    label: String,
+    class: String,
+    disabled: bool,
+    interval_ms: u64,
+    on_press: EventHandler<()>,
+) -> Element {
+    let mut holding = use_signal(|| false);
+
+    let start = move |_| {
+        if disabled {
+            return;
+        }
+        holding.set(true);
+        on_press.call(());
+        spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+                if !*holding.peek() {
+                    break;
+                }
+                on_press.call(());
+            }
+        });
+    };
+
+    let stop = move |_| {
+        holding.set(false);
+    };
+
+    rsx! {
+        button {
+            class: "{class}",
+            disabled,
+            onpointerdown: start,
+            onpointerup: stop,
+            onpointerleave: stop,
+            onpointerout: stop,
+            onpointercancel: stop,
+            "{label}"
+        }
+    }
+}
+
 #[component]
 fn ActionRow(label: String, info: String, available: bool, on_press: EventHandler<()>) -> Element {
     let mut open = use_signal(|| false);
     let is_open = open();
     let chev_class = if is_open { "chev open" } else { "chev" };
+    let main_class = if available {
+        "action-main"
+    } else {
+        "action-main unavailable"
+    };
 
     rsx! {
         div { class: "action",
             div { class: "action-line",
-                button {
-                    class: if available { "action-main" } else { "action-main unavailable" },
+                HoldButton {
+                    label,
+                    class: main_class.to_string(),
                     disabled: !available,
-                    onclick: move |_| on_press.call(()),
-                    span { class: "action-label", "{label}" }
+                    interval_ms: 250,
+                    on_press: move |_| on_press.call(()),
                 }
                 button {
                     class: "chev-btn",

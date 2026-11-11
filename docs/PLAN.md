@@ -344,6 +344,16 @@
     с фактической добычей.
   - Тесты: `gather_scales_with_cycles` (R=10 → 7 за клик),
     `rest_scales_with_cycles_but_energy_cap_does_not` (отдых 7, потолок 100).
+- [x] v0.7.19: автодобыча при удержании.
+  - Новый компонент `HoldButton` в `ui/app.rs`: `onpointerdown` сразу
+    вызывает действие и запускает `spawn`-цикл с `sleep(250 мс)` — четыре
+    срабатывания в секунду. `onpointerup`, `onpointerleave`, `onpointerout`
+    и `onpointercancel` сбрасывают `holding` и останавливают цикл.
+  - `disabled: !available` блокирует и первое нажатие, и автоповтор.
+  - `ActionRow` перевёл основную кнопку на `HoldButton` с интервалом
+    250 мс, класс вынесен в `main_class`; стрелка «Подробнее» осталась
+    обычной кнопкой. «Отдых», «Дерево» и «Камень» получили автодобычу
+    автоматически, потому что все идут через `ActionRow`.
 - [x] APK собирается: `.\build-apk.cmd` → `dist\pole.apk` (arm64).
 - [x] Установка и запуск на подключённом телефоне (`adb install -r`, APK
       ставится и стартует).
