@@ -165,6 +165,7 @@ pub fn InventoryScreen(
     let mut sort_alpha = use_signal(|| false);
     let mut message = use_signal(String::new);
     let mut handled_back = use_signal(|| *back.peek());
+    let mut selected_equip = use_signal(|| None::<EquipSlot>);
 
     use_effect(move || {
         let count = back();
@@ -176,6 +177,8 @@ pub fn InventoryScreen(
             selected.set(None);
         } else if *craft_open.peek() {
             craft_open.set(false);
+        } else if selected_equip.peek().is_some() {
+            selected_equip.set(None);
         } else {
             on_back.call(());
         }
@@ -209,13 +212,11 @@ pub fn InventoryScreen(
                         onclick: move |_| {
                             let next = !sort_alpha();
                             sort_alpha.set(next);
-                            message.set(
-                                if next {
-                                    "Сортировка: по названию".to_string()
-                                } else {
-                                    "Сортировка: по каталогу".to_string()
-                                },
-                            );
+                            message.set(if next {
+                                "Сортировка: по названию".to_string()
+                            } else {
+                                "Сортировка: по каталогу".to_string()
+                            });
                         },
                         "Сортировать"
                     }
@@ -235,12 +236,98 @@ pub fn InventoryScreen(
         if !craft_now {
             section { class: "inv-equipment",
                 div { class: "inv-subtitle", "Экипировка" }
-                for slot in EquipSlot::ALL {
+                div { class: "equip-grid",
                     EquipmentSlot {
-                        key: "{slot.label()}",
+                        slot: EquipSlot::Head,
+                        state,
+                        view: view.clone(),
+                        selected: selected_equip() == Some(EquipSlot::Head),
+                        on_select: move |_| {
+                            let next = if selected_equip() == Some(EquipSlot::Head) {
+                                None
+                            } else {
+                                Some(EquipSlot::Head)
+                            };
+                            selected_equip.set(next);
+                        },
+                    }
+                    EquipmentSlot {
+                        slot: EquipSlot::Accessory1,
+                        state,
+                        view: view.clone(),
+                        selected: selected_equip() == Some(EquipSlot::Accessory1),
+                        on_select: move |_| {
+                            let next = if selected_equip() == Some(EquipSlot::Accessory1) {
+                                None
+                            } else {
+                                Some(EquipSlot::Accessory1)
+                            };
+                            selected_equip.set(next);
+                        },
+                    }
+                    EquipmentSlot {
+                        slot: EquipSlot::Body,
+                        state,
+                        view: view.clone(),
+                        selected: selected_equip() == Some(EquipSlot::Body),
+                        on_select: move |_| {
+                            let next = if selected_equip() == Some(EquipSlot::Body) {
+                                None
+                            } else {
+                                Some(EquipSlot::Body)
+                            };
+                            selected_equip.set(next);
+                        },
+                    }
+                    EquipmentSlot {
+                        slot: EquipSlot::Hand,
+                        state,
+                        view: view.clone(),
+                        selected: selected_equip() == Some(EquipSlot::Hand),
+                        on_select: move |_| {
+                            let next = if selected_equip() == Some(EquipSlot::Hand) {
+                                None
+                            } else {
+                                Some(EquipSlot::Hand)
+                            };
+                            selected_equip.set(next);
+                        },
+                    }
+                    EquipmentSlot {
+                        slot: EquipSlot::Feet,
+                        state,
+                        view: view.clone(),
+                        selected: selected_equip() == Some(EquipSlot::Feet),
+                        on_select: move |_| {
+                            let next = if selected_equip() == Some(EquipSlot::Feet) {
+                                None
+                            } else {
+                                Some(EquipSlot::Feet)
+                            };
+                            selected_equip.set(next);
+                        },
+                    }
+                    EquipmentSlot {
+                        slot: EquipSlot::Accessory2,
+                        state,
+                        view: view.clone(),
+                        selected: selected_equip() == Some(EquipSlot::Accessory2),
+                        on_select: move |_| {
+                            let next = if selected_equip() == Some(EquipSlot::Accessory2) {
+                                None
+                            } else {
+                                Some(EquipSlot::Accessory2)
+                            };
+                            selected_equip.set(next);
+                        },
+                    }
+                }
+                if let Some(slot) = selected_equip() {
+                    EquipDetail {
                         slot,
                         state,
                         view: view.clone(),
+                        on_close: move |_| selected_equip.set(None),
                     }
                 }
                 div { class: "inv-sets",
@@ -315,7 +402,50 @@ pub fn InventoryScreen(
 }
 
 #[component]
-fn EquipmentSlot(slot: EquipSlot, state: Signal<GameState>, view: GameState) -> Element {
+fn EquipmentSlot(
+    slot: EquipSlot,
+    state: Signal<GameState>,
+    view: GameState,
+    selected: bool,
+    on_select: EventHandler<()>,
+) -> Element {
+    let _ = state;
+    let item = view.equipped_item(slot);
+    let class = if selected {
+        "equip-cell selected"
+    } else {
+        "equip-cell"
+    };
+
+    rsx! {
+        button { class: "{class}", onclick: move |_| on_select.call(()),
+            div { class: "equip-cell-icon",
+                if let Some(item) = item {
+                    ItemIcon {
+                        item: (*item).clone(),
+                        class: "equip-icon".to_string(),
+                    }
+                } else {
+                    "{slot_short(slot)}"
+                }
+            }
+            div { class: "equip-cell-label", "{slot.label()}" }
+            if let Some(item) = item {
+                div { class: "equip-cell-name", "{item.name}" }
+            } else {
+                div { class: "equip-cell-name empty", "Пусто" }
+            }
+        }
+    }
+}
+
+#[component]
+fn EquipDetail(
+    slot: EquipSlot,
+    state: Signal<GameState>,
+    view: GameState,
+    on_close: EventHandler<()>,
+) -> Element {
     let mut state = state;
     let item = view.equipped_item(slot);
     let name = item.map(|item| item.name.as_str()).unwrap_or("Пусто");
@@ -323,32 +453,30 @@ fn EquipmentSlot(slot: EquipSlot, state: Signal<GameState>, view: GameState) -> 
     let can_unequip = item.is_some();
 
     rsx! {
-        div { class: "equip-row",
-            div { class: "equip-slot",
-                if let Some(item) = item {
-                    ItemIcon { item: (*item).clone(), class: "equip-icon".to_string() }
-                } else {
-                    "{slot_short(slot)}"
-                }
+        div { class: "equip-detail",
+            div { class: "equip-detail-head",
+                span { class: "equip-detail-label", "{slot.label()}" }
+                span { class: "equip-detail-name", "{name}" }
             }
-            div { class: "equip-main",
-                span { class: "equip-label", "{slot.label()}" }
-                span { class: "equip-value", "{name}" }
-                if !bonus.is_empty() {
-                    span { class: "equip-bonus", "{bonus}" }
-                }
+            if !bonus.is_empty() {
+                div { class: "equip-detail-bonus", "{bonus}" }
             }
-            button {
-                class: if can_unequip { "equip-btn" } else { "equip-btn disabled" },
-                disabled: !can_unequip,
-                onclick: move |_| {
-                    {
-                        let mut guard = state.write();
-                        actions::unequip_slot(&mut guard, slot);
+            div { class: "equip-detail-actions",
+                if can_unequip {
+                    button {
+                        class: "inv-tool",
+                        onclick: move |_| {
+                            {
+                                let mut guard = state.write();
+                                actions::unequip_slot(&mut guard, slot);
+                            }
+                            refresh_view(state);
+                            on_close.call(());
+                        },
+                        "Снять"
                     }
-                    refresh_view(state);
-                },
-                "Снять"
+                }
+                button { class: "inv-tool", onclick: move |_| on_close.call(()), "Закрыть" }
             }
         }
     }
@@ -369,12 +497,7 @@ fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<Stri
             onclick: move |_| on_select.call(item_id.clone()),
             ItemIcon { item: item.clone(), class: "inv-item-icon".to_string() }
             if count > 1 {
-                span {
-                    class: if count >= items::ITEM_STACK_LIMIT {
-                        "inv-badge full"
-                    } else {
-                        "inv-badge"
-                    },
+                span { class: if count >= items::ITEM_STACK_LIMIT { "inv-badge full" } else { "inv-badge" },
                     "{count}"
                 }
             }
@@ -432,11 +555,7 @@ pub fn CraftScreen(
         section { class: "inv-craft",
             div { class: "inv-title-row",
                 h2 { class: "inv-title", "Крафт" }
-                button {
-                    class: "inv-tool",
-                    onclick: move |_| on_close.call(()),
-                    "Назад"
-                }
+                button { class: "inv-tool", onclick: move |_| on_close.call(()), "Назад" }
             }
             div { class: "inv-grid",
                 for recipe in items::recipes() {
@@ -491,9 +610,7 @@ fn RecipeCell(
     };
 
     rsx! {
-        button {
-            class: "{class}",
-            onclick: move |_| on_select.call(recipe_id),
+        button { class: "{class}", onclick: move |_| on_select.call(recipe_id),
             ItemIcon { item: (*result).clone(), class: "inv-item-icon".to_string() }
             if let Some(crafts) = crafts_badge(&view, recipe) {
                 span { class: "inv-badge", "{crafts}" }
@@ -573,10 +690,13 @@ fn CraftPanel(
                         let mut guard = state.write();
                         actions::craft_times(&mut guard, &recipe_id, times)
                     };
-                    message.set(match result {
-                        Ok(_) => String::new(),
-                        Err(error) => craft_error_text(error).to_string(),
-                    });
+                    message
+                        .set(
+                            match result {
+                                Ok(_) => String::new(),
+                                Err(error) => craft_error_text(error).to_string(),
+                            },
+                        );
                     refresh_view(state);
                 },
                 "{label}"
@@ -594,7 +714,10 @@ fn CraftPanel(
                     div { class: "craft-panel-owned", "У меня: {owned}" }
                 }
                 div { class: "craft-panel-icon",
-                    ItemIcon { item: (*result).clone(), class: "craft-icon".to_string() }
+                    ItemIcon {
+                        item: (*result).clone(),
+                        class: "craft-icon".to_string(),
+                    }
                 }
             }
 
@@ -609,7 +732,7 @@ fn CraftPanel(
                     }
                 }
                 div { class: "craft-panel-cost",
-                    for (ingredient, have, need, lack) in ingredients.iter() {
+                    for (ingredient , have , need , lack) in ingredients.iter() {
                         div {
                             key: "{ingredient}",
                             class: if *lack { "craft-need lack" } else { "craft-need" },
@@ -627,7 +750,9 @@ fn CraftPanel(
             }
             if !result_id.is_empty() {
                 div { class: "craft-panel-hint",
-                    if missing { "Красным отмечены недостающие ресурсы." }
+                    if missing {
+                        "Красным отмечены недостающие ресурсы."
+                    }
                 }
             }
         }
@@ -722,15 +847,20 @@ fn InventoryCard(
                                 actions::study_map(&mut guard, &study_item_id)
                             };
                             map_ok.set(result.is_ok());
-                            message.set(match result {
-                                Ok(location_id) => format!(
-                                    "Открыта локация: {}.",
-                                    expedition::location(location_id)
-                                        .map(|location| location.name)
-                                        .unwrap_or("новая")
-                                ),
-                                Err(error) => error.text().to_string(),
-                            });
+                            message
+                                .set(
+                                    match result {
+                                        Ok(location_id) => {
+                                            format!(
+                                                "Открыта локация: {}.",
+                                                expedition::location(location_id)
+                                                    .map(|location| location.name)
+                                                    .unwrap_or("новая"),
+                                            )
+                                        }
+                                        Err(error) => error.text().to_string(),
+                                    },
+                                );
                             refresh_view(state);
                         },
                         "Изучить карту"
@@ -758,21 +888,20 @@ fn InventoryCard(
                                     let mut guard = state.write();
                                     actions::equip_item(&mut guard, &item_id)
                                 };
-                                message.set(match result {
-                                    Ok(()) => String::new(),
-                                    Err(error) => equip_error_text(error).to_string(),
-                                });
+                                message
+                                    .set(
+                                        match result {
+                                            Ok(()) => String::new(),
+                                            Err(error) => equip_error_text(error).to_string(),
+                                        },
+                                    );
                                 refresh_view(state);
                             },
                             "Надеть"
                         }
                     }
                 }
-                button {
-                    class: "inv-tool",
-                    onclick: move |_| on_close.call(()),
-                    "Закрыть"
-                }
+                button { class: "inv-tool", onclick: move |_| on_close.call(()), "Закрыть" }
             }
         }
     }
