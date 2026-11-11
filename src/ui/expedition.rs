@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 
 use crate::game::balance;
 use crate::game::expedition::{self, ExpeditionLocation};
+use crate::game::i18n;
 use crate::game::state::{ActiveExpedition, GameState};
 
 use super::app::{format_num, refresh_view};
@@ -39,34 +40,43 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
             expedition
                 .found
                 .iter()
-                .map(|(item_id, quantity, _)| format!("+{quantity} × {}", ingredient_name(item_id)))
+                .map(|(item_id, quantity, _)| {
+                    i18n::tf(
+                        "hike.found_line",
+                        &[&quantity.to_string(), ingredient_name(item_id)],
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         })
         .unwrap_or_default();
     let current_id = view.current_location();
+    let energy_text = i18n::tf(
+        "hike.energy",
+        &[&format_num(energy), &format_num(view.max_energy())],
+    );
+    let hint_text = i18n::tf("hike.hint", &[&balance::EXPEDITION_LOOT_CHANCE.to_string()]);
+    let bag_text = i18n::tf(
+        "hike.bag",
+        &[
+            &view.inventory_used_slots().to_string(),
+            &view.inventory_slots().to_string(),
+        ],
+    );
 
     rsx! {
         section { class: "exp-screen",
             div { class: "exp-head",
                 div { class: "exp-title-row",
-                    h2 { class: "exp-title", "Походы" }
-                    span { class: "exp-energy",
-                        "Энергия: {format_num(energy)} / {format_num(view.max_energy())}"
-                    }
+                    h2 { class: "exp-title", "{i18n::t(\"sec.hike\")}" }
+                    span { class: "exp-energy", "{energy_text}" }
                 }
-                p { class: "exp-hint",
-                    "Каждую секунду пути есть {balance::EXPEDITION_LOOT_CHANCE}% шанс находки — поход идёт даже с закрытой вкладкой. Карты новых локаций падают только в последней открытой; карту нужно изучить в сумке."
-                }
+                p { class: "exp-hint", "{hint_text}" }
                 div { class: "exp-stats",
-                    span { class: "exp-stat",
-                        "Рюкзак: {view.inventory_used_slots()}/{view.inventory_slots()}"
-                    }
+                    span { class: "exp-stat", "{bag_text}" }
                 }
                 if view.inventory_free_slots() == 0 {
-                    div { class: "exp-warning",
-                        "Рюкзак полон: инвентарная находка прервёт поход."
-                    }
+                    div { class: "exp-warning", "{i18n::t(\"hike.bag_full\")}" }
                 }
             }
 
@@ -74,9 +84,11 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                 div { class: "exp-live",
                     div { class: "exp-live-head",
                         span { class: "exp-live-name",
-                            "В пути: {expedition::location(&location_id).map(|l| l.name).unwrap_or(\"\")}"
+                            "{i18n::tf(\"hike.on_the_way\", &[expedition::location(&location_id).map(|l| l.name()).unwrap_or(\"\")])}"
                         }
-                        span { class: "exp-live-time", "В пути {format_num(elapsed as f64)} с" }
+                        span { class: "exp-live-time",
+                            "{i18n::tf(\"hike.elapsed\", &[&format_num(elapsed as f64)])}"
+                        }
                     }
                     button {
                         class: "exp-stop",
@@ -85,14 +97,15 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                                 let mut guard = state.write();
                                 if let Some(active) = guard.active_expedition.as_mut() {
                                     if active.notice.is_none() {
-                                        active.notice = Some("Поход окончен.".to_string());
+                                        active.notice =
+                                            Some(i18n::t("hike.finished").to_string());
                                     }
                                     active.done = true;
                                 }
                             }
                             refresh_view(state);
                         },
-                        "Закончить поход"
+                        "{i18n::t(\"btn.finish_hike\")}"
                     }
                 }
             }
@@ -106,7 +119,7 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
 
             if !found_text.is_empty() {
                 div { class: "exp-found",
-                    div { class: "exp-found-title", "Найдено в этом походе" }
+                    div { class: "exp-found-title", "{i18n::t(\"hike.found\")}" }
                     div { class: "exp-found-list", "{found_text}" }
                 }
             }
@@ -153,46 +166,56 @@ fn ExpeditionCard(
     let can_go =
         unlocked && meets_requirement && !busy && energy + 1e-9 >= location.energy_per_second;
     let button_label = if !unlocked {
-        "Закрыто"
+        i18n::t("hike.locked")
     } else if !meets_requirement {
-        "Нужен предмет"
+        i18n::t("hike.needs_item")
     } else if current {
-        "Идёт поход"
+        i18n::t("hike.running")
     } else if busy {
-        "Занят"
+        i18n::t("hike.busy")
     } else {
-        "В поход"
+        i18n::t("hike.go")
     };
     let unlock_text = expedition::unlock_map(location.id)
-        .map(|map_id| {
-            format!(
-                "Карта: {} (дроп или торговец, изучить в сумке)",
-                ingredient_name(map_id)
-            )
-        })
+        .map(|map_id| i18n::tf("hike.map_line", &[ingredient_name(map_id)]))
         .unwrap_or_default();
+    let requirement_text = match location.requires_item {
+        None => String::new(),
+        Some("candle") => i18n::tf(
+            "hike.need_candle",
+            &[
+                i18n::t("req.candle"),
+                &balance::CANDLE_SECONDS_PER_ITEM.to_string(),
+            ],
+        ),
+        Some(item_id) => i18n::tf(
+            "hike.need_item",
+            &[i18n::t("req.torch_or_candle"), ingredient_name(item_id)],
+        ),
+    };
+    let special_text = i18n::tf(
+        "hike.special_loot",
+        &[&format_num(balance::EXPEDITION_STEAM_BLUEPRINT_ROLL as f64)],
+    );
+    let cost_text = i18n::tf("hike.cost", &[&format_num(location.energy_per_second)]);
 
     rsx! {
         div {
             class: if !unlocked { "exp-card locked" } else if current { "exp-card current" } else { "exp-card" },
             div { class: "exp-card-head",
-                span { class: "exp-card-name", "{location.name}" }
+                span { class: "exp-card-name", "{location.name()}" }
                 if is_current && unlocked {
-                    span { class: "exp-card-chance", "текущая" }
+                    span { class: "exp-card-chance", "{i18n::t(\"hike.current\")}" }
                 }
             }
-            div { class: "exp-card-desc", "{location.description}" }
+            div { class: "exp-card-desc", "{location.description()}" }
             if !unlocked {
                 div { class: "exp-card-desc", "{unlock_text}" }
             }
-            if let Some((item_id, label)) = location.requires_item {
+            if location.requires_item.is_some() {
                 div {
                     class: if meets_requirement { "exp-card-desc" } else { "exp-card-desc poor" },
-                    if item_id == "candle" {
-                        "Требуется: {label} — 1 шт. на {balance::CANDLE_SECONDS_PER_ITEM} секунд пути"
-                    } else {
-                        "Требуется: {label} ({ingredient_name(item_id)})"
-                    }
+                    "{requirement_text}"
                 }
             }
             div { class: "exp-card-loot",
@@ -207,14 +230,10 @@ fn ExpeditionCard(
                 }
             }
             if location.id == "ancient_ruins" {
-                div { class: "exp-card-desc",
-                    "Особый лут: Чертёж паровой машины — в среднем раз в {format_num(balance::EXPEDITION_STEAM_BLUEPRINT_ROLL as f64)} секунд пути"
-                }
+                div { class: "exp-card-desc", "{special_text}" }
             }
             div { class: "exp-card-foot",
-                span { class: "exp-card-cost",
-                    "−{format_num(location.energy_per_second)} энергии/с"
-                }
+                span { class: "exp-card-cost", "{cost_text}" }
                 button {
                     class: if can_go { "exp-go" } else { "exp-go disabled" },
                     disabled: !can_go,

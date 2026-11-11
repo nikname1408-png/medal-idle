@@ -4,10 +4,38 @@
 
 use dioxus::prelude::*;
 
+use crate::game::i18n::Lang;
 use crate::game::GameState;
 
 /// Ключ, под которым лежит JSON сохранения.
 const SAVE_KEY: &str = "pole_save";
+
+/// Ключ языка интерфейса. Язык живёт отдельно: «Сбросить прогресс» его не
+/// трогает.
+const LANG_KEY: &str = "pole_lang";
+
+/// Читает сохранённый язык. `Ok(None)` — язык ещё не выбирали.
+pub async fn load_lang() -> Result<Option<Lang>, String> {
+    let script = format!("return localStorage.getItem('{LANG_KEY}');");
+    let value = document::eval(&script)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(value.as_str().map(Lang::parse))
+}
+
+/// Запоминает выбранный язык.
+pub async fn save_lang(lang: Lang) -> Result<(), String> {
+    let script = format!(
+        "localStorage.setItem('{LANG_KEY}', '{}'); return true;",
+        lang.code_str()
+    );
+    document::eval(&script)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
 
 /// Загружает сохранение. `Ok(None)` — сохранения ещё нет.
 pub async fn load() -> Result<Option<GameState>, String> {

@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use super::balance;
+use super::i18n;
 use super::items::{self, EquipSlot};
 use super::trader::{self, TraderMarket};
 
@@ -22,11 +23,11 @@ impl ResourceKind {
     #[allow(dead_code)]
     pub fn name(self) -> &'static str {
         match self {
-            Self::Wood => "дерево",
-            Self::Stone => "камень",
-            Self::Coal => "уголь",
-            Self::Fire => "огонь",
-            Self::Gold => "золото",
+            Self::Wood => i18n::t("res.wood"),
+            Self::Stone => i18n::t("res.stone"),
+            Self::Coal => i18n::t("res.coal"),
+            Self::Fire => i18n::t("res.fire"),
+            Self::Gold => i18n::t("res.gold"),
         }
     }
 }
@@ -50,17 +51,17 @@ impl ResearchKind {
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::CoalPit => "Угольная яма",
-            Self::Forge => "Кузница",
-            Self::Bank => "Банк",
+            Self::CoalPit => i18n::t("build.coal_pit"),
+            Self::Forge => i18n::t("build.forge"),
+            Self::Bank => i18n::t("build.bank"),
         }
     }
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::CoalPit => "Открывает угольную яму: работники тратят дерево и добывают уголь.",
-            Self::Forge => "Открывает кузницу: огонь из угля плавит камень в железо.",
-            Self::Bank => "Открывает банк: повышает лимит золота.",
+            Self::CoalPit => i18n::t("research.coal_pit"),
+            Self::Forge => i18n::t("research.forge"),
+            Self::Bank => i18n::t("research.bank"),
         }
     }
 
@@ -68,8 +69,8 @@ impl ResearchKind {
     pub fn requirement(self) -> Option<&'static str> {
         match self {
             Self::CoalPit => None,
-            Self::Forge => Some("угольную яму"),
-            Self::Bank => Some("кузницу"),
+            Self::Forge => Some(i18n::t("build.coal_pit")),
+            Self::Bank => Some(i18n::t("build.forge")),
         }
     }
 }
@@ -140,11 +141,11 @@ pub enum EquipError {
 impl EquipError {
     pub fn text(self) -> &'static str {
         match self {
-            Self::UnknownItem => "Такого предмета нет.",
-            Self::NotOwned => "Этого предмета нет в сумке.",
-            Self::NotEquippable => "Этот предмет нельзя надеть.",
-            Self::AlreadyEquipped => "Предмет уже надет.",
-            Self::SlotOccupied => "Слот занят. Сначала сними текущий предмет.",
+            Self::UnknownItem => i18n::t("err.unknown_item"),
+            Self::NotOwned => i18n::t("err.not_owned"),
+            Self::NotEquippable => i18n::t("err.not_equippable"),
+            Self::AlreadyEquipped => i18n::t("err.already_equipped"),
+            Self::SlotOccupied => i18n::t("err.slot_occupied"),
         }
     }
 }
@@ -166,11 +167,23 @@ pub struct Stats {
 /// Состояние одного достижения для экрана статистики.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AchievementStatus {
-    pub name: &'static str,
-    pub description: &'static str,
+    /// Ключ достижения: `ach.<id>.name` / `ach.<id>.desc` в словаре.
+    pub id: &'static str,
     pub progress: f64,
     pub done: bool,
     pub value_text: String,
+}
+
+impl AchievementStatus {
+    /// Название достижения на текущем языке.
+    pub fn name(&self) -> &'static str {
+        i18n::t_or(&format!("ach.{}.name", self.id), "")
+    }
+
+    /// Описание достижения на текущем языке.
+    pub fn description(&self) -> &'static str {
+        i18n::t_or(&format!("ach.{}.desc", self.id), "")
+    }
 }
 
 /// Визуальная тема игры.
@@ -200,15 +213,33 @@ pub struct DevSettings {
 }
 
 /// Письмо в колокольчике: отложенное предложение постройки.
+///
+/// Заголовок и текст берутся из словаря по `id` письма
+/// (`letter.<id>.title` / `letter.<id>.body`), поэтому письмо меняет язык
+/// вместе с интерфейсом.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Letter {
     pub id: String,
+    /// Старое поле: раньше текст письма хранился прямо в сохранении. Теперь
+    /// здесь пусто, а `migrate` его очищает.
     pub title: String,
     pub body: String,
     /// ID предложения, которое откроется по нажатию на письмо.
     pub offer: Option<String>,
     pub read: bool,
+}
+
+impl Letter {
+    /// Заголовок письма на текущем языке.
+    pub fn title(&self) -> &'static str {
+        i18n::t_or(&format!("letter.{}.title", self.id), "")
+    }
+
+    /// Текст письма на текущем языке.
+    pub fn body(&self) -> &'static str {
+        i18n::t_or(&format!("letter.{}.body", self.id), "")
+    }
 }
 
 /// Активный поход. Живёт в состоянии игры, поэтому идёт вне вкладки «Походы».
@@ -809,18 +840,19 @@ impl GameState {
 
     /// Кладёт письмо в колокольчик. Повторное письмо с тем же id не дублируется,
     /// но снова становится непрочитанным.
-    pub fn add_letter(&mut self, id: &str, title: &str, body: &str, offer: Option<&str>) {
+    pub fn add_letter(&mut self, id: &str, offer: Option<&str>) {
         if let Some(letter) = self.letters.iter_mut().find(|letter| letter.id == id) {
-            letter.title = title.to_string();
-            letter.body = body.to_string();
+            // Текст-легаси из старого сохранения больше не нужен.
+            letter.title.clear();
+            letter.body.clear();
             letter.offer = offer.map(str::to_string);
             letter.read = false;
             return;
         }
         self.letters.push(Letter {
             id: id.to_string(),
-            title: title.to_string(),
-            body: body.to_string(),
+            title: String::new(),
+            body: String::new(),
             offer: offer.map(str::to_string),
             read: false,
         });
@@ -1197,91 +1229,35 @@ impl GameState {
 
     /// Достижения с прогрессом.
     pub fn achievements(&self) -> Vec<AchievementStatus> {
-        fn make(
-            name: &'static str,
-            description: &'static str,
-            value: f64,
-            target: f64,
-            unit: &str,
-        ) -> AchievementStatus {
+        fn make(id: &'static str, value: f64, target: f64) -> AchievementStatus {
             let ratio = if target <= 0.0 {
                 1.0
             } else {
                 (value / target).clamp(0.0, 1.0)
             };
             AchievementStatus {
-                name,
-                description,
+                id,
                 progress: ratio,
                 done: value + 1e-9 >= target,
-                value_text: format!("{}/{} {unit}", value.floor(), target.floor()),
+                value_text: format!(
+                    "{}/{} {}",
+                    value.floor(),
+                    target.floor(),
+                    i18n::t_or(&format!("ach.{id}.unit"), "")
+                ),
             }
         }
 
         vec![
-            make(
-                "Первые шаги",
-                "Отдохни 10 раз и открой добычу.",
-                self.stats.rests as f64,
-                10.0,
-                "отдыхов",
-            ),
-            make(
-                "Дровосек",
-                "Добудь 100 дерева за всё время.",
-                self.stats.wood_gathered,
-                100.0,
-                "дерева",
-            ),
-            make(
-                "Каменотёс",
-                "Добудь 100 камня за всё время.",
-                self.stats.stone_gathered,
-                100.0,
-                "камня",
-            ),
-            make(
-                "Угольный мастер",
-                "Получи 100 угля за всё время.",
-                self.stats.coal_produced,
-                100.0,
-                "угля",
-            ),
-            make(
-                "Шахтёр",
-                "Добудь 50 железа за всё время.",
-                self.stats.iron_mined,
-                50.0,
-                "железа",
-            ),
-            make(
-                "Богач",
-                "Заработай 100 золота на торговле.",
-                self.stats.gold_earned,
-                100.0,
-                "золота",
-            ),
-            make(
-                "Первое перерождение",
-                "Начни новое перерождение после кузницы.",
-                self.cycles as f64,
-                1.0,
-                "перерождений",
-            ),
-            make(
-                "Хозяин",
-                "Получи 5 рабочих мест.",
-                self.worker_slots() as f64,
-                5.0,
-                "мест",
-            ),
-            make(
-                "Путешественник во времени",
-                "Накопи 60 времени.",
-                self.time,
-                60.0,
-                "времени",
-            ),
+            make("first_steps", self.stats.rests as f64, 10.0),
+            make("woodcutter", self.stats.wood_gathered, 500.0),
+            make("mason", self.stats.stone_gathered, 500.0),
+            make("coal_master", self.stats.coal_produced, 500.0),
+            make("miner", self.stats.iron_mined, 250.0),
+            make("rich", self.stats.gold_earned, 1000.0),
+            make("first_rebirth", self.cycles as f64, 1.0),
+            make("master", self.worker_slots() as f64, 5.0),
+            make("time_traveler", self.time, 60.0),
         ]
     }
 
@@ -1561,13 +1537,10 @@ impl GameState {
     }
 
     /// Есть ли у игрока требуемый локации предмет (кирка, свеча).
-    pub fn meets_location_requirement(
-        &self,
-        requirement: Option<(&'static str, &'static str)>,
-    ) -> bool {
+    pub fn meets_location_requirement(&self, requirement: Option<&'static str>) -> bool {
         match requirement {
             None => true,
-            Some((item_id, _)) => self.item_count(item_id) > 0,
+            Some(item_id) => self.item_count(item_id) > 0,
         }
     }
 }

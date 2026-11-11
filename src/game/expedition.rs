@@ -1,4 +1,4 @@
-//! Походы по локациям.
+﻿//! Походы по локациям.
 //!
 //! Поход длится, пока есть энергия: каждую секунду пути тратится расход
 //! локации. Каждую секунду с шансом [`balance::EXPEDITION_LOOT_CHANCE`]
@@ -12,6 +12,7 @@
 
 use super::actions::next_random;
 use super::balance;
+use super::i18n;
 use super::state::GameState;
 
 /// Ошибка похода.
@@ -46,11 +47,11 @@ impl Rarity {
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::Common => "Обычный",
-            Self::Uncommon => "Необычный",
-            Self::Rare => "Редкий",
-            Self::Epic => "Эпический",
-            Self::Legendary => "Легендарный",
+            Self::Common => i18n::t("rarity.common"),
+            Self::Uncommon => i18n::t("rarity.uncommon"),
+            Self::Rare => i18n::t("rarity.rare"),
+            Self::Epic => i18n::t("rarity.epic"),
+            Self::Legendary => i18n::t("rarity.legendary"),
         }
     }
 
@@ -80,12 +81,11 @@ pub struct LootEntry {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExpeditionLocation {
     pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
     /// Расход энергии в секунду.
     pub energy_per_second: f64,
-    /// Требуемый предмет (кирка/свеча); `None` — без требования.
-    pub requires_item: Option<(&'static str, &'static str)>,
+    /// Требуемый предмет; `None` — без требования. Название берётся из
+    /// словаря по `id` предмета.
+    pub requires_item: Option<&'static str>,
     /// Таблица лута с редкостями.
     pub loot: &'static [LootEntry],
     /// Карта, которая падает в этой локации как обычный лут (`None` — нет).
@@ -93,10 +93,19 @@ pub struct ExpeditionLocation {
 }
 
 impl ExpeditionLocation {
+    /// Название локации на текущем языке.
+    pub fn name(&self) -> &'static str {
+        i18n::t_or(&format!("loc.{}.name", self.id), self.id)
+    }
+
+    /// Описание локации на текущем языке.
+    pub fn description(&self) -> &'static str {
+        i18n::t_or(&format!("loc.{}.desc", self.id), "")
+    }
+
     /// Локация тёмная: в пути тратится свеча.
     pub fn requires_candle(&self) -> bool {
-        self.requires_item
-            .is_some_and(|(item_id, _)| item_id == "candle")
+        self.requires_item == Some("candle")
     }
 
     /// Таблица лута с учётом карты: карта — редкий лут локации.
@@ -203,8 +212,6 @@ const ANCIENT_RUINS_LOOT: [LootEntry; 6] = [
 pub const LOCATIONS: [ExpeditionLocation; 6] = [
     ExpeditionLocation {
         id: "field",
-        name: "Заброшенное поле",
-        description: "Бывшее крестьянское поле: дерево, глина и волокно.",
         energy_per_second: 5.0,
         requires_item: None,
         loot: &FIELD_LOOT,
@@ -212,8 +219,6 @@ pub const LOCATIONS: [ExpeditionLocation; 6] = [
     },
     ExpeditionLocation {
         id: "ravine",
-        name: "Скалистый овраг",
-        description: "Каменистый овраг: камень, железная руда и кварц.",
         energy_per_second: 7.5,
         requires_item: None,
         loot: &RAVINE_LOOT,
@@ -221,8 +226,6 @@ pub const LOCATIONS: [ExpeditionLocation; 6] = [
     },
     ExpeditionLocation {
         id: "deep_forest",
-        name: "Дремучий лес",
-        description: "Дальний лес: много дерева, кожа и волокно.",
         energy_per_second: 10.0,
         requires_item: None,
         loot: &DEEP_FOREST_LOOT,
@@ -230,28 +233,22 @@ pub const LOCATIONS: [ExpeditionLocation; 6] = [
     },
     ExpeditionLocation {
         id: "deep_mines",
-        name: "Глубокие шахты",
-        description: "Глубокие штольни: камень, железная руда и кварц. Нужна свеча.",
         energy_per_second: 15.0,
-        requires_item: Some(("candle", "Свеча")),
+        requires_item: Some("candle"),
         loot: &DEEP_MINES_LOOT,
         map_reward: Some("map_quarry"),
     },
     ExpeditionLocation {
         id: "forgotten_quarry",
-        name: "Забытая каменоломня",
-        description: "Старая каменоломня: камень и железная руда. Нужна свеча.",
         energy_per_second: 17.5,
-        requires_item: Some(("candle", "Свеча")),
+        requires_item: Some("candle"),
         loot: &FORGOTTEN_QUARRY_LOOT,
         map_reward: Some("map_ruins"),
     },
     ExpeditionLocation {
         id: "ancient_ruins",
-        name: "Древние руины",
-        description: "Разрушенный город: кварц, серебро и золотая руда. Нужен факел или свеча.",
         energy_per_second: 20.0,
-        requires_item: Some(("candle", "Факел или свеча")),
+        requires_item: Some("candle"),
         loot: &ANCIENT_RUINS_LOOT,
         map_reward: None,
     },
@@ -528,7 +525,7 @@ pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
     // поход закрывается, а не крутится вхолостую.
     if state.energy <= balance::EXPEDITION_MIN_ENERGY {
         if let Some(active) = state.active_expedition.as_mut() {
-            active.notice = Some("Поход прерван: мало энергии.".to_string());
+            active.notice = Some(i18n::t("notice.low_energy").to_string());
             active.done = true;
         }
         return true;
@@ -553,25 +550,25 @@ pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
         {
             let name = location_for_map(map_id)
                 .and_then(location)
-                .map(|location| location.name)
-                .unwrap_or("новая локация");
-            active.notice = Some(format!("Найдена карта: «{name}». Изучи её в сумке."));
+                .map(|location| location.name())
+                .unwrap_or_else(|| i18n::t("loc.unknown"));
+            active.notice = Some(i18n::tf("notice.map_found", &[name]));
             changed = true;
         }
         if tick.overflow {
-            active.notice = Some("Склад полон — часть добычи сгорела.".to_string());
+            active.notice = Some(i18n::t("notice.storage_full").to_string());
             changed = true;
         }
         active.elapsed = active.elapsed.saturating_add(dt.max(0.0).round() as u32);
         // Свеча кончилась в тёмной локации — поход тоже прерывается.
         if tick.out_of_candle {
-            active.notice = Some("Поход прерван: свеча догорела.".to_string());
+            active.notice = Some(i18n::t("notice.candle_out").to_string());
             changed = true;
         } else if tick.out_of_energy {
-            active.notice = Some("Поход прерван: энергия закончилась.".to_string());
+            active.notice = Some(i18n::t("notice.out_of_energy").to_string());
         }
         if tick.interrupted {
-            active.notice = Some("Поход прерван: рюкзак полон.".to_string());
+            active.notice = Some(i18n::t("notice.bag_full").to_string());
         }
         if tick.is_over() {
             // Поход окончен; запись остаётся ради итоговой сводки.

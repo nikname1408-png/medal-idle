@@ -4,6 +4,8 @@ use dioxus::prelude::*;
 
 use crate::game::actions::{self, BuildResult};
 use crate::game::expedition;
+use crate::game::i18n;
+use crate::game::i18n::Lang;
 use crate::game::state::{AchievementStatus, ResourceKind, Theme};
 use crate::game::{balance, GameState};
 
@@ -43,14 +45,15 @@ const TAB_CYCLE: usize = 4;
 const TAB_STATS: usize = 5;
 const TAB_SETTINGS: usize = 6;
 
+/// Иконка вкладки и ключ её подписи в словаре.
 const TABS: [(&str, &str); 7] = [
-    ("🔨", "Кузница"),
-    ("👷", "Труд"),
-    ("🎒", "Сумка"),
-    ("🧭", "Походы"),
-    ("♻️", "Перерождение"),
-    ("📊", "Статы"),
-    ("⚙️", "Настр."),
+    ("🔨", "tab.forge"),
+    ("👷", "tab.work"),
+    ("🎒", "tab.bag"),
+    ("🧭", "tab.expeditions"),
+    ("♻️", "tab.rebirth"),
+    ("📊", "tab.stats"),
+    ("⚙️", "tab.settings"),
 ];
 
 /// Одна строка цены: PNG-иконка и количество.
@@ -78,6 +81,11 @@ pub fn App() -> Element {
 
     // Загружаем сохранение один раз при старте.
     use_future(move || async move {
+        match save::load_lang().await {
+            Ok(Some(lang)) => i18n::set_lang(lang),
+            Ok(None) => {}
+            Err(error) => eprintln!("Не удалось загрузить язык: {error}"),
+        }
         match save::load().await {
             Ok(Some(mut saved)) => {
                 let now = actions::unix_now();
@@ -199,13 +207,13 @@ pub fn App() -> Element {
     let snapshot = VIEW();
     let theme_class = theme_css_class(snapshot.theme);
     let title = match active_tab() {
-        TAB_SETTINGS => "Настройки",
-        TAB_WORK => "Труд",
-        TAB_BAG => "Инвентарь",
-        TAB_EXPEDITION => "Походы",
-        TAB_CYCLE => "Перерождение",
-        TAB_STATS => "Статы",
-        _ => "Кузница",
+        TAB_SETTINGS => i18n::t("title.settings"),
+        TAB_WORK => i18n::t("tab.work"),
+        TAB_BAG => i18n::t("title.bag"),
+        TAB_EXPEDITION => i18n::t("tab.expeditions"),
+        TAB_CYCLE => i18n::t("tab.rebirth"),
+        TAB_STATS => i18n::t("tab.stats"),
+        _ => i18n::t("tab.forge"),
     };
 
     let screen = if trader_open() || menu_open() {
@@ -239,7 +247,7 @@ pub fn App() -> Element {
                 SettingsScreen { state, view: snapshot.clone() }
             },
             index => rsx! {
-                PlaceholderScreen { title: TABS[index].1.to_string() }
+                PlaceholderScreen { title: i18n::t(TABS[index].1).to_string() }
             },
         }
     };
@@ -363,104 +371,141 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         "toggle-btn"
     };
     let time_available = snapshot.time >= 1.0;
-    let time_warp_label = format!(
-        "Провернуть {} с (−1 время)",
-        format_num(balance::TIME_WARP_SECONDS)
-    );
-    let rest_info = format!(
-        "+{} энергии за клик. Пассивно: +{:.2}/с.",
-        format_num(snapshot.rest_energy()),
-        snapshot.energy_regen()
+    let time_warp_label = i18n::tf("time.warp", &[&format_num(balance::TIME_WARP_SECONDS)]);
+    let rest_info = i18n::tf(
+        "gather.rest.info",
+        &[
+            &format_num(snapshot.rest_energy()),
+            &format!("{:.2}", snapshot.energy_regen()),
+        ],
     );
 
-    let storage_description = format!(
-        "Сейчас лимит ресурсов: {}. Улучшение добавит +{}.",
-        format_num(snapshot.cap(ResourceKind::Wood)),
-        format_num(balance::STORAGE_CAP_PER_LEVEL)
+    let storage_description = i18n::tf(
+        "build.storage.desc",
+        &[
+            &format_num(snapshot.cap(ResourceKind::Wood)),
+            &format_num(balance::STORAGE_CAP_PER_LEVEL),
+        ],
     );
 
     let worker_house_description = if snapshot.worker_house_level == 0 {
-        "Даёт 1 работника. Работников можно назначить на лесопилку и угольную яму.".to_string()
+        i18n::t("build.worker_house.desc.empty").to_string()
     } else {
-        format!(
-            "Сейчас работников: {}. Улучшение добавит ещё одного.",
-            snapshot.worker_slots()
+        i18n::tf(
+            "build.worker_house.desc",
+            &[&snapshot.worker_slots().to_string()],
         )
     };
 
     let barn_description = if snapshot.barn_level == 0 {
-        format!(
-            "Амбар даёт +{} к лимиту склада за уровень. Открывается на {} уровне склада.",
-            format_num(balance::BARN_CAP_PER_LEVEL),
-            balance::BARN_UNLOCK_STORAGE_LEVEL
+        i18n::tf(
+            "storage.barn_empty",
+            &[
+                &format_num(balance::BARN_CAP_PER_LEVEL),
+                &balance::BARN_UNLOCK_STORAGE_LEVEL.to_string(),
+            ],
         )
     } else {
-        format!(
-            "Сейчас амбар даёт +{}. Улучшение добавит ещё +{}.",
-            format_num(snapshot.barn_level as f64 * balance::BARN_CAP_PER_LEVEL),
-            format_num(balance::BARN_CAP_PER_LEVEL)
+        i18n::tf(
+            "storage.barn_full",
+            &[
+                &format_num(snapshot.barn_level as f64 * balance::BARN_CAP_PER_LEVEL),
+                &format_num(balance::BARN_CAP_PER_LEVEL),
+            ],
         )
     };
 
-    let sawmill_description = format!(
-        "Работники добывают дерево: +{}/с с каждого. Уровень даёт одно рабочее место.",
-        format_num(balance::SAWMILL_WOOD_PER_WORKER_PER_SEC)
+    let sawmill_description = i18n::tf(
+        "build.sawmill.desc",
+        &[&format_num(balance::SAWMILL_WOOD_PER_WORKER_PER_SEC)],
     );
 
-    let coal_pit_description = format!(
-        "Работники тратят {} дерева и получают {} угля за {} с. Уровень даёт одно рабочее место.",
-        format_num(balance::COAL_PIT_WOOD_PER_BATCH),
-        format_num(balance::COAL_PIT_COAL_PER_BATCH),
-        format_num(balance::COAL_PIT_BATCH_SECONDS)
+    let coal_pit_description = i18n::tf(
+        "build.coal_pit.desc",
+        &[
+            &format_num(balance::COAL_PIT_WOOD_PER_BATCH),
+            &format_num(balance::COAL_PIT_COAL_PER_BATCH),
+            &format_num(balance::COAL_PIT_BATCH_SECONDS),
+        ],
     );
 
-    let mine_description = format!(
-        "Работники добывают камень: +{}/с с каждого. Железо — только из походов и у торговца. Уровень даёт одно рабочее место.",
-        format_num(balance::MINE_STONE_PER_WORKER_PER_SEC)
+    let mine_description = i18n::tf(
+        "build.mine.desc",
+        &[&format_num(balance::MINE_STONE_PER_WORKER_PER_SEC)],
     );
 
-    let forge_description = format!(
-        "Огонь из угля нужен для крафта предметов. Один уголь — {} с огня. Уровень повышает и огонь с угля, и запас: сейчас {} / {}.",
-        format_num(balance::FIRE_SECONDS_PER_COAL as f64),
-        format_num(snapshot.fire_per_coal() as f64),
-        format_num(snapshot.fire_max() as f64)
+    let forge_description = i18n::tf(
+        "build.forge.desc",
+        &[
+            &format_num(balance::FIRE_SECONDS_PER_COAL as f64),
+            &format_num(snapshot.fire_per_coal() as f64),
+            &format_num(snapshot.fire_max() as f64),
+        ],
     );
 
-    let bank_description = format!(
-        "Сейчас лимит золота: {}. Улучшение добавит +{}.",
-        format_num(snapshot.gold_cap()),
-        format_num(balance::GOLD_CAP_PER_LEVEL)
+    let bank_description = i18n::tf(
+        "build.bank.desc",
+        &[
+            &format_num(snapshot.gold_cap()),
+            &format_num(balance::GOLD_CAP_PER_LEVEL),
+        ],
     );
 
     let house_description = if snapshot.house_level == 0 {
-        format!(
-            "После постройки: +{} энергии за отдых и +{}/с.",
-            format_num(
-                snapshot.rest_energy()
-                    + balance::REST_ENERGY_PER_HOUSE_LEVEL * snapshot.income_multiplier()
-            ),
-            format_num(balance::HOUSE_ENERGY_PER_LEVEL * snapshot.income_multiplier())
+        i18n::tf(
+            "build.house.desc_empty",
+            &[
+                &format_num(
+                    snapshot.rest_energy()
+                        + balance::REST_ENERGY_PER_HOUSE_LEVEL * snapshot.income_multiplier(),
+                ),
+                &format_num(balance::HOUSE_ENERGY_PER_LEVEL * snapshot.income_multiplier()),
+            ],
         )
     } else {
-        format!(
-            "Сейчас: +{} за отдых, +{}/с. Улучшение даст ещё +{} за отдых и +{}/с.",
-            format_num(snapshot.rest_energy()),
-            format_num(snapshot.energy_regen()),
-            format_num(balance::REST_ENERGY_PER_HOUSE_LEVEL * snapshot.income_multiplier()),
-            format_num(balance::HOUSE_ENERGY_PER_LEVEL * snapshot.income_multiplier())
+        i18n::tf(
+            "build.house.desc_full",
+            &[
+                &format_num(snapshot.rest_energy()),
+                &format_num(snapshot.energy_regen()),
+                &format_num(balance::REST_ENERGY_PER_HOUSE_LEVEL * snapshot.income_multiplier()),
+                &format_num(balance::HOUSE_ENERGY_PER_LEVEL * snapshot.income_multiplier()),
+            ],
         )
     };
 
-    let comfort_description = format!(
-        "Сейчас максимум энергии: {}. Улучшение добавит +{}.",
-        format_num(snapshot.max_energy()),
-        format_num(balance::ENERGY_CAP_PER_COMFORT)
+    let comfort_description = i18n::tf(
+        "build.comfort.desc",
+        &[
+            &format_num(snapshot.max_energy()),
+            &format_num(balance::ENERGY_CAP_PER_COMFORT),
+        ],
+    );
+
+    let gather_wood_info = i18n::tf(
+        "gather.wood.info",
+        &[
+            &format_num(gather_yield),
+            &format_num(balance::CLICK_ENERGY_COST),
+        ],
+    );
+    let gather_stone_info = i18n::tf(
+        "gather.stone.info",
+        &[
+            &format_num(gather_yield),
+            &format_num(balance::CLICK_ENERGY_COST),
+        ],
+    );
+    let feed_label = i18n::tf("field.feed", &[&snapshot.fire_per_coal().to_string()]);
+    let fire_info = i18n::tf(
+        "field.fire_info",
+        &[&format_num(snapshot.current_fire as f64)],
     );
 
     rsx! {
-        CollapsibleSection { title: "Отдых".to_string(),
+        CollapsibleSection { title: i18n::t("sec.rest").to_string(),
             ActionRow {
-                label: "Отдых".to_string(),
+                label: i18n::t("gather.rest_label").to_string(),
                 info: rest_info,
                 available: rest_available,
                 on_press: move |_| do_rest(state),
@@ -469,9 +514,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
 
         SteamEraSection { state, view: snapshot.clone() }
 
-        CollapsibleSection { title: "Энергия".to_string(),
+        CollapsibleSection { title: i18n::t("sec.energy").to_string(),
             BuildRow {
-                title: "Дом".to_string(),
+                title: i18n::t("build.house").to_string(),
                 level: snapshot.house_level,
                 description: house_description,
                 cost: house_cost,
@@ -479,7 +524,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 on_build: move |_| do_build_house(state),
             }
             BuildRow {
-                title: "Уют".to_string(),
+                title: i18n::t("build.comfort").to_string(),
                 level: snapshot.comfort_level,
                 description: comfort_description,
                 cost: comfort_cost,
@@ -488,17 +533,17 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         }
         if snapshot.gathering_unlocked() {
-            CollapsibleSection { title: "Сбор".to_string(),
+            CollapsibleSection { title: i18n::t("sec.gather").to_string(),
                 ActionRow {
-                    label: "Дерево".to_string(),
-                    info: format!("+{} за клик (−1 энергия).", format_num(gather_yield)),
+                    label: i18n::t("res.wood").to_string(),
+                    info: gather_wood_info,
                     available: wood_available,
                     on_press: move |_| do_gather(state, ResourceKind::Wood),
                 }
                 if snapshot.stone_unlocked() {
                     ActionRow {
-                        label: "Камень".to_string(),
-                        info: format!("+{} за клик (−1 энергия).", format_num(gather_yield)),
+                        label: i18n::t("res.stone").to_string(),
+                        info: gather_stone_info,
                         available: stone_available,
                         on_press: move |_| do_gather(state, ResourceKind::Stone),
                     }
@@ -507,9 +552,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         if snapshot.stone_unlocked() {
-            CollapsibleSection { title: "Хранение".to_string(),
+            CollapsibleSection { title: i18n::t("sec.storage").to_string(),
                 BuildRow {
-                    title: "Склад".to_string(),
+                    title: i18n::t("build.storage").to_string(),
                     level: snapshot.storage_level,
                     description: storage_description,
                     cost: storage_cost,
@@ -518,7 +563,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
                 if snapshot.barn_unlocked() {
                     BuildRow {
-                        title: "Амбар".to_string(),
+                        title: i18n::t("build.barn").to_string(),
                         level: snapshot.barn_level,
                         description: barn_description,
                         cost: barn_cost,
@@ -530,9 +575,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         if snapshot.house_level > 0 {
-            CollapsibleSection { title: "Дома".to_string(),
+            CollapsibleSection { title: i18n::t("sec.houses").to_string(),
                 BuildRow {
-                    title: "Дом для работников".to_string(),
+                    title: i18n::t("build.worker_house_title").to_string(),
                     level: snapshot.worker_house_level,
                     description: worker_house_description,
                     cost: worker_house_cost,
@@ -543,10 +588,10 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         if snapshot.house_level > 0 {
-            CollapsibleSection { title: "Постройки".to_string(),
+            CollapsibleSection { title: i18n::t("sec.buildings").to_string(),
                 if snapshot.house_level > 0 {
                     BuildRow {
-                        title: "Лесопилка".to_string(),
+                        title: i18n::t("build.sawmill").to_string(),
                         level: snapshot.sawmill_level,
                         description: sawmill_description,
                         cost: sawmill_cost,
@@ -556,7 +601,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
                 if snapshot.coal_pit_unlocked {
                     BuildRow {
-                        title: "Угольная яма".to_string(),
+                        title: i18n::t("build.coal_pit").to_string(),
                         level: snapshot.coal_pit_level,
                         description: coal_pit_description,
                         cost: coal_pit_cost,
@@ -566,7 +611,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
                 if snapshot.coal_pit_level > 0 {
                     BuildRow {
-                        title: "Шахта".to_string(),
+                        title: i18n::t("build.mine").to_string(),
                         level: snapshot.mine_level,
                         description: mine_description,
                         cost: mine_cost,
@@ -578,9 +623,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         if snapshot.forge_unlocked {
-            CollapsibleSection { title: "Кузница".to_string(),
+            CollapsibleSection { title: i18n::t("sec.forge").to_string(),
                 BuildRow {
-                    title: "Кузница".to_string(),
+                    title: i18n::t("build.forge").to_string(),
                     level: snapshot.forge_level,
                     description: forge_description,
                     cost: forge_cost,
@@ -590,9 +635,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 if snapshot.forge_level > 0 {
                     div { class: "forge",
                         div { class: "forge-head",
-                            span { "Огонь" }
+                            span { "{i18n::t(\"field.fire\")}" }
                             span { class: "forge-fire-value",
-                                "{format_num(snapshot.current_fire as f64)} / {format_num(fire_max as f64)} с"
+                                "{format_num(snapshot.current_fire as f64)} / {format_num(fire_max as f64)} s"
                             }
                         }
                         div { class: "fire-track",
@@ -603,7 +648,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                                 class: if can_feed { "forge-btn" } else { "forge-btn disabled" },
                                 disabled: !can_feed,
                                 onclick: move |_| do_forge_feed(state),
-                                "Подбросить уголь (+{snapshot.fire_per_coal()} с)"
+                                "{feed_label}"
                             }
                             button {
                                 class: "{auto_class}",
@@ -614,21 +659,19 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                                     }
                                     refresh_view(state);
                                 },
-                                "Авто"
+                                "{i18n::t(\"field.auto\")}"
                             }
                         }
-                        div { class: "forge-info",
-                            "Крафт предметов тратит огонь. Сейчас: {format_num(snapshot.current_fire as f64)} с."
-                        }
+                        div { class: "forge-info", "{fire_info}" }
                     }
                 }
             }
         }
 
         if snapshot.bank_unlocked {
-            CollapsibleSection { title: "Банк".to_string(),
+            CollapsibleSection { title: i18n::t("sec.bank").to_string(),
                 BuildRow {
-                    title: "Банк".to_string(),
+                    title: i18n::t("build.bank").to_string(),
                     level: snapshot.bank_level,
                     description: bank_description,
                     cost: bank_cost,
@@ -639,11 +682,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         if snapshot.time > 0.0 || snapshot.cycles > 0 {
-            CollapsibleSection { title: "Время".to_string(),
+            CollapsibleSection { title: i18n::t("sec.time").to_string(),
                 div { class: "time-box",
-                    div { class: "time-note",
-                        "Время копится, пока игра закрыта. Тратится на тайм-варп."
-                    }
+                    div { class: "time-note", "{i18n::t(\"field.time_note\")}" }
                 }
                 button {
                     class: if time_available { "forge-btn" } else { "forge-btn disabled" },
@@ -679,15 +720,23 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         snapshot.coal_pit_progress.clamp(0.0, 1.0) * 100.0
     );
 
+    let sawmill_detail = i18n::tf("workers.sawmill.detail", &[&format_num(sawmill_rate)]);
+    let mine_detail = i18n::tf("workers.mine.detail", &[&format_num(mine_rate)]);
+    let coal_detail = i18n::tf(
+        "workers.coal.detail",
+        &[&format_num(coal_rate), &format_num(coal_wood)],
+    );
+    let workers_label = i18n::t("sec.workers");
+
     rsx! {
         section { class: "section",
             div { class: "section-head static",
-                span { class: "section-title", "Работы" }
+                span { class: "section-title", "{i18n::t(\"sec.work\")}" }
             }
             div { class: "section-body",
                 WorkerRow {
-                    title: "Лесопилка".to_string(),
-                    detail: format!("+{}/с дерева", format_num(sawmill_rate)),
+                    title: i18n::t("build.sawmill").to_string(),
+                    detail: sawmill_detail,
                     assigned: sawmill_workers,
                     capacity: sawmill_slots,
                     free,
@@ -709,8 +758,8 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
 
                 if snapshot.coal_pit_researched {
                     WorkerRow {
-                        title: "Шахта".to_string(),
-                        detail: format!("+{}/с камня", format_num(mine_rate)),
+                        title: i18n::t("build.mine").to_string(),
+                        detail: mine_detail,
                         assigned: mine_workers,
                         capacity: mine_slots,
                         free,
@@ -730,12 +779,8 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                         },
                     }
                     WorkerRow {
-                        title: "Угольная яма".to_string(),
-                        detail: format!(
-                            "+{}/с угля · −{}/с дерева",
-                            format_num(coal_rate),
-                            format_num(coal_wood),
-                        ),
+                        title: i18n::t("build.coal_pit").to_string(),
+                        detail: coal_detail,
                         assigned: coal_workers,
                         capacity: coal_slots,
                         free,
@@ -758,17 +803,15 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                         div { class: "batch-track",
                             div { class: "batch-fill", style: "{batch_fill}" }
                         }
-                        span { class: "batch-label", "партия {batch_percent}" }
+                        span { class: "batch-label", "{i18n::tf(\"work.batch\", &[&batch_percent])}" }
                     }
                 } else {
-                    div { class: "locked-note",
-                        "Угольная яма не открыта. Построй свой дом — придёт предложение."
-                    }
+                    div { class: "locked-note", "{i18n::t(\"work.locked\")}" }
                 }
             }
         }
 
-        div { class: "count-note", "Работники: {free} / {slots}" }
+        div { class: "count-note", "{workers_label}: {free} / {slots}" }
         SteamEraSection { state, view: snapshot.clone() }
     }
 }
@@ -833,42 +876,65 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
 
     let ready = threshold_met && wall_mine_met && wall_stone_met;
     let requirement = if !threshold_met {
-        format!(
-            "Нужно добыть {} дерева и камня за перерождение (сейчас {}).",
-            format_num(threshold),
-            format_num(gathered)
+        i18n::tf(
+            "cycle.need_threshold",
+            &[&format_num(threshold), &format_num(gathered)],
         )
     } else if !wall_mine_met {
-        format!(
-            "Стена R={}: построй шахту до уровня {}.",
-            balance::CYCLE_WALL_LEVEL,
-            balance::CYCLE_WALL_MINE_LEVEL
+        i18n::tf(
+            "cycle.wall_mine",
+            &[
+                &balance::CYCLE_WALL_LEVEL.to_string(),
+                &balance::CYCLE_WALL_MINE_LEVEL.to_string(),
+            ],
         )
     } else if !wall_stone_met {
-        format!(
-            "Стена R={}: нужно {} камня за перерождение сверх порога.",
-            balance::CYCLE_WALL_STONE_LEVEL,
-            format_num(balance::CYCLE_WALL_EXTRA_STONE)
+        i18n::tf(
+            "cycle.wall_stone",
+            &[
+                &balance::CYCLE_WALL_STONE_LEVEL.to_string(),
+                &format_num(balance::CYCLE_WALL_EXTRA_STONE),
+            ],
         )
     } else {
-        "Всё готово для нового перерождения.".to_string()
+        i18n::t("cycle.ready").to_string()
     };
+    let wall_mine_text = i18n::tf(
+        "cycle.wall_mine_line",
+        &[
+            &balance::CYCLE_WALL_LEVEL.to_string(),
+            &balance::CYCLE_WALL_MINE_LEVEL.to_string(),
+            &snapshot.mine_level.to_string(),
+        ],
+    );
+    let wall_stone_text = i18n::tf(
+        "cycle.wall_stone_line",
+        &[
+            &balance::CYCLE_WALL_STONE_LEVEL.to_string(),
+            &format_num(stone_have),
+            &format_num(stone_need),
+        ],
+    );
+    let restart_label = if armed() {
+        i18n::t("btn.rebirth_again")
+    } else {
+        i18n::t("cycle.start")
+    };
+    let multiplier_text = i18n::tf("cycle.multiplier", &[&format!("{multiplier:.2}")]);
 
     rsx! {
         section { class: "cycle-hero",
             div { class: "cycle-count", "{cycles}" }
-            div { class: "cycle-label", "перерождений пройдено" }
-            div { class: "cycle-bonus", "Множитель дохода: ×{multiplier:.2}" }
+            div { class: "cycle-label", "{i18n::t(\"cycle.count\")}" }
+            div { class: "cycle-bonus", "{multiplier_text}" }
         }
 
         section { class: "settings",
-            h2 { class: "settings-title", "Новое перерождение" }
-            p { class: "settings-note",
-                "Сбросит ресурсы, постройки, работников и сумку. Останутся перерождения, время в игре, статистика и достижения."
-            }
+            h2 { class: "settings-title", "{i18n::t(\"cycle.new\")}" }
+            p { class: "settings-note", "{i18n::t(\"cycle.reset_note\")}" }
 
             div { class: "cycle-progress-head",
-                span { "Добыто за перерождение" }
+                span { "{i18n::t(\"cycle.gathered\")}" }
                 span { class: "cycle-progress-value", "{format_num(gathered)} / {format_num(threshold)}" }
             }
             div { class: "cycle-progress-track",
@@ -877,21 +943,19 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
 
             div { class: "cycle-forecast",
                 div { class: "cycle-forecast-item",
-                    span { class: "cycle-forecast-label", "Сейчас" }
+                    span { class: "cycle-forecast-label", "{i18n::t(\"cycle.now\")}" }
                     span { class: "cycle-forecast-value", "×{multiplier:.2}" }
                 }
                 div { class: "cycle-forecast-item",
-                    span { class: "cycle-forecast-label", "После перерождения" }
+                    span { class: "cycle-forecast-label", "{i18n::t(\"cycle.after\")}" }
                     span { class: "cycle-forecast-value", "×{next_multiplier:.2}" }
                 }
                 div { class: "cycle-forecast-item",
-                    span { class: "cycle-forecast-label", "При 2× порога" }
+                    span { class: "cycle-forecast-label", "{i18n::t(\"stats.two_threshold\")}" }
                     span { class: "cycle-forecast-value", "×{next_multiplier:.2}" }
                 }
             }
-            p { class: "settings-note",
-                "Множитель зависит только от номера перерождения: перебор сверх порога X не увеличивает. «Отдых» и «Труд» умножаются на X, ручная добыча — нет."
-            }
+            p { class: "settings-note", "{i18n::t(\"cycle.forecast_note\")}" }
 
             if wall_mine_active {
                 div { class: if wall_mine_met { "cycle-wall done" } else { "cycle-wall" },
@@ -902,9 +966,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
                             "•"
                         }
                     }
-                    span { class: "cycle-wall-text",
-                        "Стена R={balance::CYCLE_WALL_LEVEL}: шахта до уровня {balance::CYCLE_WALL_MINE_LEVEL} (сейчас {snapshot.mine_level})"
-                    }
+                    span { class: "cycle-wall-text", "{wall_mine_text}" }
                 }
             }
             if wall_stone_active {
@@ -916,9 +978,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
                             "•"
                         }
                     }
-                    span { class: "cycle-wall-text",
-                        "Стена R={balance::CYCLE_WALL_STONE_LEVEL}: {format_num(stone_have)} / {format_num(stone_need)} камня за перерождение"
-                    }
+                    span { class: "cycle-wall-text", "{wall_stone_text}" }
                 }
             }
 
@@ -942,11 +1002,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
                         });
                     }
                 },
-                if armed() {
-                    "Нажми ещё раз, чтобы начать перерождение"
-                } else {
-                    "Начать новое перерождение"
-                }
+                "{restart_label}"
             }
         }
     }
@@ -966,49 +1022,51 @@ fn StatsScreen(view: GameState) -> Element {
 
     rsx! {
         section { class: "settings",
-            h2 { class: "settings-title", "Статистика" }
+            h2 { class: "settings-title", "{i18n::t(\"stats.title\")}" }
             StatRow {
-                label: "Время в игре".to_string(),
+                label: i18n::t("stats.play_time").to_string(),
                 value: format_duration(time_played),
             }
             StatRow {
-                label: "Кликов добычи".to_string(),
+                label: i18n::t("stats.clicks").to_string(),
                 value: format_num(stats.clicks as f64),
             }
             StatRow {
-                label: "Отдыхов".to_string(),
+                label: i18n::t("stats.rests").to_string(),
                 value: format_num(stats.rests as f64),
             }
             StatRow {
-                label: "Добыто дерева".to_string(),
+                label: i18n::t("stats.wood").to_string(),
                 value: format_num(stats.wood_gathered),
             }
             StatRow {
-                label: "Добыто камня".to_string(),
+                label: i18n::t("stats.stone").to_string(),
                 value: format_num(stats.stone_gathered),
             }
             StatRow {
-                label: "Получено угля".to_string(),
+                label: i18n::t("stats.coal").to_string(),
                 value: format_num(stats.coal_produced),
             }
             StatRow {
-                label: "Добыто железной руды".to_string(),
+                label: i18n::t("stats.iron").to_string(),
                 value: format_num(stats.iron_mined),
             }
             StatRow {
-                label: "Заработано золота".to_string(),
+                label: i18n::t("stats.gold").to_string(),
                 value: format_num(stats.gold_earned),
             }
             StatRow {
-                label: "Пройдено перерождений".to_string(),
+                label: i18n::t("stats.rebirths").to_string(),
                 value: format_num(snapshot.cycles as f64),
             }
         }
 
         section { class: "settings",
-            h2 { class: "settings-title", "Достижения ({done_count}/{total})" }
+            h2 { class: "settings-title",
+                "{i18n::tf(\"sec.achievements\", &[&done_count.to_string(), &total.to_string()])}"
+            }
             for achievement in achievements {
-                AchievementRow { key: "{achievement.name}", achievement }
+                AchievementRow { key: "{achievement.id}", achievement }
             }
         }
     }
@@ -1020,10 +1078,10 @@ fn AchievementRow(achievement: AchievementStatus) -> Element {
     rsx! {
         div { class: if achievement.done { "ach done" } else { "ach" },
             div { class: "ach-head",
-                span { "{achievement.name}" }
+                span { "{achievement.name()}" }
                 span { class: "ach-value", "{achievement.value_text}" }
             }
-            div { class: "ach-desc", "{achievement.description}" }
+            div { class: "ach-desc", "{achievement.description()}" }
             div { class: "ach-track",
                 div { class: "ach-fill", style: "{fill_style}" }
             }
@@ -1046,13 +1104,38 @@ fn SettingsScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut state = state;
     let reset_armed = use_signal(|| false);
     let theme = view.theme;
+    // Язык хранится в словаре, а не в состоянии игры. Сигнал нужен, чтобы
+    // экран перерисовался сразу после нажатия на язык.
+    let mut lang = use_signal(i18n::lang);
+    let lang_now = lang();
+
+    // Сразу после выбора записываем язык в localStorage.
+    let mut saved_lang = use_signal(i18n::lang);
+    use_effect(move || {
+        let current = lang();
+        if *saved_lang.peek() == current {
+            return;
+        }
+        saved_lang.set(current);
+        spawn(async move {
+            if let Err(error) = save::save_lang(current).await {
+                eprintln!("Не удалось сохранить язык: {error}");
+            }
+        });
+    });
+
+    let reset_label = if reset_armed() {
+        i18n::t("btn.reset_again")
+    } else {
+        i18n::t("btn.reset_progress")
+    };
 
     rsx! {
         section { class: "settings",
-            h2 { class: "settings-title", "Внешний вид" }
+            h2 { class: "settings-title", "{i18n::t(\"settings.appearance\")}" }
             div { class: "theme-list",
                 ThemeOption {
-                    name: "Классический".to_string(),
+                    name: i18n::t("theme.classic").to_string(),
                     color: "#004487".to_string(),
                     active: theme == Theme::Classic,
                     on_pick: move |_| {
@@ -1064,7 +1147,7 @@ fn SettingsScreen(state: Signal<GameState>, view: GameState) -> Element {
                     },
                 }
                 ThemeOption {
-                    name: "Тёмный".to_string(),
+                    name: i18n::t("theme.dark").to_string(),
                     color: "#444444".to_string(),
                     active: theme == Theme::Dark,
                     on_pick: move |_| {
@@ -1079,24 +1162,37 @@ fn SettingsScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         section { class: "settings",
-            h2 { class: "settings-title", "Прогресс" }
-            p { class: "settings-note",
-                "Игра сохраняется автоматически каждые 2 секунды."
-            }
-            button {
-                class: if reset_armed() { "danger-btn armed" } else { "danger-btn" },
-                onclick: move |_| reset_progress(state, reset_armed),
-                if reset_armed() {
-                    "Нажми ещё раз, чтобы сбросить"
-                } else {
-                    "Сбросить прогресс"
+            h2 { class: "settings-title", "{i18n::t(\"settings.language\")}" }
+            div { class: "theme-list",
+                for option in Lang::ALL {
+                    ThemeOption {
+                        key: "{option.code_str()}",
+                        name: option.native_name().to_string(),
+                        color: if lang_now == option { "#004487" } else { "#8a8a8a" },
+                        active: lang_now == option,
+                        on_pick: move |_| {
+                            i18n::set_lang(option);
+                            lang.set(option);
+                            refresh_view(state);
+                        },
+                    }
                 }
             }
         }
 
         section { class: "settings",
-            h2 { class: "settings-title", "Об игре" }
-            p { class: "settings-note", "«Поле» — версия v0.5. Rust + Dioxus 0.7." }
+            h2 { class: "settings-title", "{i18n::t(\"settings.progress\")}" }
+            p { class: "settings-note", "{i18n::t(\"settings.auto_save\")}" }
+            button {
+                class: if reset_armed() { "danger-btn armed" } else { "danger-btn" },
+                onclick: move |_| reset_progress(state, reset_armed),
+                "{reset_label}"
+            }
+        }
+
+        section { class: "settings",
+            h2 { class: "settings-title", "{i18n::t(\"settings.about\")}" }
+            p { class: "settings-note", "{i18n::t(\"settings.about_text\")}" }
         }
     }
 }
@@ -1122,9 +1218,7 @@ fn PlaceholderScreen(title: String) -> Element {
         div { class: "placeholder",
             div { class: "placeholder-icon", "🚧" }
             h2 { class: "placeholder-title", "{title}" }
-            p { class: "placeholder-text",
-                "Этот раздел появится в следующих версиях."
-            }
+            p { class: "placeholder-text", "{i18n::t(\"placeholder.text\")}" }
         }
     }
 }
@@ -1149,17 +1243,17 @@ fn TopBar(
         "icon-btn menu-btn"
     };
     let bell_label = if unread > 0 {
-        format!("Почта: {unread} новых")
+        i18n::tf("top.mail_unread", &[&unread.to_string()])
     } else {
-        "Текущая цель и письма".to_string()
+        i18n::t("top.mail").to_string()
     };
 
     rsx! {
         header { class: "topbar",
             button {
                 class: "{menu_class}",
-                aria_label: "Меню",
-                title: "Меню",
+                aria_label: "{i18n::t(\"top.menu\")}",
+                title: "{i18n::t(\"top.menu\")}",
                 onclick: move |_| on_menu.call(()),
                 span { class: "burger" }
             }
@@ -1200,7 +1294,7 @@ fn BurgerMenu(
                 class: "menu-panel",
                 onclick: move |event| event.stop_propagation(),
                 div { class: "menu-head",
-                    span { class: "menu-title", "Меню" }
+                    span { class: "menu-title", "{i18n::t(\"top.menu\")}" }
                     button {
                         class: "menu-close",
                         onclick: move |_| on_close.call(()),
@@ -1213,13 +1307,13 @@ fn BurgerMenu(
                         src: "{ICON_SCROLL}",
                         alt: "",
                     }
-                    span { "Торговец" }
+                    span { "{i18n::t(\"menu.trader\")}" }
                 }
                 button {
                     class: "menu-item",
                     onclick: move |_| on_settings.call(()),
                     span { class: "menu-icon", "⚙" }
-                    span { "Настройки" }
+                    span { "{i18n::t(\"menu.settings\")}" }
                 }
                 button { class: "menu-item", onclick: move |_| on_dev.call(()),
                     span { class: "menu-icon", "🛠" }
@@ -1243,7 +1337,7 @@ fn BellPanel(
                 class: "notif-panel",
                 onclick: move |event| event.stop_propagation(),
                 div { class: "notif-head",
-                    h2 { class: "notif-title", "Почта и цель" }
+                    h2 { class: "notif-title", "{i18n::t(\"mail.title\")}" }
                     button {
                         class: "dev-close",
                         onclick: move |_| on_close.call(()),
@@ -1260,8 +1354,8 @@ fn BellPanel(
                                     let id = letter.id.clone();
                                     move |_| on_open_letter.call(id.clone())
                                 },
-                                span { class: "letter-title", "{letter.title}" }
-                                span { class: "letter-body", "{letter.body}" }
+                                span { class: "letter-title", "{letter.title()}" }
+                                span { class: "letter-body", "{letter.body()}" }
                             }
                         }
                     }
@@ -1290,8 +1384,8 @@ fn OfferModal(state: Signal<GameState>, view: GameState, offer_id: String) -> El
     rsx! {
         div { class: "offer-overlay",
             div { class: "offer-card",
-                div { class: "offer-title", "{def.title}" }
-                div { class: "offer-body", "{def.body}" }
+                div { class: "offer-title", "{def.title()}" }
+                div { class: "offer-body", "{def.body()}" }
                 div { class: "offer-actions",
                     button {
                         class: "{price_class}",
@@ -1314,7 +1408,7 @@ fn OfferModal(state: Signal<GameState>, view: GameState, offer_id: String) -> El
                             }
                             refresh_view(state);
                         },
-                        "Позже"
+                        "{i18n::t(\"btn.later\")}"
                     }
                 }
             }
@@ -1331,10 +1425,8 @@ fn SteamEventModal(state: Signal<GameState>) -> Element {
         div { class: "offer-overlay",
             div { class: "offer-card steam-card",
                 img { class: "steam-card-icon", src: "{ICON_STEAM_PROTOTYPE}", alt: "" }
-                div { class: "offer-title", "Прототип собран" }
-                div { class: "offer-body",
-                    "Лязг металла и шипение пара оглашают мастерскую. Прототип собран. Вы сделали первый шаг к новой эре!"
-                }
+                div { class: "offer-title", "{i18n::t(\"steam.event.title\")}" }
+                div { class: "offer-body", "{i18n::t(\"steam.event.body_ui\")}" }
                 div { class: "offer-actions",
                     button {
                         class: "offer-price",
@@ -1342,7 +1434,7 @@ fn SteamEventModal(state: Signal<GameState>) -> Element {
                             actions::dismiss_steam_event(&mut state.write());
                             refresh_view(state);
                         },
-                        "Далее"
+                        "{i18n::t(\"btn.next\")}"
                     }
                 }
             }
@@ -1363,28 +1455,23 @@ fn SteamEraSection(state: Signal<GameState>, view: GameState) -> Element {
         return rsx! {};
     }
     let bonus = balance::STEAM_ERA_INCOME_BONUS * 100.0;
+    let steam_after = i18n::tf("steam.after", &[&format!("{bonus:.0}")]);
 
     rsx! {
-        CollapsibleSection { title: "Эпоха Пара".to_string(),
+        CollapsibleSection { title: i18n::t("sec.steam").to_string(),
             if !era {
-                div { class: "steam-intro",
-                    "Прототип паровой машины собран и ждёт своего часа. Пора перевернуть страницу истории."
-                }
+                div { class: "steam-intro", "{i18n::t(\"steam.intro\")}" }
                 button {
                     class: "steam-cta",
                     onclick: move |_| {
                         actions::enter_steam_era(&mut state.write());
                         refresh_view(state);
                     },
-                    "[ Вступить в Эпоху Пара ]"
+                    "{i18n::t(\"btn.steam_bracket\")}"
                 }
             } else {
-                div { class: "steam-intro",
-                    "Машина работает: пар гонит станки, и вся добыча идёт быстрее."
-                }
-                div { class: "steam-era-line",
-                    "Множитель дохода: +{bonus:.0}% к прежнему."
-                }
+                div { class: "steam-intro", "{i18n::t(\"steam.working\")}" }
+                div { class: "steam-era-line", "{steam_after}" }
             }
         }
     }
@@ -1888,7 +1975,7 @@ fn CollapsibleSection(title: String, children: Element) -> Element {
                 span { class: "section-title", "{title}" }
                 button {
                     class: "chev-btn",
-                    aria_label: "Свернуть или развернуть раздел",
+                    aria_label: "{i18n::t(\"btn.collapse\")}",
                     onclick: move |_| open.set(!open()),
                     span { class: chev_class }
                 }
@@ -1972,7 +2059,7 @@ fn ActionRow(label: String, info: String, available: bool, on_press: EventHandle
                 }
                 button {
                     class: "chev-btn",
-                    aria_label: "Подробнее",
+                    aria_label: "{i18n::t(\"btn.more\")}",
                     onclick: move |_| open.set(!open()),
                     span { class: chev_class }
                 }
@@ -2039,7 +2126,7 @@ fn BuildRow(
                 }
                 button {
                     class: "chev-btn",
-                    aria_label: "Подробнее",
+                    aria_label: "{i18n::t(\"btn.more\")}",
                     onclick: move |_| open.set(!open()),
                     span { class: chev_class }
                 }
@@ -2048,7 +2135,7 @@ fn BuildRow(
                 div { class: "build-info",
                     div { class: "build-desc", "{description}" }
                     div { class: "build-cost-line",
-                        span { class: "build-cost-label", "Стоимость" }
+                        span { class: "build-cost-label", "{i18n::t(\"build.cost_label\")}" }
                         span { class: if affordable { "build-cost" } else { "build-cost poor" },
                             CostLabel { cost }
                         }
@@ -2069,67 +2156,63 @@ fn CurrentGoal(state: GameState) -> Element {
         let width = format!("{:.0}%", done as f64 / total as f64 * 100.0);
         let count = format!("{done} / {total}");
         (
-            format!("Отдохни ещё {left}, чтобы открыть добычу дерева."),
+            i18n::tf("gather.rest_hint", &[&left.to_string()]),
             None,
             Some((width, count)),
         )
     } else if state.house_level == 0 {
         (
-            "Построй свой дом — он даст энергию и усилит отдых.".to_string(),
+            i18n::t("goal.house").to_string(),
             Some(balance::house_cost(0)),
             None,
         )
     } else if state.worker_house_level == 0 {
         (
-            "Построй дом для работников, чтобы получить первого работника.".to_string(),
+            i18n::t("goal.worker_house_short").to_string(),
             Some(balance::worker_house_cost(0)),
             None,
         )
     } else if state.sawmill_level == 0 {
         (
-            "Построй лесопилку и назначь на неё работника.".to_string(),
+            i18n::t("goal.sawmill").to_string(),
             Some(balance::sawmill_cost(0)),
             None,
         )
     } else if state.sawmill_workers == 0 {
-        (
-            "Назначь работника на лесопилку во вкладке «Труд».".to_string(),
-            None,
-            None,
-        )
+        (i18n::t("goal.assign_worker").to_string(), None, None)
     } else if !state.coal_pit_unlocked {
         (
-            "Открой угольную яму — письмо в колокольчике.".to_string(),
+            i18n::t("goal.open_coal").to_string(),
             Some(balance::coal_pit_cost(0)),
             None,
         )
     } else if state.coal_pit_level == 0 {
         (
-            "Построй угольную яму — она даст уголь для кузницы.".to_string(),
+            i18n::t("goal.build_coal").to_string(),
             Some(balance::coal_pit_cost(1)),
             None,
         )
     } else if !state.forge_unlocked {
         (
-            "Открой кузницу — письмо в колокольчике.".to_string(),
+            i18n::t("goal.open_forge").to_string(),
             Some(balance::forge_cost(0)),
             None,
         )
     } else if state.forge_level == 0 {
         (
-            "Построй кузницу, чтобы плавить руду и крафтить снаряжение.".to_string(),
+            i18n::t("goal.build_forge").to_string(),
             Some(balance::forge_cost(1)),
             None,
         )
     } else if state.bank_seen && !state.bank_unlocked {
         (
-            "Открой банк — письмо в колокольчике.".to_string(),
+            i18n::t("goal.open_bank").to_string(),
             Some(balance::bank_cost(0)),
             None,
         )
     } else if state.bank_unlocked && state.bank_level == 0 {
         (
-            "Построй банк, чтобы поднять лимит золота.".to_string(),
+            i18n::t("goal.build_bank").to_string(),
             Some(balance::bank_cost(1)),
             None,
         )
@@ -2137,13 +2220,13 @@ fn CurrentGoal(state: GameState) -> Element {
         || state.active_amount("stone") as f64 >= state.cap(ResourceKind::Stone)
     {
         (
-            "Склад полон. Улучши склад, чтобы добывать дальше.".to_string(),
+            i18n::t("storage.full_goal").to_string(),
             Some(balance::storage_cost(state.storage_level)),
             None,
         )
     } else {
         (
-            "Развивай дом: больше энергии за отдых и в секунду.".to_string(),
+            i18n::t("goal.develop_house").to_string(),
             Some(balance::house_cost(state.house_level)),
             None,
         )
@@ -2152,7 +2235,7 @@ fn CurrentGoal(state: GameState) -> Element {
     rsx! {
         section { class: "goal",
             div { class: "goal-head",
-                span { class: "goal-label", "Текущая цель" }
+                span { class: "goal-label", "{i18n::t(\"goal.label\")}" }
                 if let Some((_, count)) = goal_progress.clone() {
                     span { class: "goal-count", "{count}" }
                 }
@@ -2184,7 +2267,7 @@ fn ResourceBar(view: GameState) -> Element {
     if state.wood_seen || state.active_amount("wood") > 0 {
         items.push((
             ResourceKind::Wood,
-            "Дерево",
+            i18n::t("res.wood"),
             state.active_amount("wood") as f64,
             state.cap(ResourceKind::Wood),
         ));
@@ -2192,7 +2275,7 @@ fn ResourceBar(view: GameState) -> Element {
     if state.stone_seen || state.active_amount("stone") > 0 {
         items.push((
             ResourceKind::Stone,
-            "Камень",
+            i18n::t("res.stone"),
             state.active_amount("stone") as f64,
             state.cap(ResourceKind::Stone),
         ));
@@ -2200,7 +2283,7 @@ fn ResourceBar(view: GameState) -> Element {
     if state.coal_seen || state.active_amount("coal") > 0 {
         items.push((
             ResourceKind::Coal,
-            "Уголь",
+            i18n::t("res.coal"),
             state.active_amount("coal") as f64,
             state.cap(ResourceKind::Coal),
         ));
@@ -2208,7 +2291,7 @@ fn ResourceBar(view: GameState) -> Element {
     if state.forge_researched || state.forge_level > 0 {
         items.push((
             ResourceKind::Fire,
-            "Огонь",
+            i18n::t("res.fire"),
             state.current_fire as f64,
             state.cap(ResourceKind::Fire),
         ));
@@ -2216,7 +2299,7 @@ fn ResourceBar(view: GameState) -> Element {
     if state.gold > 0.0 || state.bank_seen || state.bank_level > 0 {
         items.push((
             ResourceKind::Gold,
-            "Золото",
+            i18n::t("res.gold"),
             state.gold,
             state.cap(ResourceKind::Gold),
         ));
@@ -2225,9 +2308,7 @@ fn ResourceBar(view: GameState) -> Element {
     rsx! {
         div { class: "resources",
             if items.is_empty() && state.time <= 0.0 {
-                span { class: "resources-empty",
-                    "Ресурсов пока нет — отдохни и начни добывать"
-                }
+                span { class: "resources-empty", "{i18n::t(\"res.empty\")}" }
             } else {
                 for (kind , name , value , cap) in items {
                     div { class: "resource", key: "{name}",
@@ -2248,7 +2329,7 @@ fn ResourceBar(view: GameState) -> Element {
                     div { class: "resource",
                         span { class: "resource-icon", "⏳" }
                         div { class: "resource-text",
-                            span { class: "resource-name", "Время" }
+                            span { class: "resource-name", "{i18n::t(\"sec.time\")}" }
                             span { class: "resource-value", "{format_num(state.time)}" }
                         }
                     }
@@ -2287,12 +2368,12 @@ fn TabBar(active: Signal<usize>) -> Element {
         div { class: "tabbar",
             button {
                 class: "tab-arrow",
-                aria_label: "Прокрутить вкладки влево",
+                aria_label: "{i18n::t(\"tabs.scroll_left\")}",
                 onclick: move |_| scroll_tabs(-1),
                 "<"
             }
             nav { class: "tabs",
-                for (i , (_icon , label)) in TABS.iter().enumerate() {
+                for (i , (_icon , label_key)) in TABS.iter().enumerate() {
                     button {
                         key: "{i}",
                         class: if active() == i { "tab active" } else { "tab" },
@@ -2306,13 +2387,13 @@ fn TabBar(active: Signal<usize>) -> Element {
                         } else {
                             span { class: "tab-icon", "{_icon}" }
                         }
-                        span { class: "tab-label", "{label}" }
+                        span { class: "tab-label", "{i18n::t(label_key)}" }
                     }
                 }
             }
             button {
                 class: "tab-arrow",
-                aria_label: "Прокрутить вкладки вправо",
+                aria_label: "{i18n::t(\"tabs.scroll_right\")}",
                 onclick: move |_| scroll_tabs(1),
                 ">"
             }
@@ -2337,13 +2418,15 @@ fn scroll_tabs(direction: i32) {
 fn EnergyBar(view: GameState) -> Element {
     let state = view;
     let fill_style = format!("width: {:.1}%", state.energy_ratio() * 100.0);
-    let label = format!(
-        "{} / {} (+{:.2}/с)",
-        format_num(state.energy),
-        format_num(state.max_energy()),
-        state.energy_regen()
+    let regen_text = format!("{:.2}", state.energy_regen());
+    let label = i18n::tf(
+        "energy.bar",
+        &[
+            &format_num(state.energy),
+            &format_num(state.max_energy()),
+            &regen_text,
+        ],
     );
-
     rsx! {
         div { class: "energy",
             div { class: "energy-fill", style: "{fill_style}" }
@@ -2439,11 +2522,17 @@ fn format_duration(seconds: f64) -> String {
     let minutes = (total % 3600) / 60;
     let secs = total % 60;
     if hours > 0 {
-        format!("{hours} ч {minutes} мин")
+        i18n::tf(
+            "time.hours_minutes",
+            &[&hours.to_string(), &minutes.to_string()],
+        )
     } else if minutes > 0 {
-        format!("{minutes} мин {secs} с")
+        i18n::tf(
+            "time.minutes_seconds",
+            &[&minutes.to_string(), &secs.to_string()],
+        )
     } else {
-        format!("{secs} с")
+        i18n::tf("time.seconds", &[&secs.to_string()])
     }
 }
 

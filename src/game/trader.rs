@@ -1,10 +1,11 @@
-//! Несколько торговцев, живой рынок и сделки.
+﻿//! Несколько торговцев, живой рынок и сделки.
 //!
 //! Модуль не зависит от Dioxus: спрос, предложение, запасы и цены можно
 //! проверять через `cargo test`.
 
 use serde::{Deserialize, Serialize};
 
+use super::i18n;
 use super::items::{self, Item};
 use super::state::GameState;
 
@@ -28,8 +29,14 @@ const TREND_LIMIT: i32 = 20;
 #[derive(Clone, Copy, Debug)]
 pub struct TraderDef {
     pub id: &'static str,
-    pub name: &'static str,
     pub goods: &'static [&'static str],
+}
+
+impl TraderDef {
+    /// Имя торговца на текущем языке.
+    pub fn name(&self) -> &'static str {
+        i18n::t_or(&format!("trader.{}", self.id), i18n::t("trader.unknown"))
+    }
 }
 
 /// Общий ассортимент Марты и Кузнеца: весь крафт, кроме карт.
@@ -59,12 +66,10 @@ const CRAFT_GOODS: &[&str] = &[
 pub const TRADERS: [TraderDef; 4] = [
     TraderDef {
         id: "marta",
-        name: "Марта",
         goods: CRAFT_GOODS,
     },
     TraderDef {
         id: "wanderer",
-        name: "Странник",
         #[rustfmt::skip]
         goods: &[
             // Ремесло и походное.
@@ -77,12 +82,10 @@ pub const TRADERS: [TraderDef; 4] = [
     },
     TraderDef {
         id: "smith",
-        name: "Кузнец",
         goods: CRAFT_GOODS,
     },
     TraderDef {
         id: "miner",
-        name: "Рудокоп",
         goods: &[
             "iron",
             "silver",
@@ -106,8 +109,8 @@ pub fn trader_def(index: usize) -> Option<&'static TraderDef> {
 
 pub fn trader_name(index: usize) -> &'static str {
     trader_def(index)
-        .map(|trader| trader.name)
-        .unwrap_or("Торговец")
+        .map(TraderDef::name)
+        .unwrap_or_else(|| i18n::t("trader.unknown"))
 }
 
 /// Состояние рынка по разнице спроса и предложения.
@@ -121,18 +124,35 @@ pub enum MarketStatus {
 impl MarketStatus {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Deficit => "ДЕФИЦИТ",
-            Self::Balance => "БАЛАНС",
-            Self::Surplus => "ИЗБЫТОК",
+            Self::Deficit => i18n::t("market.deficit"),
+            Self::Balance => i18n::t("market.balance"),
+            Self::Surplus => i18n::t("market.surplus"),
         }
     }
 
-    /// Короткий статус для таблицы.
+    /// Короткий статус для таблицы. В русском это «Д↑», в остальных языках —
+    /// латинские буквы, чтобы совпадать с подписью под таблицей.
     pub fn short(self) -> &'static str {
+        if !i18n::is_ru() {
+            return match self {
+                Self::Deficit => "D↑",
+                Self::Balance => "B→",
+                Self::Surplus => "S↓",
+            };
+        }
         match self {
-            Self::Deficit => "Д↑",
-            Self::Balance => "Б→",
-            Self::Surplus => "И↓",
+            Self::Deficit => i18n::t("market.short.deficit"),
+            Self::Balance => i18n::t("market.short.balance"),
+            Self::Surplus => i18n::t("market.short.surplus"),
+        }
+    }
+
+    /// Подсказка под таблицей с расшифровкой коротких статусов.
+    pub fn legend(self) -> &'static str {
+        if i18n::is_ru() {
+            i18n::t("trade.legend_ru")
+        } else {
+            i18n::t("trade.legend")
         }
     }
 
@@ -284,10 +304,10 @@ impl GoodRarity {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Common => "обычный",
-            Self::Uncommon => "необычный",
-            Self::Rare => "редкий",
-            Self::Epic => "эпический",
+            Self::Common => i18n::t("rarity.common"),
+            Self::Uncommon => i18n::t("rarity.uncommon"),
+            Self::Rare => i18n::t("rarity.rare"),
+            Self::Epic => i18n::t("rarity.epic"),
         }
     }
 
@@ -470,15 +490,15 @@ pub enum TradeError {
 impl TradeError {
     pub fn text(self) -> &'static str {
         match self {
-            Self::UnknownTrader => "Такого торговца нет.",
-            Self::UnknownItem => "Такого товара нет.",
-            Self::InvalidQuantity => "Количество должно быть больше нуля.",
-            Self::OutOfStock => "У торговца не хватает запаса.",
-            Self::NotEnoughGold => "Недостаточно золота.",
-            Self::GoldCapReached => "Лимит золота достигнут. Улучши банк.",
-            Self::NothingToSell => "У вас нет столько этого товара.",
-            Self::LimitReached => "Торговец больше не скупает этот товар за цикл.",
-            Self::NoSpace => "В сумке нет места.",
+            Self::UnknownTrader => i18n::t("err.unknown_trader"),
+            Self::UnknownItem => i18n::t("err.unknown_good"),
+            Self::InvalidQuantity => i18n::t("err.bad_quantity"),
+            Self::OutOfStock => i18n::t("err.out_of_stock"),
+            Self::NotEnoughGold => i18n::t("err.no_gold"),
+            Self::GoldCapReached => i18n::t("err.gold_cap"),
+            Self::NothingToSell => i18n::t("err.nothing_to_sell"),
+            Self::LimitReached => i18n::t("err.trade_limit"),
+            Self::NoSpace => i18n::t("err.bag_full"),
         }
     }
 }

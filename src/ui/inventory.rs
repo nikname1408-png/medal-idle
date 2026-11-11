@@ -1,9 +1,10 @@
-//! Инвентарь, экипировка и крафт.
+﻿//! Инвентарь, экипировка и крафт.
 
 use dioxus::prelude::*;
 
 use crate::game::actions::{self, CraftError};
 use crate::game::expedition;
+use crate::game::i18n;
 use crate::game::items::{self, Category, EquipSlot, Item};
 use crate::game::state::{EquipError, GameState};
 
@@ -202,7 +203,7 @@ pub fn InventoryScreen(
         .filter_map(|(item_id, _)| items::item(item_id).cloned())
         .collect();
     if sort_alpha() {
-        displayed.sort_by(|left, right| left.name.cmp(&right.name));
+        displayed.sort_by(|left, right| left.name().cmp(right.name()));
     }
     // Пустые ячейки до размера сумки: без рюкзака стандарт, с рюкзаком — больше.
     let total_slots = view.inventory_slots() as usize;
@@ -212,20 +213,21 @@ pub fn InventoryScreen(
     rsx! {
         section { class: "inv-head",
             div { class: "inv-title-row",
-                h2 { class: "inv-title", "Инвентарь" }
+                h2 { class: "inv-title", "{i18n::t(\"bag.title\")}" }
                 div { class: "inv-head-actions",
                     button {
                         class: if sort_alpha() { "inv-tool active" } else { "inv-tool" },
                         onclick: move |_| {
                             let next = !sort_alpha();
                             sort_alpha.set(next);
-                            message.set(if next {
-                                "Сортировка: по названию".to_string()
+                            let key = if next {
+                                "bag.sort_name"
                             } else {
-                                "Сортировка: по каталогу".to_string()
-                            });
+                                "bag.sort_catalog"
+                            };
+                            message.set(i18n::t(key).to_string());
                         },
-                        "Сортировать"
+                        "{i18n::t(\"bag.sort\")}"
                     }
                     button {
                         class: if craft_now { "inv-tool active" } else { "inv-tool" },
@@ -233,7 +235,7 @@ pub fn InventoryScreen(
                             craft_open.set(!craft_now);
                             selected.set(None);
                         },
-                        "Создать предметы"
+                        "{i18n::t(\"bag.craft_open\")}"
                     }
                 }
             }
@@ -242,7 +244,7 @@ pub fn InventoryScreen(
         // Во время крафта экипировка скрыта — только сетка предметов.
         if !craft_now {
             section { class: "inv-equipment",
-                div { class: "inv-subtitle", "Экипировка" }
+                div { class: "inv-subtitle", "{i18n::t(\"bag.equipment\")}" }
                 div { class: "equip-grid",
                     EquipmentSlot {
                         slot: EquipSlot::Head,
@@ -369,7 +371,7 @@ pub fn InventoryScreen(
             }
         } else {
             section { class: "inv-grid-wrap",
-                div { class: "inv-subtitle", "Предметы" }
+                div { class: "inv-subtitle", "{i18n::t(\"bag.items\")}" }
                 div { class: "inv-grid",
                     for item in displayed {
                         ItemCell {
@@ -400,9 +402,7 @@ pub fn InventoryScreen(
                     }
                 }
             } else {
-                div { class: "inv-detail empty",
-                    "Нажми на предмет, чтобы увидеть название, цену и описание."
-                }
+                div { class: "inv-detail empty", "{i18n::t(\"bag.empty_hint\")}" }
             }
         }
     }
@@ -438,9 +438,9 @@ fn EquipmentSlot(
             }
             div { class: "equip-cell-label", "{slot.label()}" }
             if let Some(item) = item {
-                div { class: "equip-cell-name", "{item.name}" }
+                div { class: "equip-cell-name", "{item.name()}" }
             } else {
-                div { class: "equip-cell-name empty", "Пусто" }
+                div { class: "equip-cell-name empty", "{i18n::t(\"bag.empty_slot\")}" }
             }
         }
     }
@@ -455,7 +455,9 @@ fn EquipDetail(
 ) -> Element {
     let mut state = state;
     let item = view.equipped_item(slot);
-    let name = item.map(|item| item.name.as_str()).unwrap_or("Пусто");
+    let name = item
+        .map(|item| item.name())
+        .unwrap_or_else(|| i18n::t("bag.empty_slot"));
     let bonus = item.map(|item| item.stats.summary()).unwrap_or_default();
     let can_unequip = item.is_some();
 
@@ -480,10 +482,10 @@ fn EquipDetail(
                             refresh_view(state);
                             on_close.call(());
                         },
-                        "Снять"
+                        "{i18n::t(\"btn.unequip\")}"
                     }
                 }
-                button { class: "inv-tool", onclick: move |_| on_close.call(()), "Закрыть" }
+                button { class: "inv-tool", onclick: move |_| on_close.call(()), "{i18n::t(\"btn.close\")}" }
             }
         }
     }
@@ -512,17 +514,15 @@ fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<Stri
     }
 }
 
-/// Название ингредиента: активный ресурс склада или предмет каталога.
-pub(crate) fn ingredient_name(id: &str) -> &str {
-    match id {
-        "wood" => "Дерево",
-        "stone" => "Камень",
-        "iron" => "Железная руда",
-        "clay" => "Глина",
-        "coal" => "Уголь",
-        "fire" => "Огонь",
-        _ => items::item(id).map(|item| item.name.as_str()).unwrap_or(id),
+/// Название ингредиента: предмет каталога, а для «огня» (которого нет в
+/// каталоге) — отдельная строка словаря.
+pub(crate) fn ingredient_name(id: &str) -> &'static str {
+    if id == "fire" {
+        return i18n::t("res.fire");
     }
+    items::item(id)
+        .map(|item| item.name())
+        .unwrap_or_else(|| i18n::catalog::name(id))
 }
 
 /// Экран крафта. Открывается из инвентаря.
@@ -541,16 +541,16 @@ pub fn CraftScreen(
         let recipe = items::recipe(recipe_id)?;
         let fire = actions::fire_cost(&view, recipe);
         if recipe.fire_cost > 0 && view.forge_level == 0 {
-            Some("Нужна кузница. Постройте её на вкладке «Кузница».".to_string())
+            Some(i18n::t("craft.blocked_forge").to_string())
         } else if view.current_fire < fire {
-            Some(format!(
-                "Недостаточно огня! Нужно {fire}, есть {}. Подбросьте уголь в кузницу на «Кузнице».",
-                view.current_fire
+            Some(i18n::tf(
+                "craft.blocked_fire",
+                &[&fire.to_string(), &view.current_fire.to_string()],
             ))
         } else if recipe.id != items::STEAM_PROTOTYPE_RECIPE
             && !view.can_add_item(recipe.result_id, recipe.result_quantity)
         {
-            Some("Нет места в сумке".to_string())
+            Some(i18n::t("bag.no_room").to_string())
         } else {
             None
         }
@@ -563,8 +563,8 @@ pub fn CraftScreen(
     rsx! {
         section { class: "inv-craft",
             div { class: "inv-title-row",
-                h2 { class: "inv-title", "Крафт" }
-                button { class: "inv-tool", onclick: move |_| on_close.call(()), "Назад" }
+                h2 { class: "inv-title", "{i18n::t(\"bag.craft\")}" }
+                button { class: "inv-tool", onclick: move |_| on_close.call(()), "{i18n::t(\"btn.back\")}" }
             }
             div { class: "inv-grid",
                 for recipe in items::recipes().iter().filter(|recipe| actions::recipe_visible(&view, recipe)) {
@@ -650,7 +650,7 @@ fn CraftPanel(
         return rsx! {};
     };
 
-    let name = result.name.clone();
+    let name = recipe.name();
     let category = result.category.label();
     let stats = result.stats.summary();
     let owned = view.item_count(result.id.as_str());
@@ -680,9 +680,9 @@ fn CraftPanel(
     let recipe_id = recipe.id.to_string();
     let result_quantity = recipe.result_quantity;
     let single_label = if recipe.id == items::STEAM_PROTOTYPE_RECIPE {
-        "Создать".to_string()
+        i18n::t("btn.make").to_string()
     } else {
-        "Крафт".to_string()
+        i18n::t("btn.craft").to_string()
     };
     let make_button = move |times: u32| -> Element {
         let recipe_id = recipe_id.clone();
@@ -694,7 +694,7 @@ fn CraftPanel(
         };
         let label = match times {
             1 => single_label,
-            other => format!("Крафт {other}"),
+            other => i18n::tf("btn.craft_n", &[&other.to_string()]),
         };
         rsx! {
             button {
@@ -726,7 +726,7 @@ fn CraftPanel(
                     div { class: "craft-panel-name", "{name}" }
                     div { class: "craft-panel-type", "{category}" }
                     div { class: "craft-panel-stats", "{stats}" }
-                    div { class: "craft-panel-owned", "У меня: {owned}" }
+                    div { class: "craft-panel-owned", "{i18n::tf(\"bag.owned\", &[&owned.to_string()])}" }
                 }
                 div { class: "craft-panel-icon",
                     ItemIcon {
@@ -755,7 +755,9 @@ fn CraftPanel(
                         }
                     }
                     if result_quantity > 1 {
-                        div { class: "craft-need", "Выход: ×{result_quantity}" }
+                        div { class: "craft-need",
+                            "{i18n::tf(\"bag.output\", &[&result_quantity.to_string()])}"
+                        }
                     }
                 }
             }
@@ -764,10 +766,8 @@ fn CraftPanel(
                 div { class: "craft-panel-blocked", "{text}" }
             }
             if !result_id.is_empty() {
-                div { class: "craft-panel-hint",
-                    if missing {
-                        "Красным отмечены недостающие ресурсы."
-                    }
+                if missing {
+                    div { class: "craft-panel-hint", "{i18n::t(\"bag.lack\")}" }
                 }
             }
         }
@@ -802,10 +802,10 @@ fn InventoryCard(
     let can_equip = item.slot.is_some() && count > 0 && !equipped;
     let item_id = item.id.clone();
     let study_item_id = item_id.clone();
-    let item_name = item.name.clone();
+    let item_name = item.name();
     let category = item.category.label();
     let rarity = item.rarity();
-    let description = item.description.clone();
+    let description = item.description();
     let stats = item.stats.summary();
     let base_price = item.base_price;
     let slot = item.slot;
@@ -826,7 +826,9 @@ fn InventoryCard(
             div { class: "inv-detail-head",
                 ItemIcon { item: item.clone(), class: "inv-detail-icon".to_string() }
                 span { class: "inv-detail-name", "{item_name}" }
-                span { class: "inv-detail-price", "{base_price} зл." }
+                span { class: "inv-detail-price",
+                    "{i18n::tf(\"bag.price\", &[&base_price.to_string()])}"
+                }
                 button {
                     class: "inv-detail-close",
                     onclick: move |_| on_close.call(()),
@@ -836,21 +838,29 @@ fn InventoryCard(
             div { class: "inv-detail-slot", "[{category} · {rarity}]" }
             div { class: "inv-detail-desc", "{description}" }
             div { class: "inv-detail-stats",
-                span { "В сумке: {count} / {items::ITEM_STACK_LIMIT}" }
-                span { "Бонусы: {stats}" }
+                span {
+                    "{i18n::tf(\"bag.in_bag\", &[&count.to_string(), &items::ITEM_STACK_LIMIT.to_string()])}"
+                }
+                span { "{i18n::tf(\"bag.bonuses\", &[&stats])}" }
                 if let Some(slot) = slot {
-                    span { "Слот: {slot.label()}" }
+                    span { "{i18n::tf(\"bag.slot_line\", &[slot.label()])}" }
                 }
                 if let Some(location_id) = map_location {
                     if let Some(location) = expedition::location(location_id) {
-                        span { "Локация: {location.name}" }
+                        span { "{i18n::tf(\"bag.location_line\", &[location.name()])}" }
                     }
                     if map_open {
-                        span { "Уже открыта" }
+                        span { "{i18n::t(\"bag.map_open\")}" }
                     }
                 }
                 if is_blueprint {
-                    span { if blueprint_studied { "Чертёж изучен" } else { "Чертёж ещё не изучен" } }
+                    span {
+                        if blueprint_studied {
+                            "{i18n::t(\"bag.blueprint_done\")}"
+                        } else {
+                            "{i18n::t(\"bag.blueprint_new\")}"
+                        }
+                    }
                 }
             }
 
@@ -873,19 +883,17 @@ fn InventoryCard(
                                 .set(
                                     match result {
                                         Ok(location_id) => {
-                                            format!(
-                                                "Открыта локация: {}.",
-                                                expedition::location(location_id)
-                                                    .map(|location| location.name)
-                                                    .unwrap_or("новая"),
-                                            )
+                                            let location_name = expedition::location(location_id)
+                                                .map(|location| location.name())
+                                                .unwrap_or_else(|| i18n::t("hike.new_location"));
+                                            i18n::tf("bag.map_opened", &[location_name])
                                         }
                                         Err(error) => error.text().to_string(),
                                     },
                                 );
                             refresh_view(state);
                         },
-                        "Изучить карту"
+                        "{i18n::t(\"btn.study_map\")}"
                     }
                 }
                 if is_blueprint {
@@ -902,15 +910,18 @@ fn InventoryCard(
                                 .set(
                                     match result {
                                         Ok(()) => {
-                                            "Чертёж изучен. Рецепт прототипа открыт в кузнице."
-                                                .to_string()
+                                            i18n::t("bag.blueprint_studied").to_string()
                                         }
                                         Err(error) => error.text().to_string(),
                                     },
                                 );
                             refresh_view(state);
                         },
-                        if blueprint_studied { "Чертёж изучен" } else { "Изучить чертёж" }
+                        if blueprint_studied {
+                            "{i18n::t(\"bag.blueprint_done\")}"
+                        } else {
+                            "{i18n::t(\"btn.study_blueprint\")}"
+                        }
                     }
                 }
                 if slot.is_some() {
@@ -924,7 +935,7 @@ fn InventoryCard(
                                 }
                                 refresh_view(state);
                             },
-                            "Снять"
+                            "{i18n::t(\"btn.unequip\")}"
                         }
                     } else {
                         button {
@@ -944,11 +955,11 @@ fn InventoryCard(
                                     );
                                 refresh_view(state);
                             },
-                            "Надеть"
+                            "{i18n::t(\"btn.equip\")}"
                         }
                     }
                 }
-                button { class: "inv-tool", onclick: move |_| on_close.call(()), "Закрыть" }
+                button { class: "inv-tool", onclick: move |_| on_close.call(()), "{i18n::t(\"btn.close\")}" }
             }
         }
     }
@@ -956,12 +967,12 @@ fn InventoryCard(
 
 fn slot_short(slot: EquipSlot) -> &'static str {
     match slot {
-        EquipSlot::Hand => "Р",
-        EquipSlot::Body => "Т",
-        EquipSlot::Head => "Г",
-        EquipSlot::Feet => "Н",
-        EquipSlot::Accessory1 => "А1",
-        EquipSlot::Accessory2 => "А2",
+        EquipSlot::Hand => i18n::t("slot.short.hand"),
+        EquipSlot::Body => i18n::t("slot.short.body"),
+        EquipSlot::Head => i18n::t("slot.short.head"),
+        EquipSlot::Feet => i18n::t("slot.short.feet"),
+        EquipSlot::Accessory1 => i18n::t("slot.short.accessory1"),
+        EquipSlot::Accessory2 => i18n::t("slot.short.accessory2"),
     }
 }
 

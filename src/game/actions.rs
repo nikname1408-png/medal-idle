@@ -1,5 +1,6 @@
-use super::balance::{self, Cost};
+﻿use super::balance::{self, Cost};
 use super::expedition;
+use super::i18n;
 use super::items;
 use super::state::{EquipError, GameState, ResearchKind, ResourceKind};
 use super::trader;
@@ -45,9 +46,9 @@ pub enum StudyMapError {
 impl StudyMapError {
     pub fn text(self) -> &'static str {
         match self {
-            Self::NotMap => "Это не карта локации.",
-            Self::Missing => "В сумке нет такой карты.",
-            Self::AlreadyOpen => "Эта локация уже открыта.",
+            Self::NotMap => i18n::t("err.not_map"),
+            Self::Missing => i18n::t("err.map_missing"),
+            Self::AlreadyOpen => i18n::t("err.map_open"),
         }
     }
 }
@@ -66,22 +67,32 @@ pub enum StudyBlueprintError {
 impl StudyBlueprintError {
     pub fn text(self) -> &'static str {
         match self {
-            Self::NotBlueprint => "Это не чертёж паровой машины.",
-            Self::AlreadyStudied => "Этот чертёж уже изучен.",
-            Self::Missing => "В сумке нет такого чертежа.",
+            Self::NotBlueprint => i18n::t("err.not_blueprint"),
+            Self::AlreadyStudied => i18n::t("err.blueprint_studied"),
+            Self::Missing => i18n::t("err.blueprint_missing"),
         }
     }
 }
 
 /// Предложение постройки, которое показывается игроку в центре экрана.
+///
+/// Тексты берутся из словаря: `letter.<id>.title` и `letter.<id>.body`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OfferDef {
     pub id: &'static str,
-    pub title: &'static str,
-    pub body: &'static str,
-    /// Короткая подпись с ценой для квадратной кнопки.
-    pub price: &'static str,
     pub cost: Cost,
+}
+
+impl OfferDef {
+    /// Заголовок предложения на текущем языке.
+    pub fn title(&self) -> &'static str {
+        i18n::t_or(&format!("letter.{}.title", self.id), "")
+    }
+
+    /// Текст предложения на текущем языке.
+    pub fn body(&self) -> &'static str {
+        i18n::t_or(&format!("letter.{}.body", self.id), "")
+    }
 }
 
 pub const OFFER_COAL_PIT: &str = "coal_pit";
@@ -93,23 +104,14 @@ pub fn offer_def(id: &str) -> Option<OfferDef> {
     match id {
         OFFER_COAL_PIT => Some(OfferDef {
             id: OFFER_COAL_PIT,
-            title: "Угольная яма",
-            body: "Дом построен! Рядом можно выкопать угольную яму — она даст уголь для кузницы.",
-            price: "300 золота",
             cost: balance::coal_pit_cost(0),
         }),
         OFFER_FORGE => Some(OfferDef {
             id: OFFER_FORGE,
-            title: "Кузница",
-            body: "Угольная яма работает. Открой кузницу — после этого её можно будет построить на «Кузнице».",
-            price: "200 дерева · 100 камня · 300 энергии · 500 золота",
             cost: balance::forge_cost(0),
         }),
         OFFER_BANK => Some(OfferDef {
             id: OFFER_BANK,
-            title: "Банк",
-            body: "У тебя уже 800 золота. Открой банк — после этого его можно будет построить на «Кузнице».",
-            price: "25 железных слитков · 500 золота",
             cost: balance::bank_cost(0),
         }),
         _ => None,
@@ -179,12 +181,7 @@ pub fn defer_pending_offer(state: &mut GameState) {
     let Some(def) = offer_def(&id) else {
         return;
     };
-    state.add_letter(
-        &format!("offer_{}", def.id),
-        def.title,
-        def.body,
-        Some(def.id),
-    );
+    state.add_letter(&format!("offer_{}", def.id), Some(def.id));
 }
 
 /// Ошибка крафта.
@@ -204,12 +201,12 @@ pub enum CraftError {
 impl CraftError {
     pub fn text(self) -> &'static str {
         match self {
-            Self::UnknownRecipe => "Такого рецепта нет.",
-            Self::NotEnough => "Не хватает ингредиентов.",
-            Self::NoSpace => "В сумке нет места для результата.",
-            Self::NoFire => "Недостаточно огня!",
-            Self::BlueprintLocked => "Сначала изучите чертёж паровой машины.",
-            Self::AlreadyBuilt => "Прототип паровой машины уже собран.",
+            Self::UnknownRecipe => i18n::t("err.unknown_recipe"),
+            Self::NotEnough => i18n::t("err.not_enough"),
+            Self::NoSpace => i18n::t("err.no_space"),
+            Self::NoFire => i18n::t("err.no_fire"),
+            Self::BlueprintLocked => i18n::t("err.blueprint_locked"),
+            Self::AlreadyBuilt => i18n::t("err.already_built"),
         }
     }
 }
@@ -352,12 +349,7 @@ pub fn enter_steam_era(state: &mut GameState) -> bool {
         return false;
     }
     state.steam_era = true;
-    state.add_letter(
-        "steam_era",
-        "Эпоха Пара",
-        "Машина работает. Пар движет станки, и вся добыча идёт быстрее. Начинается новая эра.",
-        None,
-    );
+    state.add_letter("steam_era", None);
     true
 }
 

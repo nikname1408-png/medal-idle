@@ -8,6 +8,8 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 
 use super::balance;
+use super::i18n;
+use super::i18n::catalog;
 
 /// Базовое число ячеек инвентаря без экипировки.
 pub const BASE_INVENTORY_SLOTS: u32 = 10;
@@ -36,11 +38,11 @@ pub enum Category {
 impl Category {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Material => "материал",
-            Self::Gear => "снаряжение",
-            Self::Jewelry => "украшение",
-            Self::Goods => "товар",
-            Self::Consumable => "расходник",
+            Self::Material => i18n::t("cat.material"),
+            Self::Gear => i18n::t("cat.gear"),
+            Self::Jewelry => i18n::t("cat.jewelry"),
+            Self::Goods => i18n::t("cat.goods"),
+            Self::Consumable => i18n::t("cat.consumable"),
         }
     }
 }
@@ -69,12 +71,12 @@ impl EquipSlot {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Hand => "Рука",
-            Self::Body => "Тело",
-            Self::Head => "Голова",
-            Self::Feet => "Ноги",
-            Self::Accessory1 => "Аксессуар I",
-            Self::Accessory2 => "Аксессуар II",
+            Self::Hand => i18n::t("slot.hand"),
+            Self::Body => i18n::t("slot.body"),
+            Self::Head => i18n::t("slot.head"),
+            Self::Feet => i18n::t("slot.feet"),
+            Self::Accessory1 => i18n::t("slot.accessory1"),
+            Self::Accessory2 => i18n::t("slot.accessory2"),
         }
     }
 }
@@ -115,50 +117,51 @@ impl ItemStats {
     /// Строка бонусов для карточки предмета.
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();
+        let mut add = |key: &str, value: String| parts.push(i18n::tf(key, &[&value]));
         if let Some(slots) = self.inventory_slots {
-            parts.push(format!("+{slots} ячеек в инвентаре"));
+            add("stats.inventory_slots", slots.to_string());
         }
         if let Some(trade) = self.trade_bonus {
-            parts.push(format!("+{trade:.0}% к цене продажи"));
+            add("stats.trade_bonus", format!("{trade:.0}"));
         }
         if let Some(energy) = self.max_energy {
-            parts.push(format!("+{energy} к запасу энергии"));
+            add("stats.max_energy", energy.to_string());
         }
         if let Some(expedition) = self.expedition_bonus {
-            parts.push(format!("+{expedition:.0}% к скорости походов"));
+            add("stats.expedition_bonus", format!("{expedition:.0}"));
         }
         if let Some(wood) = self.wood_bonus {
-            parts.push(format!("+{wood:.0}% к добыче дерева"));
+            add("stats.wood_bonus", format!("{wood:.0}"));
         }
         if let Some(stone) = self.stone_bonus {
-            parts.push(format!("+{stone:.0}% к добыче камня и глины"));
+            add("stats.stone_bonus", format!("{stone:.0}"));
         }
         if let Some(ore) = self.ore_bonus {
-            parts.push(format!("+{ore:.0}% к добыче руды"));
+            add("stats.ore_bonus", format!("{ore:.0}"));
         }
         if let Some(fiber) = self.fiber_bonus {
-            parts.push(format!("+{fiber:.0}% к добыче волокна"));
+            add("stats.fiber_bonus", format!("{fiber:.0}"));
         }
         if let Some(gold) = self.gold_bonus {
-            parts.push(format!("+{gold:.0}% к золоту за продажу"));
+            add("stats.gold_bonus", format!("{gold:.0}"));
         }
         if let Some(rare) = self.rare_loot_bonus {
-            parts.push(format!("+{rare:.0}% к шансу редкого лута"));
+            add("stats.rare_loot_bonus", format!("{rare:.0}"));
         }
         if let Some(gems) = self.gems_bonus {
-            parts.push(format!("+{gems:.0}% к шансу найти камни"));
+            add("stats.gems_bonus", format!("{gems:.0}"));
         }
         if let Some(fire) = self.fire_discount {
-            parts.push(format!("−{fire:.0}% расход огня в кузнице"));
+            add("stats.fire_discount", format!("{fire:.0}"));
         }
         if let Some(energy) = self.expedition_energy_discount {
-            parts.push(format!("−{energy:.0}% расход энергии в походах"));
+            add("stats.expedition_energy_discount", format!("{energy:.0}"));
         }
         if let Some(unlock) = &self.unlock {
             parts.push(unlock.clone());
         }
         if parts.is_empty() {
-            "без бонусов".to_string()
+            i18n::t("stats.none").to_string()
         } else {
             parts.join(", ")
         }
@@ -166,28 +169,39 @@ impl ItemStats {
 }
 
 /// Предмет каталога.
+///
+/// Название и описание в данных не хранятся: они берутся из словаря
+/// (`game::i18n`) по `id`, поэтому меняются вместе с языком интерфейса.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
-    pub name: String,
     pub category: Category,
     pub base_price: u32,
     pub stats: ItemStats,
     /// Слот экипировки. `None` — предмет нельзя надеть.
     pub slot: Option<EquipSlot>,
-    pub description: String,
     /// Стоимость огня кузницы, если предмет требует огонь при крафте.
     pub fire_cost: u32,
 }
 
 impl Item {
+    /// Название на текущем языке.
+    pub fn name(&self) -> &'static str {
+        catalog::name(self.id.as_str())
+    }
+
+    /// Описание на текущем языке.
+    pub fn description(&self) -> &'static str {
+        catalog::description(self.id.as_str())
+    }
+
     /// Условная редкость для карточки товара.
     pub fn rarity(&self) -> &'static str {
         match self.base_price {
-            0..=29 => "обычный",
-            30..=99 => "необычный",
-            100..=179 => "редкий",
-            _ => "ценный",
+            0..=29 => i18n::t("rarity.common"),
+            30..=99 => i18n::t("rarity.uncommon"),
+            100..=179 => i18n::t("rarity.rare"),
+            _ => i18n::t("rarity.valuable"),
         }
     }
 }
@@ -203,12 +217,20 @@ pub struct Ingredient {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Recipe {
     pub id: &'static str,
-    pub name: &'static str,
     pub ingredients: Vec<Ingredient>,
     pub result_id: &'static str,
     pub result_quantity: u32,
     /// Стоимость огня кузницы для крафта.
     pub fire_cost: u32,
+}
+
+impl Recipe {
+    /// Название рецепта: имя его результата.
+    pub fn name(&self) -> &'static str {
+        item(self.result_id)
+            .map(Item::name)
+            .unwrap_or(self.result_id)
+    }
 }
 
 /// Каталог всех предметов.
@@ -236,477 +258,145 @@ pub fn recipe(id: &str) -> Option<&'static Recipe> {
 fn build_catalog() -> Vec<Item> {
     vec![
         // ---------- Складские ресурсы ----------
-        item_def(
-            "wood",
-            "Дерево",
-            Category::Material,
-            2,
-            None,
-            "Простая древесина. Нужна почти во всех рецептах.",
-        ),
-        item_def(
-            "stone",
-            "Камень",
-            Category::Material,
-            2,
-            None,
-            "Обычный камень. Основа строительства и точил.",
-        ),
-        item_def(
-            "iron",
-            "Железная руда",
-            Category::Material,
-            5,
-            None,
-            "Кусок руды. Плавится в железные слитки.",
-        ),
-        item_def(
-            "coal",
-            "Уголь",
-            Category::Material,
-            3,
-            None,
-            "Уголь для кузницы. Горит и даёт огонь.",
-        ),
+        item_def("wood", Category::Material, 2, None),
+        item_def("stone", Category::Material, 2, None),
+        item_def("iron", Category::Material, 5, None),
+        item_def("coal", Category::Material, 3, None),
         // ---------- Инвентарные ресурсы ----------
-        item_def(
-            "clay",
-            "Глина",
-            Category::Material,
-            3,
-            None,
-            "Мягкая глина из каменоломни. Идёт на кирпич и кувшины.",
-        ),
-        item_def(
-            "leather",
-            "Кожа",
-            Category::Material,
-            8,
-            None,
-            "Выделанная кожа. Идёт на рюкзаки и одежду.",
-        ),
-        item_def(
-            "fiber",
-            "Волокно",
-            Category::Material,
-            2,
-            None,
-            "Растительное волокно. Идёт на ткань и свечи.",
-        ),
-        item_def(
-            "quartz",
-            "Кварц",
-            Category::Material,
-            10,
-            None,
-            "Прозрачный камень для точил и украшений.",
-        ),
-        item_def(
-            "silver",
-            "Серебро",
-            Category::Material,
-            30,
-            None,
-            "Драгоценный металл для украшений.",
-        ),
-        item_def(
-            "gold_ore",
-            "Золотая руда",
-            Category::Material,
-            150,
-            None,
-            "Редкая золотая руда. Плавится в золотые слитки.",
-        ),
-        item_def(
-            "gems",
-            "Драгоценные камни",
-            Category::Material,
-            100,
-            None,
-            "Огранённые камни для дорогих украшений.",
-        ),
+        item_def("clay", Category::Material, 3, None),
+        item_def("leather", Category::Material, 8, None),
+        item_def("fiber", Category::Material, 2, None),
+        item_def("quartz", Category::Material, 10, None),
+        item_def("silver", Category::Material, 30, None),
+        item_def("gold_ore", Category::Material, 150, None),
+        item_def("gems", Category::Material, 100, None),
         // ---------- Карты локаций ----------
-        item_def(
-            "map_forest",
-            "Карта Дремучего леса",
-            Category::Material,
-            500,
-            None,
-            "Открывает поход в Дремучий лес. Покупается у торговца или падает в поле и овраге.",
-        ),
-        item_def(
-            "map_mines",
-            "Карта Глубоких шахт",
-            Category::Material,
-            1500,
-            None,
-            "Открывает поход в Глубокие шахты. Нужна свеча.",
-        ),
-        item_def(
-            "map_quarry",
-            "Карта Забытой каменоломни",
-            Category::Material,
-            5000,
-            None,
-            "Открывает поход в Забытую каменоломню. Нужна свеча.",
-        ),
-        item_def(
-            "map_ruins",
-            "Карта Древних руин",
-            Category::Material,
-            10000,
-            None,
-            "Открывает поход в Древние руины. Нужен факел или свеча.",
-        ),
-        item_def(
-            STEAM_BLUEPRINT_ID,
-            "Чертёж паровой машины",
-            Category::Material,
-            5000,
-            None,
-            "Особая находка Древних руин. Изучи чертёж в сумке — в кузнице откроется рецепт прототипа паровой машины.",
-        ),
-        item_def(
-            STEAM_PROTOTYPE_ID,
-            "Прототип паровой машины",
-            Category::Material,
-            0,
-            None,
-            "Первый шаг к новой эре. Собран в кузнице по изученному чертежу и больше не помещается в сумку.",
-        ),
+        item_def("map_forest", Category::Material, 500, None),
+        item_def("map_mines", Category::Material, 1500, None),
+        item_def("map_quarry", Category::Material, 5000, None),
+        item_def("map_ruins", Category::Material, 10000, None),
+        item_def(STEAM_BLUEPRINT_ID, Category::Material, 5000, None),
+        item_def(STEAM_PROTOTYPE_ID, Category::Material, 0, None),
         // ---------- Промежуточные материалы ----------
-        item_def(
-            "board",
-            "Доска",
-            Category::Material,
-            8,
-            None,
-            "Деревянная доска. Материал для инструментов.",
-        ),
-        item_def(
-            "cloth",
-            "Ткань",
-            Category::Material,
-            11,
-            None,
-            "Обычная ткань. Идёт на робы и куртки.",
-        ),
-        item_def(
-            "whetstone",
-            "Точильный камень",
-            Category::Material,
-            26,
-            None,
-            "Камень с кварцем. Чтобы затачивать инструменты.",
-        ),
-        item_def(
-            "brick",
-            "Кирпич",
-            Category::Goods,
-            16,
-            None,
-            "Кирпич из глины и угля. Строительный материал.",
-        )
-        .with_fire_cost(10),
-        item_def(
-            "stone_block",
-            "Каменный блок",
-            Category::Goods,
-            150,
-            None,
-            "Тёсаный блок из пятидесяти камней. Готовая кладка для стройки.",
-        ),
-        item_def(
-            "iron_ingot",
-            "Железный слиток",
-            Category::Material,
-            24,
-            None,
-            "Выплавленная руда. Заготовка для снаряжения.",
-        )
-        .with_fire_cost(15),
-        item_def(
-            "gold_ingot",
-            "Золотой слиток",
-            Category::Material,
-            528,
-            None,
-            "Чистое золото для дорогих украшений.",
-        )
-        .with_fire_cost(30),
-        item_def(
-            "silver_ingot",
-            "Серебряный слиток",
-            Category::Material,
-            96,
-            None,
-            "Выплавленное серебро. Заготовка для украшений.",
-        )
-        .with_fire_cost(20),
+        item_def("board", Category::Material, 8, None),
+        item_def("cloth", Category::Material, 11, None),
+        item_def("whetstone", Category::Material, 26, None),
+        item_def("brick", Category::Goods, 16, None).with_fire_cost(10),
+        item_def("stone_block", Category::Goods, 150, None),
+        item_def("iron_ingot", Category::Material, 24, None).with_fire_cost(15),
+        item_def("gold_ingot", Category::Material, 528, None).with_fire_cost(30),
+        item_def("silver_ingot", Category::Material, 96, None).with_fire_cost(20),
         // ---------- Экипировка и инструменты ----------
-        item_def(
-            "backpack",
-            "Кожаный рюкзак",
-            Category::Gear,
-            51,
-            Some(EquipSlot::Body),
-            "Крепкий рюкзак с карманами для находок.",
-        )
-        .with_stats(ItemStats {
+        item_def("backpack", Category::Gear, 51, Some(EquipSlot::Body)).with_stats(ItemStats {
             inventory_slots: Some(10),
             ..ItemStats::default()
         }),
-        item_def(
-            "robe",
-            "Роба",
-            Category::Gear,
-            62,
-            Some(EquipSlot::Body),
-            "Лёгкая роба странника. Не сковывает в пути.",
-        )
-        .with_stats(ItemStats {
+        item_def("robe", Category::Gear, 62, Some(EquipSlot::Body)).with_stats(ItemStats {
             expedition_bonus: Some(10.0),
             ..ItemStats::default()
         }),
-        item_def(
-            "leather_gloves",
-            "Кожаные перчатки",
-            Category::Gear,
-            43,
-            Some(EquipSlot::Hand),
-            "Удобные перчатки для работы в поле и в лесу.",
-        )
-        .with_stats(ItemStats {
-            wood_bonus: Some(10.0),
-            stone_bonus: Some(10.0),
-            ..ItemStats::default()
-        }),
-        item_def(
-            "iron_bracers",
-            "Железные наручи",
-            Category::Gear,
-            133,
-            Some(EquipSlot::Hand),
-            "Наручи кузнеца: часть жара уходит в металл.",
-        )
-        .with_stats(ItemStats {
-            fire_discount: Some(5.0),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(40),
-        item_def(
-            "winter_gloves",
-            "Зимние перчатки",
-            Category::Gear,
-            80,
-            Some(EquipSlot::Hand),
-            "Тёплые перчатки. Меньше усталости в пути.",
-        )
-        .with_stats(ItemStats {
-            expedition_energy_discount: Some(10.0),
-            ..ItemStats::default()
-        }),
-        item_def(
-            "jacket",
-            "Куртка",
-            Category::Gear,
-            157,
-            Some(EquipSlot::Body),
-            "Плотная куртка из кожи и ткани.",
-        )
-        .with_stats(ItemStats {
+        item_def("leather_gloves", Category::Gear, 43, Some(EquipSlot::Hand)).with_stats(
+            ItemStats {
+                wood_bonus: Some(10.0),
+                stone_bonus: Some(10.0),
+                ..ItemStats::default()
+            },
+        ),
+        item_def("iron_bracers", Category::Gear, 133, Some(EquipSlot::Hand))
+            .with_stats(ItemStats {
+                fire_discount: Some(5.0),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(40),
+        item_def("winter_gloves", Category::Gear, 80, Some(EquipSlot::Hand)).with_stats(
+            ItemStats {
+                expedition_energy_discount: Some(10.0),
+                ..ItemStats::default()
+            },
+        ),
+        item_def("jacket", Category::Gear, 157, Some(EquipSlot::Body)).with_stats(ItemStats {
             expedition_energy_discount: Some(15.0),
             ..ItemStats::default()
         }),
         // ---------- Инструменты для фермы ----------
-        item_def(
-            "wooden_bucket",
-            "Деревянное ведро",
-            Category::Goods,
-            75,
-            None,
-            "Ведро из досок.",
-        ),
-        item_def(
-            "iron_bucket",
-            "Железное ведро",
-            Category::Goods,
-            67,
-            None,
-            "Прочное ведро, сколоченное на кузнице.",
-        )
-        .with_fire_cost(15),
-        item_def(
-            "sickle",
-            "Серп",
-            Category::Goods,
-            96,
-            None,
-            "Серп для жатвы волокна.",
-        )
-        .with_stats(ItemStats {
-            fiber_bonus: Some(15.0),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(30),
-        item_def(
-            "scythe",
-            "Коса",
-            Category::Goods,
-            115,
-            None,
-            "Длинная коса: косит волокно рядками.",
-        )
-        .with_stats(ItemStats {
-            fiber_bonus: Some(25.0),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(35),
+        item_def("wooden_bucket", Category::Goods, 75, None),
+        item_def("iron_bucket", Category::Goods, 67, None).with_fire_cost(15),
+        item_def("sickle", Category::Goods, 96, None)
+            .with_stats(ItemStats {
+                fiber_bonus: Some(15.0),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(30),
+        item_def("scythe", Category::Goods, 115, None)
+            .with_stats(ItemStats {
+                fiber_bonus: Some(25.0),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(35),
         // ---------- Товары на продажу ----------
-        item_def(
-            "jug",
-            "Глиняный кувшин",
-            Category::Goods,
-            11,
-            None,
-            "Кувшин, вылепленный из глины.",
-        ),
-        item_def(
-            "candle",
-            "Свеча",
-            Category::Goods,
-            10,
-            None,
-            "Свеча из волокна и угля. Нужна для походов в тёмные локации.",
-        ),
+        item_def("jug", Category::Goods, 11, None),
+        item_def("candle", Category::Goods, 10, None),
         // ---------- Головные уборы и шлемы ----------
-        item_def(
-            "wretched_hat",
-            "Убогая шапка",
-            Category::Gear,
-            42,
-            Some(EquipSlot::Head),
-            "Латаная шапка из обрезков ткани. Греет хоть как-то.",
-        )
-        .with_stats(ItemStats {
+        item_def("wretched_hat", Category::Gear, 42, Some(EquipSlot::Head)).with_stats(ItemStats {
             max_energy: Some(5),
             ..ItemStats::default()
         }),
-        item_def(
-            "leather_hat",
-            "Кожаная шапка",
-            Category::Gear,
-            45,
-            Some(EquipSlot::Head),
-            "Простая шапка из выделанной кожи.",
-        )
-        .with_stats(ItemStats {
+        item_def("leather_hat", Category::Gear, 45, Some(EquipSlot::Head)).with_stats(ItemStats {
             wood_bonus: Some(5.0),
             fiber_bonus: Some(5.0),
             ..ItemStats::default()
         }),
-        item_def(
-            "war_hat",
-            "Шапка воина",
-            Category::Gear,
-            77,
-            Some(EquipSlot::Head),
-            "Кожаная шапка с железными пластинами.",
-        )
-        .with_stats(ItemStats {
+        item_def("war_hat", Category::Gear, 77, Some(EquipSlot::Head)).with_stats(ItemStats {
             stone_bonus: Some(5.0),
             ore_bonus: Some(5.0),
             ..ItemStats::default()
         }),
-        item_def(
-            "iron_helmet",
-            "Железный шлем",
-            Category::Gear,
-            152,
-            Some(EquipSlot::Head),
-            "Клёпаный шлем с кожаным подшлемником.",
-        )
-        .with_stats(ItemStats {
+        item_def("iron_helmet", Category::Gear, 152, Some(EquipSlot::Head)).with_stats(ItemStats {
             max_energy: Some(15),
             fire_discount: Some(5.0),
             ..ItemStats::default()
         }),
-        item_def(
-            "coif",
-            "Койф",
-            Category::Gear,
-            192,
-            Some(EquipSlot::Head),
-            "Кольчужный капюшон, прикрывающий шею и плечи.",
-        )
-        .with_stats(ItemStats {
-            expedition_energy_discount: Some(8.0),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(50),
-        item_def(
-            "wanderers_hood",
-            "Капюшон странника",
-            Category::Gear,
-            64,
-            Some(EquipSlot::Head),
-            "Мягкий капюшон, не боится ни дождя, ни ветра.",
-        )
-        .with_stats(ItemStats {
-            expedition_bonus: Some(8.0),
-            ..ItemStats::default()
-        }),
-        item_def(
-            "armet",
-            "Армет",
-            Category::Gear,
-            800,
-            Some(EquipSlot::Head),
-            "Закрытый рыцарский шлем с золотой насечкой.",
-        )
-        .with_stats(ItemStats {
-            max_energy: Some(20),
-            trade_bonus: Some(8.0),
-            gold_bonus: Some(8.0),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(150),
+        item_def("coif", Category::Gear, 192, Some(EquipSlot::Head))
+            .with_stats(ItemStats {
+                expedition_energy_discount: Some(8.0),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(50),
+        item_def("wanderers_hood", Category::Gear, 64, Some(EquipSlot::Head)).with_stats(
+            ItemStats {
+                expedition_bonus: Some(8.0),
+                ..ItemStats::default()
+            },
+        ),
+        item_def("armet", Category::Gear, 800, Some(EquipSlot::Head))
+            .with_stats(ItemStats {
+                max_energy: Some(20),
+                trade_bonus: Some(8.0),
+                gold_bonus: Some(8.0),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(150),
         // ---------- Броня ----------
-        item_def(
-            "iron_armor",
-            "Железная броня",
-            Category::Gear,
-            432,
-            Some(EquipSlot::Body),
-            "Тяжёлая броня из железных пластин на кожаной основе.",
-        )
-        .with_stats(ItemStats {
-            max_energy: Some(30),
-            fire_discount: Some(10.0),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(200),
-        item_def(
-            "archers_jacket",
-            "Куртка лучника",
-            Category::Gear,
-            104,
-            Some(EquipSlot::Body),
-            "Стёганая куртка, не мешает натягивать лук.",
-        )
-        .with_stats(ItemStats {
-            expedition_bonus: Some(10.0),
-            fiber_bonus: Some(5.0),
-            ..ItemStats::default()
-        }),
+        item_def("iron_armor", Category::Gear, 432, Some(EquipSlot::Body))
+            .with_stats(ItemStats {
+                max_energy: Some(30),
+                fire_discount: Some(10.0),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(200),
+        item_def("archers_jacket", Category::Gear, 104, Some(EquipSlot::Body)).with_stats(
+            ItemStats {
+                expedition_bonus: Some(10.0),
+                fiber_bonus: Some(5.0),
+                ..ItemStats::default()
+            },
+        ),
         // ---------- Пояса ----------
         item_def(
             "wanderers_belt",
-            "Пояс странника",
             Category::Gear,
             77,
             Some(EquipSlot::Accessory1),
-            "Ремень с кварцевыми бляхами. Дорога любит таких.",
         )
         .with_stats(ItemStats {
             inventory_slots: Some(3),
@@ -715,11 +405,9 @@ fn build_catalog() -> Vec<Item> {
         }),
         item_def(
             "belt_with_bag",
-            "Пояс с сумкой",
             Category::Gear,
             136,
             Some(EquipSlot::Accessory1),
-            "Широкий ремень с кожаной сумкой на боку.",
         )
         .with_stats(ItemStats {
             inventory_slots: Some(5),
@@ -727,65 +415,29 @@ fn build_catalog() -> Vec<Item> {
             ..ItemStats::default()
         }),
         // ---------- Щиты ----------
-        item_def(
-            "wooden_shield",
-            "Деревянный щит",
-            Category::Gear,
-            88,
-            None,
-            "Щит из досок, обитых по краю.",
-        ),
-        item_def(
-            "norman_shield",
-            "Норманский щит",
-            Category::Gear,
-            128,
-            None,
-            "Длинный щит с железным умбоном.",
-        )
-        .with_fire_cost(50),
-        item_def(
-            "iron_shield",
-            "Железный щит",
-            Category::Gear,
-            296,
-            None,
-            "Цельнометаллический щит. Держит удар копья.",
-        ),
+        item_def("wooden_shield", Category::Gear, 88, None),
+        item_def("norman_shield", Category::Gear, 128, None).with_fire_cost(50),
+        item_def("iron_shield", Category::Gear, 296, None),
         // ---------- Плащи ----------
-        item_def(
-            "beggars_cloak",
-            "Плащ нищего",
-            Category::Gear,
-            61,
-            Some(EquipSlot::Body),
-            "Выцветший плащ с чужого плеча.",
-        )
-        .with_stats(ItemStats {
-            inventory_slots: Some(2),
-            trade_bonus: Some(2.0),
-            ..ItemStats::default()
-        }),
-        item_def(
-            "leather_coat",
-            "Кожаный плащ",
-            Category::Gear,
-            109,
-            Some(EquipSlot::Body),
-            "Плотный плащ из сшитых кож.",
-        )
-        .with_stats(ItemStats {
-            expedition_energy_discount: Some(5.0),
-            wood_bonus: Some(5.0),
-            ..ItemStats::default()
-        }),
+        item_def("beggars_cloak", Category::Gear, 61, Some(EquipSlot::Body)).with_stats(
+            ItemStats {
+                inventory_slots: Some(2),
+                trade_bonus: Some(2.0),
+                ..ItemStats::default()
+            },
+        ),
+        item_def("leather_coat", Category::Gear, 109, Some(EquipSlot::Body)).with_stats(
+            ItemStats {
+                expedition_energy_discount: Some(5.0),
+                wood_bonus: Some(5.0),
+                ..ItemStats::default()
+            },
+        ),
         item_def(
             "researchers_cloak",
-            "Плащ исследователя",
             Category::Gear,
             125,
             Some(EquipSlot::Body),
-            "Плащ с кварцевыми застёжками и глубокими карманами.",
         )
         .with_stats(ItemStats {
             expedition_bonus: Some(10.0),
@@ -794,11 +446,9 @@ fn build_catalog() -> Vec<Item> {
         }),
         item_def(
             "travelers_cloak",
-            "Плащ путешественника",
             Category::Gear,
             304,
             Some(EquipSlot::Body),
-            "Дорожный плащ с каменной брошью. Видел дальние земли.",
         )
         .with_stats(ItemStats {
             expedition_bonus: Some(15.0),
@@ -807,26 +457,18 @@ fn build_catalog() -> Vec<Item> {
             ..ItemStats::default()
         }),
         // ---------- Перчатки ----------
-        item_def(
-            "beggars_gloves",
-            "Перчатки нищего",
-            Category::Gear,
-            48,
-            Some(EquipSlot::Hand),
-            "Обрезанные перчатки без пальцев.",
-        )
-        .with_stats(ItemStats {
-            fiber_bonus: Some(8.0),
-            wood_bonus: Some(5.0),
-            ..ItemStats::default()
-        }),
+        item_def("beggars_gloves", Category::Gear, 48, Some(EquipSlot::Hand)).with_stats(
+            ItemStats {
+                fiber_bonus: Some(8.0),
+                wood_bonus: Some(5.0),
+                ..ItemStats::default()
+            },
+        ),
         item_def(
             "chainmail_gloves",
-            "Кольчужные перчатки",
             Category::Gear,
             168,
             Some(EquipSlot::Hand),
-            "Кольчужные рукавицы кузнечной работы.",
         )
         .with_stats(ItemStats {
             fire_discount: Some(10.0),
@@ -835,130 +477,67 @@ fn build_catalog() -> Vec<Item> {
         })
         .with_fire_cost(100),
         // ---------- Обувь ----------
-        item_def(
-            "poor_boots",
-            "Нищие ботинки",
-            Category::Gear,
-            74,
-            Some(EquipSlot::Feet),
-            "Стоптанные ботинки, перевязанные верёвкой.",
-        )
-        .with_stats(ItemStats {
+        item_def("poor_boots", Category::Gear, 74, Some(EquipSlot::Feet)).with_stats(ItemStats {
             expedition_energy_discount: Some(3.0),
             ..ItemStats::default()
         }),
-        item_def(
-            "leather_boots",
-            "Кожаные ботинки",
-            Category::Gear,
-            93,
-            Some(EquipSlot::Feet),
-            "Крепкие кожаные ботинки на двойной подошве.",
-        )
-        .with_stats(ItemStats {
-            expedition_energy_discount: Some(5.0),
-            expedition_bonus: Some(3.0),
-            ..ItemStats::default()
-        }),
-        item_def(
-            "hiking_boots",
-            "Походные ботинки",
-            Category::Gear,
-            144,
-            Some(EquipSlot::Feet),
-            "Обувь для долгих дорог: кожа, войлок и смола.",
-        )
-        .with_stats(ItemStats {
-            expedition_energy_discount: Some(8.0),
-            expedition_bonus: Some(5.0),
-            ..ItemStats::default()
-        }),
-        item_def(
-            "iron_boots",
-            "Железные ботинки",
-            Category::Gear,
-            312,
-            Some(EquipSlot::Feet),
-            "Сабатоны из железа. Тяжело, зато не пробить.",
-        )
-        .with_stats(ItemStats {
-            expedition_energy_discount: Some(10.0),
-            max_energy: Some(10),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(150),
-        item_def(
-            "winter_boots",
-            "Зимние ботинки",
-            Category::Gear,
-            128,
-            Some(EquipSlot::Feet),
-            "Тёплые ботинки на меху.",
-        )
-        .with_stats(ItemStats {
-            expedition_energy_discount: Some(10.0),
-            wood_bonus: Some(3.0),
-            ..ItemStats::default()
-        }),
+        item_def("leather_boots", Category::Gear, 93, Some(EquipSlot::Feet)).with_stats(
+            ItemStats {
+                expedition_energy_discount: Some(5.0),
+                expedition_bonus: Some(3.0),
+                ..ItemStats::default()
+            },
+        ),
+        item_def("hiking_boots", Category::Gear, 144, Some(EquipSlot::Feet)).with_stats(
+            ItemStats {
+                expedition_energy_discount: Some(8.0),
+                expedition_bonus: Some(5.0),
+                ..ItemStats::default()
+            },
+        ),
+        item_def("iron_boots", Category::Gear, 312, Some(EquipSlot::Feet))
+            .with_stats(ItemStats {
+                expedition_energy_discount: Some(10.0),
+                max_energy: Some(10),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(150),
+        item_def("winter_boots", Category::Gear, 128, Some(EquipSlot::Feet)).with_stats(
+            ItemStats {
+                expedition_energy_discount: Some(10.0),
+                wood_bonus: Some(3.0),
+                ..ItemStats::default()
+            },
+        ),
         // ---------- Инструменты ----------
-        item_def(
-            "wooden_shovel",
-            "Деревянная лопата",
-            Category::Gear,
-            48,
-            Some(EquipSlot::Hand),
-            "Лопата из досок. Для мягкой земли.",
-        )
-        .with_stats(ItemStats {
-            stone_bonus: Some(8.0),
-            wood_bonus: Some(3.0),
-            ..ItemStats::default()
-        }),
-        item_def(
-            "iron_shovel",
-            "Железная лопата",
-            Category::Gear,
-            104,
-            Some(EquipSlot::Hand),
-            "Лопата с железным лотком.",
-        )
-        .with_stats(ItemStats {
-            stone_bonus: Some(12.0),
-            ore_bonus: Some(8.0),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(20),
-        item_def(
-            "hammer",
-            "Молоток",
-            Category::Gear,
-            48,
-            None,
-            "Молоток кузнеца: железная голова на дубовой ручке.",
-        )
-        .with_fire_cost(15),
-        item_def(
-            "chainmail",
-            "Кольчуга",
-            Category::Goods,
-            690,
-            Some(EquipSlot::Body),
-            "Долгая работа кузнеца: сотни колец.",
-        )
-        .with_stats(ItemStats {
-            fire_discount: Some(10.0),
-            expedition_energy_discount: Some(8.0),
-            ..ItemStats::default()
-        })
-        .with_fire_cost(200),
+        item_def("wooden_shovel", Category::Gear, 48, Some(EquipSlot::Hand)).with_stats(
+            ItemStats {
+                stone_bonus: Some(8.0),
+                wood_bonus: Some(3.0),
+                ..ItemStats::default()
+            },
+        ),
+        item_def("iron_shovel", Category::Gear, 104, Some(EquipSlot::Hand))
+            .with_stats(ItemStats {
+                stone_bonus: Some(12.0),
+                ore_bonus: Some(8.0),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(20),
+        item_def("hammer", Category::Gear, 48, None).with_fire_cost(15),
+        item_def("chainmail", Category::Goods, 690, Some(EquipSlot::Body))
+            .with_stats(ItemStats {
+                fire_discount: Some(10.0),
+                expedition_energy_discount: Some(8.0),
+                ..ItemStats::default()
+            })
+            .with_fire_cost(200),
         // ---------- Бижутерия ----------
         item_def(
             "silver_ring",
-            "Серебряное кольцо",
             Category::Jewelry,
             53,
             Some(EquipSlot::Accessory1),
-            "Простое кольцо из серебра.",
         )
         .with_stats(ItemStats {
             trade_bonus: Some(3.0),
@@ -967,11 +546,9 @@ fn build_catalog() -> Vec<Item> {
         .with_fire_cost(15),
         item_def(
             "trader_ring",
-            "Кольцо торговца",
             Category::Jewelry,
             70,
             Some(EquipSlot::Accessory1),
-            "Серебряное кольцо с кварцем. Помогает торговаться.",
         )
         .with_stats(ItemStats {
             trade_bonus: Some(10.0),
@@ -981,11 +558,9 @@ fn build_catalog() -> Vec<Item> {
         .with_fire_cost(15),
         item_def(
             "miner_amulet",
-            "Амулет шахтёра",
             Category::Jewelry,
             70,
             Some(EquipSlot::Accessory1),
-            "Кварц чутко отзывается на руду в породе.",
         )
         .with_stats(ItemStats {
             ore_bonus: Some(15.0),
@@ -995,11 +570,9 @@ fn build_catalog() -> Vec<Item> {
         .with_fire_cost(15),
         item_def(
             "wanderer_pendant",
-            "Кулон странника",
             Category::Jewelry,
             67,
             Some(EquipSlot::Accessory1),
-            "Серебряный кулон с драгоценным камнем. Приносит удачу в странствиях.",
         )
         .with_stats(ItemStats {
             expedition_bonus: Some(10.0),
@@ -1009,11 +582,9 @@ fn build_catalog() -> Vec<Item> {
         .with_fire_cost(15),
         item_def(
             "gold_ring",
-            "Золотое кольцо с камнем",
             Category::Jewelry,
             757,
             Some(EquipSlot::Accessory1),
-            "Тяжёлое золото и яркий камень.",
         )
         .with_stats(ItemStats {
             gold_bonus: Some(20.0),
@@ -1023,11 +594,9 @@ fn build_catalog() -> Vec<Item> {
         .with_fire_cost(60),
         item_def(
             "gold_pendant",
-            "Золотая подвеска",
             Category::Jewelry,
             933,
             Some(EquipSlot::Accessory1),
-            "Золотая подвеска с двумя камнями.",
         )
         .with_stats(ItemStats {
             trade_bonus: Some(10.0),
@@ -1038,22 +607,13 @@ fn build_catalog() -> Vec<Item> {
     ]
 }
 
-fn item_def(
-    id: &str,
-    name: &str,
-    category: Category,
-    base_price: u32,
-    slot: Option<EquipSlot>,
-    description: &str,
-) -> Item {
+fn item_def(id: &str, category: Category, base_price: u32, slot: Option<EquipSlot>) -> Item {
     Item {
         id: id.to_string(),
-        name: name.to_string(),
         category,
         base_price,
         stats: ItemStats::default(),
         slot,
-        description: description.to_string(),
         fire_cost: 0,
     }
 }
@@ -1084,7 +644,6 @@ fn need(item_id: &'static str, quantity: u32) -> Ingredient {
 /// Рецепт крафта в одну строку.
 fn make_recipe(
     id: &'static str,
-    name: &'static str,
     result_id: &'static str,
     result_quantity: u32,
     fire_cost: u32,
@@ -1103,7 +662,6 @@ fn make_recipe(
     }
     Recipe {
         id,
-        name,
         ingredients,
         result_id,
         result_quantity,
@@ -1114,11 +672,10 @@ fn make_recipe(
 fn build_recipes() -> Vec<Recipe> {
     vec![
         // Промежуточные материалы.
-        make_recipe("board", "Доска", "board", 1, 0, vec![need("wood", 2)]),
-        make_recipe("cloth", "Ткань", "cloth", 1, 0, vec![need("fiber", 3)]),
+        make_recipe("board", "board", 1, 0, vec![need("wood", 2)]),
+        make_recipe("cloth", "cloth", 1, 0, vec![need("fiber", 3)]),
         make_recipe(
             "whetstone",
-            "Точильный камень",
             "whetstone",
             1,
             0,
@@ -1126,39 +683,22 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "brick",
-            "Кирпич",
             "brick",
             1,
             10,
             vec![need("clay", 2), need("coal", 1)],
         ),
-        make_recipe(
-            "stone_block",
-            "Каменный блок",
-            "stone_block",
-            1,
-            0,
-            vec![need("stone", 50)],
-        ),
+        make_recipe("stone_block", "stone_block", 1, 0, vec![need("stone", 50)]),
         make_recipe(
             "iron_ingot",
-            "Железный слиток",
             "iron_ingot",
             1,
             15,
             vec![need("iron", 2), need("coal", 1)],
         ),
-        make_recipe(
-            "gold_ingot",
-            "Золотой слиток",
-            "gold_ingot",
-            1,
-            30,
-            vec![need("gold_ore", 2)],
-        ),
+        make_recipe("gold_ingot", "gold_ingot", 1, 30, vec![need("gold_ore", 2)]),
         make_recipe(
             "silver_ingot",
-            "Серебряный слиток",
             "silver_ingot",
             1,
             20,
@@ -1167,16 +707,14 @@ fn build_recipes() -> Vec<Recipe> {
         // Экипировка и инструменты.
         make_recipe(
             "backpack",
-            "Кожаный рюкзак",
             "backpack",
             1,
             0,
             vec![need("leather", 3), need("board", 1)],
         ),
-        make_recipe("robe", "Роба", "robe", 1, 0, vec![need("cloth", 5)]),
+        make_recipe("robe", "robe", 1, 0, vec![need("cloth", 5)]),
         make_recipe(
             "leather_gloves",
-            "Кожаные перчатки",
             "leather_gloves",
             1,
             0,
@@ -1184,7 +722,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "iron_bracers",
-            "Железные наручи",
             "iron_bracers",
             1,
             40,
@@ -1192,7 +729,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "winter_gloves",
-            "Зимние перчатки",
             "winter_gloves",
             1,
             0,
@@ -1200,7 +736,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "jacket",
-            "Куртка",
             "jacket",
             1,
             0,
@@ -1209,7 +744,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Инструменты для фермы.
         make_recipe(
             "wooden_bucket",
-            "Деревянное ведро",
             "wooden_bucket",
             1,
             0,
@@ -1217,7 +751,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "iron_bucket",
-            "Железное ведро",
             "iron_bucket",
             1,
             15,
@@ -1225,7 +758,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "sickle",
-            "Серп",
             "sickle",
             1,
             30,
@@ -1233,42 +765,25 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "scythe",
-            "Коса",
             "scythe",
             1,
             35,
             vec![need("iron_ingot", 3), need("board", 2)],
         ),
         // Товары на продажу.
-        make_recipe("jug", "Глиняный кувшин", "jug", 1, 0, vec![need("clay", 2)]),
+        make_recipe("jug", "jug", 1, 0, vec![need("clay", 2)]),
         make_recipe(
             "candle",
-            "Свеча",
             "candle",
             1,
             0,
             vec![need("fiber", 1), need("coal", 1)],
         ),
         // Головные уборы и шлемы.
-        make_recipe(
-            "wretched_hat",
-            "Убогая шапка",
-            "wretched_hat",
-            1,
-            0,
-            vec![need("cloth", 4)],
-        ),
-        make_recipe(
-            "leather_hat",
-            "Кожаная шапка",
-            "leather_hat",
-            1,
-            0,
-            vec![need("leather", 3)],
-        ),
+        make_recipe("wretched_hat", "wretched_hat", 1, 0, vec![need("cloth", 4)]),
+        make_recipe("leather_hat", "leather_hat", 1, 0, vec![need("leather", 3)]),
         make_recipe(
             "war_hat",
-            "Шапка воина",
             "war_hat",
             1,
             0,
@@ -1276,7 +791,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "iron_helmet",
-            "Железный шлем",
             "iron_helmet",
             1,
             0,
@@ -1284,7 +798,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "coif",
-            "Койф",
             "coif",
             1,
             50,
@@ -1292,7 +805,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "wanderers_hood",
-            "Капюшон странника",
             "wanderers_hood",
             1,
             0,
@@ -1300,7 +812,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "armet",
-            "Армет",
             "armet",
             1,
             150,
@@ -1309,7 +820,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Броня.
         make_recipe(
             "iron_armor",
-            "Железная броня",
             "iron_armor",
             1,
             200,
@@ -1317,7 +827,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "archers_jacket",
-            "Куртка лучника",
             "archers_jacket",
             1,
             0,
@@ -1326,7 +835,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Пояса.
         make_recipe(
             "wanderers_belt",
-            "Пояс странника",
             "wanderers_belt",
             1,
             0,
@@ -1334,7 +842,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "belt_with_bag",
-            "Пояс с сумкой",
             "belt_with_bag",
             1,
             0,
@@ -1343,7 +850,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Щиты.
         make_recipe(
             "wooden_shield",
-            "Деревянный щит",
             "wooden_shield",
             1,
             0,
@@ -1351,7 +857,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "norman_shield",
-            "Норманский щит",
             "norman_shield",
             1,
             50,
@@ -1359,7 +864,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "iron_shield",
-            "Железный щит",
             "iron_shield",
             1,
             0,
@@ -1368,7 +872,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Плащи.
         make_recipe(
             "beggars_cloak",
-            "Плащ нищего",
             "beggars_cloak",
             1,
             0,
@@ -1376,7 +879,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "leather_coat",
-            "Кожаный плащ",
             "leather_coat",
             1,
             0,
@@ -1384,7 +886,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "researchers_cloak",
-            "Плащ исследователя",
             "researchers_cloak",
             1,
             0,
@@ -1392,7 +893,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "travelers_cloak",
-            "Плащ путешественника",
             "travelers_cloak",
             1,
             0,
@@ -1401,7 +901,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Перчатки.
         make_recipe(
             "beggars_gloves",
-            "Перчатки нищего",
             "beggars_gloves",
             1,
             0,
@@ -1409,7 +908,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "chainmail_gloves",
-            "Кольчужные перчатки",
             "chainmail_gloves",
             1,
             100,
@@ -1418,7 +916,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Обувь.
         make_recipe(
             "poor_boots",
-            "Нищие ботинки",
             "poor_boots",
             1,
             0,
@@ -1426,7 +923,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "leather_boots",
-            "Кожаные ботинки",
             "leather_boots",
             1,
             0,
@@ -1434,7 +930,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "hiking_boots",
-            "Походные ботинки",
             "hiking_boots",
             1,
             0,
@@ -1442,7 +937,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "iron_boots",
-            "Железные ботинки",
             "iron_boots",
             1,
             150,
@@ -1450,7 +944,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "winter_boots",
-            "Зимние ботинки",
             "winter_boots",
             1,
             0,
@@ -1459,7 +952,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Инструменты.
         make_recipe(
             "wooden_shovel",
-            "Деревянная лопата",
             "wooden_shovel",
             1,
             0,
@@ -1467,7 +959,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "iron_shovel",
-            "Железная лопата",
             "iron_shovel",
             1,
             20,
@@ -1475,7 +966,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "hammer",
-            "Молоток",
             "hammer",
             1,
             15,
@@ -1483,7 +973,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "chainmail",
-            "Кольчуга",
             "chainmail",
             1,
             200,
@@ -1492,7 +981,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Бижутерия.
         make_recipe(
             "silver_ring",
-            "Серебряное кольцо",
             "silver_ring",
             1,
             15,
@@ -1500,7 +988,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "trader_ring",
-            "Кольцо торговца",
             "trader_ring",
             1,
             15,
@@ -1508,7 +995,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "miner_amulet",
-            "Амулет шахтёра",
             "miner_amulet",
             1,
             15,
@@ -1516,7 +1002,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "wanderer_pendant",
-            "Кулон странника",
             "wanderer_pendant",
             1,
             15,
@@ -1524,7 +1009,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "gold_ring",
-            "Золотое кольцо с камнем",
             "gold_ring",
             1,
             60,
@@ -1532,7 +1016,6 @@ fn build_recipes() -> Vec<Recipe> {
         ),
         make_recipe(
             "gold_pendant",
-            "Золотая подвеска",
             "gold_pendant",
             1,
             80,
@@ -1541,7 +1024,6 @@ fn build_recipes() -> Vec<Recipe> {
         // Финал Средневековья: прототип паровой машины.
         make_recipe(
             STEAM_PROTOTYPE_RECIPE,
-            "Прототип паровой машины",
             STEAM_PROTOTYPE_ID,
             1,
             balance::STEAM_PROTOTYPE_FIRE,

@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod balance;
 pub mod expedition;
+pub mod i18n;
 pub mod items;
 pub mod state;
 pub mod trader;

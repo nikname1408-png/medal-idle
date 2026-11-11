@@ -10,6 +10,24 @@
 
 ## Текущий статус
 
+- v0.10: три языка интерфейса — русский (по умолчанию), английский,
+  испанский. Модуль `src/game/i18n/`: `Lang` (`Ru`/`En`/`Es`), `t`/`t_or`/
+  `tf` (подстановки `{}`), `minus` (`−` в русском, `-` в остальных), `is_ru`,
+  `lang`, `set_lang`. Словари — `strings/{ru,en,es}.rs`, в каждом четыре
+  среза одного типа: `ENTRIES`, `ITEM_NAMES`, `ITEM_DESCS`, `WORLD`.
+  Ключи данных = `id` (`cat.<id>.name`, `loc.<id>.name`, `trader.<id>`,
+  `ach.<id>.name`), UI-тексты — `field.*`, `bag.*`, `hike.*`, `trade.*`,
+  `cycle.*`, `settings.*`. Имена/описания — методы структур (`Item::name`,
+  `ExpeditionLocation::name`, `TraderDef::name`, `AchievementStatus::name`,
+  `Recipe::name`, `MarketStatus::label/short/arrow/legend`),
+  `i18n::catalog` кэширует «(id, поле) → перевод» по языку. Язык живёт в
+  TLS-ячейке потока (`thread_local Cell<u8>`), не в общей `AtomicU8` — иначе
+  тесты мешают друг другу. Выбор языка — секция «Язык» в «Настройках»;
+  хранится отдельно от сохранения в `localStorage` под ключом `pole_lang`
+  (`save::load_lang`/`save::save_lang`), «Сбросить прогресс» его не трогает.
+  В EN/ES — обычный дефис и обычные кавычки; рынок — `D↑`/`B→`/`S↓`.
+  Тесты: `every_key_exists_in_all_languages`, `keys_are_unique`,
+  `placeholders_match_between_languages`, `english_keeps_a_plain_hyphen`.
 - v0.9.6: запас огня кузницы выровнен по уровню. `FORGE_FIRE_MAX_SECONDS`
   60 → 65, `FORGE_FIRE_PER_LEVEL` 50 → 65, поэтому `fire_max()` =
   65 + (level−1) × 65 = 65 × level (1 → 65, 5 → 325, 10 → 650), затем

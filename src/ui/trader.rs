@@ -2,6 +2,7 @@
 
 use dioxus::prelude::*;
 
+use crate::game::i18n;
 use crate::game::items::{self, Item};
 use crate::game::state::GameState;
 use crate::game::trader::{self, GoodRarity, GoodState, MarketStatus};
@@ -71,13 +72,20 @@ pub fn TradeScreen(
     }
 
     let hint = if visible.is_empty() {
-        "Ничего не найдено.".to_string()
+        i18n::t("trade.empty").to_string()
     } else if let Some(item_id) = &selected_now {
         items::item(item_id)
-            .map(|item| format!("Выбрано: {}.", item.name))
+            .map(|item| i18n::tf("trade.selected", &[item.name()]))
             .unwrap_or_default()
     } else {
-        "Нажми на товар, чтобы открыть карточку.".to_string()
+        i18n::t("trade.hint").to_string()
+    };
+    let title_text = i18n::tf("trade.title", &[trader::trader_name(trader_now)]);
+    let gold_text = i18n::tf("trade.gold", &[&format_money(view.gold)]);
+    let column_owned = if mode_now.is_buy() {
+        i18n::t("trade.col_stock")
+    } else {
+        i18n::t("trade.col_owned")
     };
 
     rsx! {
@@ -86,16 +94,16 @@ pub fn TradeScreen(
             div { class: "trader-window",
                 div { class: "trade-book",
                     div { class: "trade-head",
-                        span { class: "trade-title", "ТОРГОВЕЦ: {trader::trader_name(trader_now)}" }
+                        span { class: "trade-title", "{title_text}" }
                         button {
                             class: "trade-close",
                             onclick: move |_| on_close.call(()),
-                            "[ X ] Выйти"
+                            "{i18n::t(\"trade.leave\")}"
                         }
                     }
                     div { class: "trade-subhead",
-                        span { "Рынок живёт сам: спрос и предложение меняются каждые 5 секунд." }
-                        span { class: "trade-subhead-gold", "Золото: {format_money(view.gold)}" }
+                        span { "{i18n::t(\"trade.subhead\")}" }
+                        span { class: "trade-subhead-gold", "{gold_text}" }
                     }
 
                     div { class: "trade-trader-picker",
@@ -109,7 +117,7 @@ pub fn TradeScreen(
                                     qty.set(1);
                                     message.set(String::new());
                                 },
-                                "{trader_def.name}"
+                                "{trader_def.name()}"
                             }
                         }
                     }
@@ -124,7 +132,7 @@ pub fn TradeScreen(
                                     qty.set(1);
                                     message.set(String::new());
                                 },
-                                "КУПИТЬ"
+                                "{i18n::t(\"trade.buy_tab\")}"
                             }
                             button {
                                 class: if mode_now.is_buy() { "trade-tab" } else { "trade-tab active" },
@@ -134,11 +142,11 @@ pub fn TradeScreen(
                                     qty.set(1);
                                     message.set(String::new());
                                 },
-                                "Продать"
+                                "{i18n::t(\"trade.sell_tab\")}"
                             }
                         }
                         label { class: "trade-field",
-                            span { "Фильтр:" }
+                            span { "{i18n::t(\"trade.filter\")}" }
                             select {
                                 class: "trade-select",
                                 value: match filter_now {
@@ -152,25 +160,23 @@ pub fn TradeScreen(
                                         Filter::All
                                     });
                                 },
-                                option { value: "all", "Все" }
-                                option { value: "available", "Доступные" }
+                                option { value: "all", "{i18n::t(\"trade.all\")}" }
+                                option { value: "available", "{i18n::t(\"trade.available\")}" }
                             }
                         }
                     }
 
                     div { class: "trade-table",
                         div { class: "trade-row trade-head-row",
-                            span { "ТОВАР" }
-                            span { class: "num",
-                                if mode_now.is_buy() { "ЗАП." } else { "У ВАС" }
-                            }
-                            span { class: "num", "КУП." }
-                            span { class: "num", "ПРОД." }
-                            span { class: "num", "С/П" }
-                            span { class: "num", "РЫНОК" }
+                            span { "{i18n::t(\"trade.col_good\")}" }
+                            span { class: "num", "{column_owned}" }
+                            span { class: "num", "{i18n::t(\"trade.col_buy\")}" }
+                            span { class: "num", "{i18n::t(\"trade.col_sell\")}" }
+                            span { class: "num", "{i18n::t(\"trade.col_demand\")}" }
+                            span { class: "num", "{i18n::t(\"trade.col_market\")}" }
                         }
                         if visible.is_empty() {
-                            div { class: "trade-empty", "Ничего не найдено." }
+                            div { class: "trade-empty", "{i18n::t(\"trade.empty\")}" }
                         }
                         for good in visible.iter().copied() {
                             if let Some(item) = items::item(&good.item_id) {
@@ -192,7 +198,7 @@ pub fn TradeScreen(
                     }
 
                     div { class: "trade-foot",
-                        div { "С/П = спрос/предложение. Рынок: Д — дефицит, Б — баланс, И — избыток." }
+                        div { "{MarketStatus::Balance.legend()}" }
                         div { class: "trade-hint", "{hint}" }
                         if !message_now.is_empty() {
                             div { class: "trade-error", "{message_now}" }
@@ -256,7 +262,7 @@ fn TradeRow(
             onclick: move |_| on_select.call(item_id.clone()),
             span { class: "trade-name",
                 ItemIcon { item: item.clone(), class: "trade-item-icon".to_string() }
-                span { "{item.name}" }
+                span { "{item.name()}" }
                 if let Some(reason) = reason {
                     span { class: "trade-reason", " · {reason}" }
                 }
@@ -327,7 +333,7 @@ fn ItemCard(
         Mode::Sell => (view.gold + total).min(view.gold_cap()),
     };
     let total_text = if quantity > 0 {
-        format!("{} зл.", format_money(total))
+        i18n::tf("trade.total_value", &[&format_money(total)])
     } else {
         "—".to_string()
     };
@@ -335,26 +341,26 @@ fn ItemCard(
     let error = match mode {
         Mode::Buy => {
             if good.stock == 0 {
-                Some("Нет в наличии".to_string())
+                Some(i18n::t("trade.no_stock").to_string())
             } else if max_qty == 0 && room == 0 {
-                Some("В сумке нет места".to_string())
+                Some(i18n::t("trade.no_room").to_string())
             } else if view.gold + 1e-9 < buy {
-                Some("Недостаточно золота".to_string())
+                Some(i18n::t("trade.no_gold").to_string())
             } else if quantity == 0 {
-                Some("Нечего покупать".to_string())
+                Some(i18n::t("trade.nothing_buy").to_string())
             } else {
                 None
             }
         }
         Mode::Sell => {
             if owned == 0 {
-                Some("У вас нет этого товара".to_string())
+                Some(i18n::t("trade.nothing_owned").to_string())
             } else if good.buy_limit == 0 {
-                Some("Лимит скупки за цикл исчерпан".to_string())
+                Some(i18n::t("trade.limit_reached").to_string())
             } else if view.gold + 1e-9 >= view.gold_cap() {
-                Some("Лимит золота достигнут. Улучши банк.".to_string())
+                Some(i18n::t("trade.gold_cap").to_string())
             } else if quantity == 0 {
-                Some("Не хватает лимита золота на сделку.".to_string())
+                Some(i18n::t("trade.gold_limit_short").to_string())
             } else {
                 None
             }
@@ -362,7 +368,7 @@ fn ItemCard(
     };
 
     let advice_text = if mode == Mode::Sell && good.buy_limit == 0 {
-        "Торговец этот товар больше не скупает."
+        i18n::t("trade.not_buying")
     } else {
         advice(status, mode)
     };
@@ -372,7 +378,7 @@ fn ItemCard(
     let buy_all_item_id = item.id.clone();
     let sell_item_id = item.id.clone();
     let sell_all_item_id = item.id.clone();
-    let item_name = item.name.clone();
+    let item_name = item.name();
     let rarity = item.rarity();
     let appearance = GoodRarity::of(&item).label();
     let message_now = message();
@@ -381,52 +387,54 @@ fn ItemCard(
         div { class: "trade-card",
             div { class: "trade-card-head",
                 span { class: "trade-card-title", "{item_name}" }
-                span { class: "trade-rarity", "[редкость: {rarity}]" }
+                span { class: "trade-rarity", "{i18n::tf(\"trade.rarity\", &[rarity])}" }
             }
 
             div { class: "trade-line",
-                span { "Шанс появления:" }
+                span { "{i18n::t(\"trade.appearance\")}" }
                 span { class: "trade-line-value", "{appearance}" }
             }
 
             div { class: "trade-line",
-                span { "Цена покупки:" }
-                span { class: "trade-line-value", "{format_money(buy)} зл." }
-            }
-            div { class: "trade-line",
-                span { "Цена продажи:" }
+                span { "{i18n::t(\"trade.buy_price\")}" }
                 span { class: "trade-line-value",
-                    "{format_money(sell)} зл.   (наценка: {format_money(margin)})"
+                    "{i18n::tf(\"trade.total_value\", &[&format_money(buy)])}"
                 }
             }
             div { class: "trade-line",
-                span { "Спрос:" }
+                span { "{i18n::t(\"trade.sell_price\")}" }
+                span { class: "trade-line-value",
+                    "{i18n::tf(\"trade.margin\", &[&format_money(sell), &format_money(margin)])}"
+                }
+            }
+            div { class: "trade-line",
+                span { "{i18n::t(\"trade.demand\")}" }
                 span { class: "trade-bar", "{bar(good.demand)}" }
                 span { class: "num trade-line-value", "{good.demand}" }
             }
             div { class: "trade-line",
-                span { "Предложение:" }
+                span { "{i18n::t(\"trade.supply\")}" }
                 span { class: "trade-bar", "{bar(good.supply)}" }
                 span { class: "num trade-line-value", "{good.supply}" }
             }
             div { class: "trade-line",
-                span { "Рынок:" }
+                span { "{i18n::t(\"trade.market\")}" }
                 span { class: "trade-market", "{status.label()} {status.arrow()}" }
                 span { class: "trade-line-muted",
-                    "(спрос − предложение = {format_signed(good.diff())})"
+                    "{i18n::tf(\"trade.diff\", &[&format_signed(good.diff())])}"
                 }
             }
             div { class: "trade-line",
-                span { "Запас у торговца:" }
+                span { "{i18n::t(\"trade.stock\")}" }
                 span { class: "trade-line-value", "{good.stock}" }
             }
             div { class: "trade-line",
-                span { "У вас:" }
+                span { "{i18n::t(\"trade.owned\")}" }
                 span { class: "trade-line-value", "{owned}" }
             }
 
             div { class: "trade-qty",
-                span { class: "trade-qty-label", "Кол-во:" }
+                span { class: "trade-qty-label", "{i18n::t(\"trade.qty\")}" }
                 button {
                     class: "trade-step",
                     disabled: max_qty == 0,
@@ -444,14 +452,16 @@ fn ItemCard(
                     class: "trade-max",
                     disabled: max_qty == 0,
                     onclick: move |_| qty.set(max_qty),
-                    "[MAX: {max_qty}]"
+                    "{i18n::tf(\"btn.max\", &[&max_qty.to_string()])}"
                 }
             }
 
             div { class: "trade-line trade-total",
-                span { "Итого:" }
+                span { "{i18n::t(\"trade.total\")}" }
                 span { class: "trade-line-value", "{total_text}" }
-                span { class: "trade-line-muted", "Золото после: {format_money(gold_after)}" }
+                span { class: "trade-line-muted",
+                    "{i18n::tf(\"trade.gold_after\", &[&format_money(gold_after)])}"
+                }
             }
 
             if let Some(error) = error.clone() {
@@ -484,7 +494,7 @@ fn ItemCard(
                             qty.set(1);
                             refresh_view(state);
                         },
-                        "КУПИТЬ"
+                        "{i18n::t(\"trade.buy_tab\")}"
                     }
                     button {
                         class: "trade-btn",
@@ -501,7 +511,7 @@ fn ItemCard(
                             qty.set(1);
                             refresh_view(state);
                         },
-                        "КУПИТЬ ×{max_qty}"
+                        "{i18n::tf(\"trade.buy_n\", &[&max_qty.to_string()])}"
                     }
                 } else {
                     button {
@@ -525,7 +535,7 @@ fn ItemCard(
                             qty.set(1);
                             refresh_view(state);
                         },
-                        "ПРОДАТЬ"
+                        "{i18n::t(\"trade.sell_btn\")}"
                     }
                     button {
                         class: "trade-btn",
@@ -542,17 +552,17 @@ fn ItemCard(
                             qty.set(1);
                             refresh_view(state);
                         },
-                        "ПРОДАТЬ ×{max_qty}"
+                        "{i18n::tf(\"trade.sell_n\", &[&max_qty.to_string()])}"
                     }
                 }
                 button {
                     class: "trade-btn cancel",
                     onclick: move |_| on_close.call(()),
-                    "Отмена"
+                    "{i18n::t(\"btn.cancel\")}"
                 }
             }
 
-            div { class: "trade-advice", "Совет: {advice_text}" }
+            div { class: "trade-advice", "{i18n::tf(\"trade.advice\", &[advice_text])}" }
         }
     }
 }
@@ -579,22 +589,22 @@ fn row_reason(view: &GameState, mode: Mode, item: &Item, good: &GoodState) -> Op
         Mode::Buy => {
             let price = trader::buy_price(item, good.demand, good.supply);
             if good.stock == 0 {
-                Some("нет в наличии")
+                Some(i18n::t("trade.reason.no_stock"))
             } else if view.gold + 1e-9 < price {
-                Some("нет золота")
+                Some(i18n::t("trade.reason.no_gold"))
             } else if !view.can_add_item(&item.id, 1) {
-                Some("нет места")
+                Some(i18n::t("trade.reason.no_room"))
             } else {
                 None
             }
         }
         Mode::Sell => {
             if good.buy_limit == 0 {
-                Some("не скупает")
+                Some(i18n::t("trade.reason.not_buying"))
             } else if view.item_count(&good.item_id) == 0 {
-                Some("нечего продать")
+                Some(i18n::t("trade.reason.nothing"))
             } else if view.gold + 1e-9 >= view.gold_cap() {
-                Some("лимит золота")
+                Some(i18n::t("trade.reason.gold_cap"))
             } else {
                 None
             }
@@ -604,19 +614,11 @@ fn row_reason(view: &GameState, mode: Mode, item: &Item, good: &GoodState) -> Op
 
 fn advice(status: MarketStatus, mode: Mode) -> &'static str {
     match (status, mode) {
-        (MarketStatus::Deficit, Mode::Buy) => {
-            "Дефицит — цена выросла. Покупка сейчас дороже обычного."
-        }
-        (MarketStatus::Deficit, Mode::Sell) => {
-            "Дефицит — цена продажи выше обычной. Хороший момент продать."
-        }
-        (MarketStatus::Balance, _) => "Рынок в равновесии — цена стабильна.",
-        (MarketStatus::Surplus, Mode::Buy) => {
-            "Избыток — товара много, цена низкая. Хороший момент для закупки."
-        }
-        (MarketStatus::Surplus, Mode::Sell) => {
-            "Избыток — торговец даёт меньше за единицу. Продавать сейчас невыгодно."
-        }
+        (MarketStatus::Deficit, Mode::Buy) => i18n::t("trade.tip.deficit_buy"),
+        (MarketStatus::Deficit, Mode::Sell) => i18n::t("trade.tip.deficit_sell"),
+        (MarketStatus::Balance, _) => i18n::t("trade.tip.balance"),
+        (MarketStatus::Surplus, Mode::Buy) => i18n::t("trade.tip.surplus_buy"),
+        (MarketStatus::Surplus, Mode::Sell) => i18n::t("trade.tip.surplus_sell"),
     }
 }
 
@@ -629,7 +631,7 @@ fn format_signed(value: i32) -> String {
     match value {
         0 => "0".to_string(),
         positive if positive > 0 => format!("+{positive}"),
-        negative => format!("−{}", -negative),
+        negative => format!("{}{}", i18n::minus(), -negative),
     }
 }
 
@@ -645,7 +647,7 @@ pub(crate) fn format_money(value: f64) -> String {
         output.push(digit);
     }
     if negative {
-        format!("−{output}")
+        format!("{}{output}", i18n::minus())
     } else {
         output
     }
@@ -675,5 +677,14 @@ mod tests {
         assert_eq!(format_signed(5), "+5");
         assert_eq!(format_signed(0), "0");
         assert_eq!(format_signed(-3), "−3");
+    }
+
+    #[test]
+    fn english_keeps_a_plain_hyphen() {
+        i18n::set_lang(crate::game::i18n::Lang::En);
+        assert_eq!(format_signed(-3), "-3");
+        assert_eq!(format_money(-1240.0), "-1 240");
+        assert_eq!(i18n::t("trade.title"), "TRADER: {}");
+        i18n::set_lang(crate::game::i18n::Lang::Ru);
     }
 }
