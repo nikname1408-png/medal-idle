@@ -19,6 +19,7 @@ const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 const ICON_BAG: Asset = asset!("/assets/icons/bag.png");
 const ICON_COAL: Asset = asset!("/assets/icons/coal.png");
+const ICON_ENERGY: Asset = asset!("/assets/icons/energy.png");
 const ICON_FIRE: Asset = asset!("/assets/icons/fire.png");
 const ICON_GEAR: Asset = asset!("/assets/icons/gear.png");
 const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
@@ -28,6 +29,7 @@ const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
 const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
 const ICON_TAB_FORGE: Asset = asset!("/assets/icons/tab_forge.png");
 const ICON_TAB_HIRING: Asset = asset!("/assets/icons/tab_hiring.png");
+const ICON_TAB_REBORN: Asset = asset!("/assets/icons/tab_reborn.png");
 const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
 
 const TAB_FIELD: usize = 0;
@@ -43,7 +45,7 @@ const TABS: [(&str, &str); 7] = [
     ("👷", "Труд"),
     ("🎒", "Сумка"),
     ("🧭", "Походы"),
-    ("🔄", "Цикл"),
+    ("♻️", "Перерождение"),
     ("📊", "Статы"),
     ("⚙️", "Настр."),
 ];
@@ -198,7 +200,7 @@ pub fn App() -> Element {
         TAB_WORK => "Труд",
         TAB_BAG => "Инвентарь",
         TAB_EXPEDITION => "Походы",
-        TAB_CYCLE => "Цикл",
+        TAB_CYCLE => "Перерождение",
         TAB_STATS => "Статы",
         _ => "Кузница",
     };
@@ -827,7 +829,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
     let ready = threshold_met && wall_mine_met && wall_stone_met;
     let requirement = if !threshold_met {
         format!(
-            "Нужно добыть {} дерева и камня за цикл (сейчас {}).",
+            "Нужно добыть {} дерева и камня за перерождение (сейчас {}).",
             format_num(threshold),
             format_num(gathered)
         )
@@ -839,29 +841,29 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
         )
     } else if !wall_stone_met {
         format!(
-            "Стена R={}: нужно {} камня за цикл сверх порога.",
+            "Стена R={}: нужно {} камня за перерождение сверх порога.",
             balance::CYCLE_WALL_STONE_LEVEL,
             format_num(balance::CYCLE_WALL_EXTRA_STONE)
         )
     } else {
-        "Всё готово для нового цикла.".to_string()
+        "Всё готово для нового перерождения.".to_string()
     };
 
     rsx! {
         section { class: "cycle-hero",
             div { class: "cycle-count", "{cycles}" }
-            div { class: "cycle-label", "циклов пройдено" }
+            div { class: "cycle-label", "перерождений пройдено" }
             div { class: "cycle-bonus", "Множитель дохода: ×{multiplier:.2}" }
         }
 
         section { class: "settings",
-            h2 { class: "settings-title", "Новый цикл" }
+            h2 { class: "settings-title", "Новое перерождение" }
             p { class: "settings-note",
-                "Сбросит ресурсы, постройки, работников и сумку. Останутся циклы, время в игре, статистика и достижения."
+                "Сбросит ресурсы, постройки, работников и сумку. Останутся перерождения, время в игре, статистика и достижения."
             }
 
             div { class: "cycle-progress-head",
-                span { "Добыто за цикл" }
+                span { "Добыто за перерождение" }
                 span { class: "cycle-progress-value", "{format_num(gathered)} / {format_num(threshold)}" }
             }
             div { class: "cycle-progress-track",
@@ -874,7 +876,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
                     span { class: "cycle-forecast-value", "×{multiplier:.2}" }
                 }
                 div { class: "cycle-forecast-item",
-                    span { class: "cycle-forecast-label", "После цикла" }
+                    span { class: "cycle-forecast-label", "После перерождения" }
                     span { class: "cycle-forecast-value", "×{next_multiplier:.2}" }
                 }
                 div { class: "cycle-forecast-item",
@@ -883,7 +885,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
             }
             p { class: "settings-note",
-                "Множитель зависит только от номера цикла: перебор сверх порога X не увеличивает. «Отдых» и «Труд» умножаются на X, ручная добыча — нет."
+                "Множитель зависит только от номера перерождения: перебор сверх порога X не увеличивает. «Отдых» и «Труд» умножаются на X, ручная добыча — нет."
             }
 
             if wall_mine_active {
@@ -910,7 +912,7 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
                         }
                     }
                     span { class: "cycle-wall-text",
-                        "Стена R={balance::CYCLE_WALL_STONE_LEVEL}: {format_num(stone_have)} / {format_num(stone_need)} камня за цикл"
+                        "Стена R={balance::CYCLE_WALL_STONE_LEVEL}: {format_num(stone_have)} / {format_num(stone_need)} камня за перерождение"
                     }
                 }
             }
@@ -936,9 +938,9 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                 },
                 if armed() {
-                    "Нажми ещё раз, чтобы начать цикл"
+                    "Нажми ещё раз, чтобы начать перерождение"
                 } else {
-                    "Начать новый цикл"
+                    "Начать новое перерождение"
                 }
             }
         }
@@ -993,7 +995,7 @@ fn StatsScreen(view: GameState) -> Element {
                 value: format_num(stats.gold_earned),
             }
             StatRow {
-                label: "Пройдено циклов".to_string(),
+                label: "Пройдено перерождений".to_string(),
                 value: format_num(snapshot.cycles as f64),
             }
         }
@@ -1721,7 +1723,7 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         },
                     }
                     DevNumberRow {
-                        label: "Циклов пройдено".to_string(),
+                        label: "Перерождений пройдено".to_string(),
                         value: snapshot.cycles as f64,
                         step: "1".to_string(),
                         on_change: move |value: f64| {
@@ -2340,7 +2342,7 @@ fn EnergyBar(view: GameState) -> Element {
         div { class: "energy",
             div { class: "energy-fill", style: "{fill_style}" }
             div { class: "energy-content",
-                span { class: "energy-bolt", "⚡" }
+                img { class: "energy-bolt", src: "{ICON_ENERGY}", alt: "" }
                 span { class: "energy-label", "{label}" }
             }
         }
@@ -2499,6 +2501,7 @@ fn tab_icon(index: usize) -> Option<Asset> {
         TAB_WORK => Some(ICON_TAB_HIRING),
         TAB_BAG => Some(ICON_BAG),
         TAB_EXPEDITION => None,
+        TAB_CYCLE => Some(ICON_TAB_REBORN),
         TAB_SETTINGS => Some(ICON_GEAR),
         _ => None,
     }

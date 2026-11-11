@@ -856,7 +856,9 @@ button {
 }
 
 .energy-bolt {
-    font-size: 12px;
+    width: 12px;
+    height: 18px;
+    object-fit: contain;
 }
 
 .energy-label {
