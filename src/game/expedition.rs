@@ -434,8 +434,8 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
 
     let bonus = 1.0 + state.expedition_bonus as f64;
     let loot_chance = balance::EXPEDITION_LOOT_CHANCE as u64;
-    // Карта падает только в последней открытой локации.
-    let is_current = state.is_current_location(location.id);
+    // Карта падает в любой открытой локации.
+    let is_current = state.location_unlocked(location.id);
 
     for _ in 0..rolls {
         // Каждый бросок продвигает зерно, поэтому тики не повторяют друг друга.
@@ -774,21 +774,32 @@ mod tests {
     }
 
     #[test]
-    fn map_drops_only_in_current_location() {
+    fn map_drops_only_in_unlocked_locations() {
+        // В закрытой локации карта не падает.
         let mut state = endless_state();
-        state.unlock_location("deep_forest");
-        // Текущая локация — лес, поэтому поле карт не сыплет.
+        state.market_seed = 42;
+        let report = run_expedition(&mut state, "deep_forest", 60).expect("поход");
+        assert!(
+            !report.loot.iter().any(|loot| loot.item_id == "map_mines"),
+            "карта выпала в закрытой локации"
+        );
+
+        // В открытой — падает.
+        let mut state = endlessly_rich();
+        state.unlock_location("deep_mines");
         let mut any_map = false;
         for seed in 0..2_000u64 {
             state.market_seed = seed;
-            let report = run_expedition(&mut state, "field", 60).expect("поход");
-            if report.loot.iter().any(|loot| loot.item_id == "map_forest") {
+            let report = run_expedition(&mut state, "deep_mines", 60).expect("поход");
+            if report.loot.iter().any(|loot| loot.item_id == "map_quarry") {
                 any_map = true;
+                break;
             }
-            state.active_resources.clear();
-            state.inventory.clear();
+            // Рюкзак чистим от лута, но свечи оставляем: без них поход
+            // в шахтах обрывается на первом же шаге.
+            state.inventory.retain(|item_id, _| item_id == "candle");
         }
-        assert!(!any_map, "карта выпала не в текущей локации");
+        assert!(any_map, "карта не выпала в открытой локации");
     }
 
     #[test]

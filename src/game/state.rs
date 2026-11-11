@@ -1529,11 +1529,6 @@ impl GameState {
         "field"
     }
 
-    /// `true`, если это последняя открытая локация.
-    pub fn is_current_location(&self, location_id: &str) -> bool {
-        self.current_location() == location_id
-    }
-
     /// Есть ли у игрока требуемый локации предмет (кирка, свеча).
     pub fn meets_location_requirement(
         &self,
