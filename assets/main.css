@@ -2080,8 +2080,8 @@ button {
 }
 
 .craft-panel-icon .icon {
-    width: 88%;
-    height: 88%;
+    width: 78%;
+    height: 78%;
 }
 
 .craft-panel-bottom {
@@ -2143,7 +2143,7 @@ button {
 }
 
 .craft-icon {
-    font-size: 18px;
+    font-size: 16px;
 }
 
 .craft-main {
@@ -2359,7 +2359,7 @@ button {
     border-radius: 3px;
     background: rgba(0, 0, 0, 0.18);
     color: var(--text);
-    font-size: 18px;
+    font-size: 16px;
     line-height: 1;
     cursor: pointer;
 }
@@ -2388,8 +2388,8 @@ button {
 }
 
 .inv-item .icon {
-    width: 62%;
-    height: 62%;
+    width: 55%;
+    height: 55%;
 }
 
 .tab-icon.icon,
@@ -2405,8 +2405,8 @@ button {
 }
 
 .inv-detail-icon.icon {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
 }
 
 /* Простой текст счётчика: «Исследователи 1/2», «Работники 0/1». */

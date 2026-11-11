@@ -10,6 +10,11 @@
 
 ## Текущий статус
 
+- v0.9.4: у кирпича появилась иконка `brick.aseprite` →
+  `assets/icons/item_brick.png` (60×43), в `item_icon_asset` добавлена
+  строка `"brick"`. Иконки в сумке и крафте ещё меньше: PNG в ячейке 55%
+  (было 62%), эмодзи-заглушки 16px, в карточке рецепта 78%, в карточке
+  предмета 16×16.
 - v0.9.3: иконки вкладок «Походы» (`hike.aseprite` →
   `assets/icons/tab_hike.png`, 58×60) и «Статы» (`statistics.aseprite` →
   `assets/icons/tab_stats.png`, 52×40). Теперь PNG-иконки есть у всех
