@@ -645,10 +645,20 @@ fn InventoryCard(
     let mut state = state;
     let mut message = message;
     let count = view.item_count(&item.id);
-    let equipped = item
-        .slot
-        .map(|slot| view.equipment.get(slot) == Some(item.id.as_str()))
-        .unwrap_or(false);
+    let equipped_slot = match item.slot {
+        Some(EquipSlot::Accessory1) => {
+            if view.equipment.get(EquipSlot::Accessory1) == Some(item.id.as_str()) {
+                Some(EquipSlot::Accessory1)
+            } else if view.equipment.get(EquipSlot::Accessory2) == Some(item.id.as_str()) {
+                Some(EquipSlot::Accessory2)
+            } else {
+                None
+            }
+        }
+        Some(slot) if view.equipment.get(slot) == Some(item.id.as_str()) => Some(slot),
+        _ => None,
+    };
+    let equipped = equipped_slot.is_some();
     let can_equip = item.slot.is_some() && count > 0 && !equipped;
     let item_id = item.id.clone();
     let study_item_id = item_id.clone();
@@ -726,14 +736,14 @@ fn InventoryCard(
                         "Изучить карту"
                     }
                 }
-                if let Some(slot) = slot {
-                    if equipped {
+                if slot.is_some() {
+                    if let Some(equipped_slot) = equipped_slot {
                         button {
                             class: "inv-tool",
                             onclick: move |_| {
                                 {
                                     let mut guard = state.write();
-                                    actions::unequip_slot(&mut guard, slot);
+                                    actions::unequip_slot(&mut guard, equipped_slot);
                                 }
                                 refresh_view(state);
                             },
@@ -772,7 +782,10 @@ fn slot_short(slot: EquipSlot) -> &'static str {
     match slot {
         EquipSlot::Hand => "Р",
         EquipSlot::Body => "Т",
-        EquipSlot::Accessory => "А",
+        EquipSlot::Head => "Г",
+        EquipSlot::Feet => "Н",
+        EquipSlot::Accessory1 => "А1",
+        EquipSlot::Accessory2 => "А2",
     }
 }
 

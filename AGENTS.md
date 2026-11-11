@@ -10,6 +10,25 @@
 
 ## Текущий статус
 
+- v0.8.0: шесть слотов экипировки и свеча как расходник. `EquipSlot` —
+  `Head`, `Body`, `Hand`, `Feet`, `Accessory1`, `Accessory2` (`ALL` — в этом
+  порядке). Каталог `items.rs`: 25 «мирных» предметов получили слот и
+  бонусы (шапки/шлемы, броня и плащи, лопаты и перчатки, обувь, пояса,
+  бижутерия). Восемь аксессуаров все помечены `Accessory1`, а `equip_item`
+  сам кладёт второй во `Accessory2`, третий упирается в `SlotOccupied`;
+  «уже надет» проверяется по обоим слотам. `EquippedItems` получил поля
+  `head`, `feet`, `accessory1/2` и легаси-поле `accessory`, которое `migrate`
+  (и наборы Set 1–4) переносит в `accessory1`. `recalculate_stats` больше не
+  складывает `gold_bonus` дважды. Свеча (`CANDLE_SECONDS_PER_ITEM = 200`)
+  списывается в тёмных локациях (`requires_item == "candle"`) по одной штуке
+  в начале каждых 200 секунд пути, счётчик — `expedition_candle_timer`
+  (сбрасывается при старте похода). Последняя свеча догорела — `ExpeditionTick::out_of_candle`,
+  поход прерывается сообщением «Поход прерван: свеча догорела.».
+  Тесты: `six_slots_accept_two_accessories`, `legacy_accessory_moves_to_first_slot`,
+  `new_gear_uses_all_six_slots`, `candle_burns_out_and_stops_the_expedition`,
+  `candle_is_not_spent_in_light_locations`; в тестах шахт и руин добавлены
+  свечи. UI: 6 слотов в сетке 2×3 (`A1`/`A2` вместо `А`), «Снять» в карточке
+  снимает с того слота аксессуаров, в котором предмет стоит.
 - v0.7.23: карта локации — предмет, который надо изучить. `EXPEDITION_MAP_CHANCE`
   4 → 6% (15% лута × 8% редкого × 6% → карта в среднем раз в ~1400 с пути).
   `grant_map` больше не открывает локацию: карта падает в рюкзак, а поход

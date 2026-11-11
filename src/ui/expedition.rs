@@ -126,6 +126,7 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                             {
                                 let mut guard = state.write();
                                 guard.expedition_timer = 0.0;
+                                guard.expedition_candle_timer = 0;
                                 guard.active_expedition = Some(ActiveExpedition::new(location.id));
                             }
                             refresh_view(state);
@@ -187,7 +188,11 @@ fn ExpeditionCard(
             if let Some((item_id, label)) = location.requires_item {
                 div {
                     class: if meets_requirement { "exp-card-desc" } else { "exp-card-desc poor" },
-                    "Требуется: {label} ({ingredient_name(item_id)})"
+                    if item_id == "candle" {
+                        "Требуется: {label} — 1 шт. на {balance::CANDLE_SECONDS_PER_ITEM} секунд пути"
+                    } else {
+                        "Требуется: {label} ({ingredient_name(item_id)})"
+                    }
                 }
             }
             div { class: "exp-card-loot",

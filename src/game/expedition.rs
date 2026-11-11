@@ -93,6 +93,12 @@ pub struct ExpeditionLocation {
 }
 
 impl ExpeditionLocation {
+    /// Локация тёмная: в пути тратится свеча.
+    pub fn requires_candle(&self) -> bool {
+        self.requires_item
+            .is_some_and(|(item_id, _)| item_id == "candle")
+    }
+
     /// Таблица лута с учётом карты: карта — редкий лут локации.
     pub fn table(&self) -> Vec<LootEntry> {
         let mut loot = self.loot.to_vec();
@@ -301,6 +307,8 @@ pub struct ExpeditionReport {
     pub interrupted: bool,
     /// Энергия закончилась и поход прервался.
     pub out_of_energy: bool,
+    /// В тёмной локации догорела последняя свеча.
+    pub out_of_candle: bool,
     /// Часть добычи не поместилась на склад и сгорела.
     pub overflow: bool,
 }
@@ -316,6 +324,8 @@ pub struct ExpeditionTick {
     pub interrupted: bool,
     /// Энергия закончилась — поход прерван.
     pub out_of_energy: bool,
+    /// В тёмной локации догорела последняя свеча.
+    pub out_of_candle: bool,
     /// Часть добычи не поместилась на склад и сгорела.
     pub overflow: bool,
 }
@@ -323,7 +333,7 @@ pub struct ExpeditionTick {
 impl ExpeditionTick {
     /// Поход пора заканчивать.
     pub fn is_over(&self) -> bool {
-        self.interrupted || self.out_of_energy
+        self.interrupted || self.out_of_energy || self.out_of_candle
     }
 }
 
@@ -390,6 +400,21 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
         tick.out_of_energy = true;
         return tick;
     };
+
+    // Тёмные локации тратят свечу: 1 свеча на CANDLE_SECONDS_PER_ITEM секунд.
+    if location.requires_candle() {
+        for _ in 0..dt.max(0.0).round() as u32 {
+            // Начинается новая свеча — сразу списываем её из сумки.
+            if state.expedition_candle_timer == 0 && !state.remove_item("candle", 1) {
+                tick.out_of_candle = true;
+                return tick;
+            }
+            state.expedition_candle_timer += 1;
+            if state.expedition_candle_timer >= balance::CANDLE_SECONDS_PER_ITEM {
+                state.expedition_candle_timer = 0;
+            }
+        }
+    }
 
     let seconds = dt.max(0.0) + state.expedition_timer;
     let rolls = seconds.floor() as u32;
@@ -538,7 +563,11 @@ pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
             changed = true;
         }
         active.elapsed = active.elapsed.saturating_add(dt.max(0.0).round() as u32);
-        if tick.out_of_energy {
+        // Свеча кончилась в тёмной локации — поход тоже прерывается.
+        if tick.out_of_candle {
+            active.notice = Some("Поход прерван: свеча догорела.".to_string());
+            changed = true;
+        } else if tick.out_of_energy {
             active.notice = Some("Поход прерван: энергия закончилась.".to_string());
         }
         if tick.interrupted {
@@ -580,6 +609,11 @@ pub fn run_expedition(
             report.interrupted = true;
             break;
         }
+        if tick.out_of_candle {
+            report.out_of_candle = true;
+            report.out_of_energy = true;
+            break;
+        }
         if tick.out_of_energy {
             report.out_of_energy = true;
             break;
@@ -618,11 +652,14 @@ mod tests {
 
     /// Энергии и места на складе хватит на долгий поход.
     fn endlessly_rich() -> GameState {
-        GameState {
+        let mut state = GameState {
             energy: 1_000_000.0,
             storage_level: 100,
             ..GameState::default()
-        }
+        };
+        // Темные локации тратят свечу: 1 штука на 200 секунд пути.
+        state.add_item("candle", 10_000);
+        state
     }
 
     #[test]
@@ -784,8 +821,9 @@ mod tests {
                     assert!(!state.location_unlocked("ancient_ruins"));
                     break;
                 }
-                // Рюкзак не должен переполняться и рвать долгий замер.
-                state.inventory.clear();
+                // Рюкзак не должен переполняться и рвать долгий замер,
+                // но свечи нужны на весь путь.
+                state.inventory.retain(|item_id, _| item_id == "candle");
             }
         }
 
@@ -824,6 +862,7 @@ mod tests {
     #[test]
     fn ruins_drop_steam_blueprint() {
         let mut state = endless_state();
+        state.add_item("candle", 10_000);
         state.unlock_location("ancient_ruins");
         let mut found = false;
 
@@ -861,6 +900,49 @@ mod tests {
         assert!(active.done, "поход должен закрыться при малой энергии");
         assert_eq!(state.energy, 3.0, "энергия не должна тратиться");
         assert!(active.notice.is_some());
+    }
+
+    #[test]
+    fn candle_burns_out_and_stops_the_expedition() {
+        let mut state = GameState {
+            energy: 1_000_000.0,
+            ..GameState::default()
+        };
+        state.add_item("candle", 2);
+        state.unlock_location("deep_mines");
+
+        // 200 секунд = ровно одна свеча. Рюкзак может заполниться раньше,
+        // поэтому оставляем в нём только свечи.
+        for _ in 0..balance::CANDLE_SECONDS_PER_ITEM {
+            let tick = step_expedition(&mut state, "deep_mines", 1.0);
+            assert!(!tick.is_over());
+            state.inventory.retain(|item_id, _| item_id == "candle");
+        }
+        assert_eq!(state.item_count("candle"), 1);
+
+        // Вторая свеча догорает на следующих 200 секундах, третьей нет.
+        for _ in 0..balance::CANDLE_SECONDS_PER_ITEM {
+            let tick = step_expedition(&mut state, "deep_mines", 1.0);
+            assert!(!tick.is_over());
+            state.inventory.retain(|item_id, _| item_id == "candle");
+        }
+        assert_eq!(state.item_count("candle"), 0);
+
+        // Свеча кончилась — поход не продолжается.
+        let tick = step_expedition(&mut state, "deep_mines", 1.0);
+        assert!(tick.out_of_candle, "без свечи поход должен прерваться");
+        assert!(tick.is_over());
+    }
+
+    #[test]
+    fn candle_is_not_spent_in_light_locations() {
+        let mut state = endless_state();
+        state.add_item("candle", 1);
+        for _ in 0..500 {
+            let tick = step_expedition(&mut state, "field", 1.0);
+            assert!(!tick.is_over());
+        }
+        assert_eq!(state.item_count("candle"), 1);
     }
 
     #[test]

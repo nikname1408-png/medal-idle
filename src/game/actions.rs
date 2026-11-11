@@ -1318,21 +1318,41 @@ mod tests {
 
         assert_eq!(equip_item(&mut state, "trader_ring"), Ok(()));
         assert_eq!(
-            state.equipped(items::EquipSlot::Accessory),
+            state.equipped(items::EquipSlot::Accessory1),
             Some("trader_ring")
         );
-        assert!((state.trade_bonus - 0.10).abs() < 1e-6);
+        // 10% к цене продажи + 5% к золоту.
+        assert!((state.trade_bonus - 0.15).abs() < 1e-6);
 
+        // Второй аксессуар уходит во второй слот, а не упирается в занятый.
         state.add_item("miner_amulet", 1);
+        assert_eq!(equip_item(&mut state, "miner_amulet"), Ok(()));
         assert_eq!(
-            equip_item(&mut state, "miner_amulet"),
+            state.equipped(items::EquipSlot::Accessory2),
+            Some("miner_amulet")
+        );
+        assert!((state.gather_bonus - 0.30).abs() < 1e-6);
+
+        // Третий аксессуар уже некуда надеть.
+        state.add_item("silver_ring", 1);
+        assert_eq!(
+            equip_item(&mut state, "silver_ring"),
             Err(EquipError::SlotOccupied)
         );
 
-        unequip_slot(&mut state, items::EquipSlot::Accessory);
-        assert_eq!(equip_item(&mut state, "miner_amulet"), Ok(()));
+        // Сняли первый — место снова свободно.
+        unequip_slot(&mut state, items::EquipSlot::Accessory1);
+        assert_eq!(
+            state.equipped(items::EquipSlot::Accessory2),
+            Some("miner_amulet")
+        );
         assert!((state.trade_bonus).abs() < 1e-6);
-        assert!((state.gather_bonus - 0.30).abs() < 1e-6);
+        assert_eq!(equip_item(&mut state, "silver_ring"), Ok(()));
+        assert_eq!(
+            state.equipped(items::EquipSlot::Accessory1),
+            Some("silver_ring")
+        );
+        assert!((state.trade_bonus - 0.03).abs() < 1e-6);
     }
 
     #[test]
@@ -1665,7 +1685,7 @@ mod tests {
         assert_eq!(equip_item(&mut state, "trader_ring"), Ok(()));
         assert_eq!(state.item_count("trader_ring"), 1);
 
-        unequip_slot(&mut state, items::EquipSlot::Accessory);
+        unequip_slot(&mut state, items::EquipSlot::Accessory1);
         assert_eq!(state.item_count("trader_ring"), 2);
     }
 

@@ -80,6 +80,11 @@ impl ResearchKind {
 pub struct EquippedItems {
     pub hand: Option<String>,
     pub body: Option<String>,
+    pub head: Option<String>,
+    pub feet: Option<String>,
+    pub accessory1: Option<String>,
+    pub accessory2: Option<String>,
+    /// Легаси-поле: старые сохранения хранили один аксессуар здесь.
     pub accessory: Option<String>,
 }
 
@@ -88,7 +93,10 @@ impl EquippedItems {
         match slot {
             EquipSlot::Hand => self.hand.as_deref(),
             EquipSlot::Body => self.body.as_deref(),
-            EquipSlot::Accessory => self.accessory.as_deref(),
+            EquipSlot::Head => self.head.as_deref(),
+            EquipSlot::Feet => self.feet.as_deref(),
+            EquipSlot::Accessory1 => self.accessory1.as_deref(),
+            EquipSlot::Accessory2 => self.accessory2.as_deref(),
         }
     }
 
@@ -96,12 +104,26 @@ impl EquippedItems {
         match slot {
             EquipSlot::Hand => self.hand = item_id,
             EquipSlot::Body => self.body = item_id,
-            EquipSlot::Accessory => self.accessory = item_id,
+            EquipSlot::Head => self.head = item_id,
+            EquipSlot::Feet => self.feet = item_id,
+            EquipSlot::Accessory1 => self.accessory1 = item_id,
+            EquipSlot::Accessory2 => self.accessory2 = item_id,
         }
     }
 
     pub fn clear(&mut self, slot: EquipSlot) {
         self.set(slot, None);
+    }
+
+    /// Старое поле `accessory` → первый слот аксессуаров.
+    pub fn migrate_legacy_accessory(&mut self) {
+        if self.accessory1.is_none() {
+            if let Some(old) = self.accessory.take() {
+                self.accessory1 = Some(old);
+            }
+        } else {
+            self.accessory = None;
+        }
     }
 }
 
@@ -334,6 +356,9 @@ pub struct GameState {
     pub market_seed: u64,
     /// Накопленная дробная секунда пути в походе.
     pub expedition_timer: f64,
+    /// Сколько секунд похода уже покрыто свечой.
+    #[serde(default)]
+    pub expedition_candle_timer: u32,
     /// Активный поход: `None` — игрок не в пути. Хранится в состоянии, чтобы
     /// поход шёл и при закрытой вкладке.
     pub active_expedition: Option<ActiveExpedition>,
@@ -459,6 +484,7 @@ impl Default for GameState {
             market_timer: 0.0,
             market_seed: 0x9e37_79b9_7f4a_7c15,
             expedition_timer: 0.0,
+            expedition_candle_timer: 0,
             active_expedition: None,
             unlocked_locations: Vec::new(),
             pending_offer: None,
@@ -990,16 +1016,33 @@ impl GameState {
     /// из инвентаря, при снятии возвращается.
     pub fn equip_item(&mut self, item_id: &str) -> Result<(), EquipError> {
         let item = items::item(item_id).ok_or(EquipError::UnknownItem)?;
-        let slot = item.slot.ok_or(EquipError::NotEquippable)?;
         if self.item_count(item_id) == 0 {
             return Err(EquipError::NotOwned);
         }
-        if self.equipment.get(slot) == Some(item_id) {
+        // Проверка «уже надет» — по обоим слотам аксессуаров.
+        if self.equipment.get(EquipSlot::Accessory1) == Some(item_id)
+            || self.equipment.get(EquipSlot::Accessory2) == Some(item_id)
+        {
             return Err(EquipError::AlreadyEquipped);
         }
-        if self.equipment.get(slot).is_some() {
-            return Err(EquipError::SlotOccupied);
-        }
+        let slot = match item.slot {
+            Some(EquipSlot::Accessory1) => {
+                if self.equipment.get(EquipSlot::Accessory1).is_none() {
+                    EquipSlot::Accessory1
+                } else if self.equipment.get(EquipSlot::Accessory2).is_none() {
+                    EquipSlot::Accessory2
+                } else {
+                    return Err(EquipError::SlotOccupied);
+                }
+            }
+            Some(slot) => {
+                if self.equipment.get(slot).is_some() {
+                    return Err(EquipError::SlotOccupied);
+                }
+                slot
+            }
+            None => return Err(EquipError::NotEquippable),
+        };
         self.remove_one_item(item_id);
         self.equipment.set(slot, Some(item_id.to_string()));
         self.sync_active_set();
@@ -1097,10 +1140,6 @@ impl GameState {
                 gather_bonus += stats.stone_bonus.unwrap_or(0.0) / 100.0;
                 gather_bonus += stats.ore_bonus.unwrap_or(0.0) / 100.0;
                 gather_bonus += stats.fiber_bonus.unwrap_or(0.0) / 100.0;
-                trade_bonus += stats
-                    .trade_bonus
-                    .map(|_| stats.gold_bonus.unwrap_or(0.0) / 100.0)
-                    .unwrap_or(0.0);
                 fire_discount += stats.fire_discount.unwrap_or(0.0) / 100.0;
                 expedition_energy_discount +=
                     stats.expedition_energy_discount.unwrap_or(0.0) / 100.0;
@@ -1412,6 +1451,11 @@ impl GameState {
                 }
             }
         }
+        // Старое поле `accessory` → новый слот `accessory1`.
+        self.equipment.migrate_legacy_accessory();
+        for set in &mut self.equipment_sets {
+            set.migrate_legacy_accessory();
+        }
         self.ensure_equipment_owned();
         self.drop_trader_research();
         // Игры до v0.7.16 считали общее время только в статистике; переносим
@@ -1506,6 +1550,54 @@ impl GameState {
 mod tests {
     use super::*;
     use crate::game::actions;
+
+    #[test]
+    fn legacy_accessory_moves_to_first_slot() {
+        let mut state = GameState {
+            version: 9,
+            ..GameState::default()
+        };
+        state.equipment = EquippedItems {
+            accessory: Some("trader_ring".to_string()),
+            ..EquippedItems::default()
+        };
+
+        state.migrate();
+
+        assert_eq!(
+            state.equipped(items::EquipSlot::Accessory1),
+            Some("trader_ring")
+        );
+        assert!(state.equipment.accessory.is_none());
+        // Бонус старого кольца снова работает.
+        assert!((state.trade_bonus - 0.15).abs() < 1e-6);
+    }
+
+    #[test]
+    fn six_slots_accept_two_accessories() {
+        let mut state = GameState::default();
+        for item_id in [
+            "wretched_hat",
+            "iron_armor",
+            "iron_shovel",
+            "leather_boots",
+            "silver_ring",
+            "miner_amulet",
+        ] {
+            state.add_item(item_id, 1);
+            assert_eq!(state.equip_item(item_id), Ok(()), "не надет {item_id}");
+        }
+
+        for slot in EquipSlot::ALL {
+            assert!(
+                state.equipped(slot).is_some(),
+                "пустой слот {}",
+                slot.label()
+            );
+        }
+        assert_eq!(state.max_energy(), 100.0 + 5.0 + 30.0);
+        assert!((state.gather_bonus - (0.12 + 0.08 + 0.15 + 0.15)).abs() < 1e-6);
+    }
 
     #[test]
     fn new_game_starts_empty() {
