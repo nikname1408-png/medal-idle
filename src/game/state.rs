@@ -717,8 +717,8 @@ impl GameState {
     }
 
     /// Максимум энергии с учётом уюта и экипировки.
-    /// Запас энергии растёт вместе с X, чтобы «Отдых» не переполнял
-    /// полосу за один клик; бонус экипировки остаётся плоским.
+    /// Множитель цикла сюда не входит: X действует на «Отдых» и «Труд»,
+    /// но не на запас энергии.
     pub fn max_energy(&self) -> f64 {
         let equipment_bonus: u32 = EquipSlot::ALL
             .iter()
@@ -726,7 +726,7 @@ impl GameState {
             .filter_map(|item| item.stats.max_energy)
             .sum();
         let base = self.energy_max + self.comfort_level as f64 * balance::ENERGY_CAP_PER_COMFORT;
-        base * self.income_multiplier() + equipment_bonus as f64
+        base + equipment_bonus as f64
     }
 
     /// Максимальный запас огня кузницы с учётом уровня.

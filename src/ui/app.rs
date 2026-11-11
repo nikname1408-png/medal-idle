@@ -328,8 +328,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let comfort_affordable = affordable(comfort_cost);
     let barn_affordable = affordable(barn_cost);
 
-    let gather_yield =
-        (balance::CLICK_YIELD + snapshot.dev.gather_yield) * (1.0 + snapshot.gather_bonus as f64);
+    let gather_yield = (balance::CLICK_YIELD + snapshot.dev.gather_yield)
+        * (1.0 + snapshot.gather_bonus as f64)
+        * snapshot.income_multiplier();
     let rest_available = snapshot.energy < snapshot.max_energy();
     let wood_available = snapshot.energy >= balance::CLICK_ENERGY_COST
         && (snapshot.active_amount("wood") as f64) < snapshot.cap(ResourceKind::Wood);

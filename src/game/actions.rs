@@ -221,10 +221,10 @@ pub fn gather(state: &mut GameState, kind: ResourceKind) -> GatherResult {
         return GatherResult::NoEnergy;
     }
 
-    // Ручная добыча — фиксированный обмен «энергия → ресурс»: множитель
-    // цикла сюда не входит (он действует на «Отдых» и «Труд»).
-    let yield_amount =
-        (balance::CLICK_YIELD + state.dev.gather_yield) * (1.0 + state.gather_bonus as f64);
+    // Ручная добыча теперь умножается на X, как «Отдых» и «Труд».
+    let yield_amount = (balance::CLICK_YIELD + state.dev.gather_yield)
+        * (1.0 + state.gather_bonus as f64)
+        * state.income_multiplier();
     let added = state.add_produced(kind, yield_amount);
     state.stats.clicks = state.stats.clicks.saturating_add(1);
     match kind {
@@ -1412,7 +1412,7 @@ mod tests {
     }
 
     #[test]
-    fn gather_does_not_scale_with_cycles() {
+    fn gather_scales_with_cycles() {
         let mut state = GameState {
             cycles: 10,
             ..rested_state()
@@ -1420,20 +1420,22 @@ mod tests {
 
         assert_eq!(
             gather(&mut state, ResourceKind::Wood),
-            GatherResult::Gathered(1.0)
+            GatherResult::Gathered(7.0)
         );
-        assert_eq!(state.active_amount("wood"), 1);
+        assert_eq!(state.active_amount("wood"), 7);
     }
 
     #[test]
-    fn rest_and_energy_cap_scale_with_cycles() {
+    fn rest_scales_with_cycles_but_energy_cap_does_not() {
         let mut state = GameState {
             cycles: 10,
             ..GameState::default()
         };
 
+        // «Отдых» × X: 1.0 × 7 = 7.
         assert!((state.rest_energy() - 7.0).abs() < 1e-9);
-        assert!((state.max_energy() - 700.0).abs() < 1e-9);
+        // Максимум энергии без X: 100.
+        assert!((state.max_energy() - 100.0).abs() < 1e-9);
 
         let gained = rest(&mut state);
         assert!((gained - 7.0).abs() < 1e-9);
