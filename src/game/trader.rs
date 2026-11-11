@@ -65,7 +65,26 @@ pub const TRADERS: [TraderDef; 4] = [
     TraderDef {
         id: "wanderer",
         name: "Странник",
-        goods: &["map_forest", "map_mines", "map_quarry", "map_ruins"],
+        goods: &[
+            "leather",
+            "fiber",
+            "clay",
+            "quartz",
+            "silver",
+            "gems",
+            "backpack",
+            "wooden_bucket",
+            "sickle",
+            "scythe",
+            "candle",
+            "hiking_boots",
+            "winter_boots",
+            "leather_boots",
+            "map_forest",
+            "map_mines",
+            "map_quarry",
+            "map_ruins",
+        ],
     },
     TraderDef {
         id: "smith",
@@ -342,6 +361,18 @@ fn base_buy_limit(item_id: &str) -> u32 {
 /// прийти и в дефиците, и в балансе, и в избытке — витрина не выглядит
 /// одинаково ровной.
 fn fresh_good(seed: &mut u64, item_id: &str) -> GoodState {
+    // Карты всегда появляются в дефиците и малым запасом: это редкий товар,
+    // а не обычная лавочная мелочь.
+    if item_id.starts_with("map_") {
+        return good(
+            item_id,
+            base_stock(item_id).min(10),
+            100,
+            5,
+            base_buy_limit(item_id).min(10),
+        );
+    }
+
     let trend = noise(seed, TREND_LIMIT);
     let demand = (50 + trend + noise(seed, 10)).clamp(5, 95) as u8;
     let supply = (50 - trend + noise(seed, 10)).clamp(5, 95) as u8;
@@ -707,6 +738,17 @@ fn market_step(state: &mut GameState) {
         rotate_market(&mut seed, index, market);
 
         for good in market.goods.iter_mut() {
+            // Карты не «плывут»: всегда дефицит, запас и лимит скупки
+            // не больше десяти штук.
+            if good.item_id.starts_with("map_") {
+                good.demand = 100;
+                good.supply = 5;
+                good.trend = 0;
+                good.stock = good.stock.min(10);
+                good.buy_limit = good.buy_limit.min(10);
+                continue;
+            }
+
             // Настроение рынка медленно гуляет: спрос и предложение тянутся
             // к `50 ± trend`, поэтому периодически возникают устойчивые
             // дефицит и избыток, а не вечный баланс 50/50.
@@ -947,9 +989,17 @@ mod tests {
             .collect();
 
         assert_ne!(before, after);
-        for (demand, supply) in after {
-            assert!((5..=95).contains(&demand));
-            assert!((5..=95).contains(&supply));
+        for market in &state.traders {
+            for good in &market.goods {
+                // Карты закреплены в дефиците (спрос 100 / предложение 5),
+                // поэтому общие рамки рынка 5..=95 к ним не применяются.
+                if good.item_id.starts_with("map_") {
+                    assert_eq!((good.demand, good.supply), (100, 5));
+                    continue;
+                }
+                assert!((5..=95).contains(&good.demand));
+                assert!((5..=95).contains(&good.supply));
+            }
         }
     }
 
@@ -1137,6 +1187,34 @@ mod tests {
             assert!(
                 *count >= min_changes,
                 "рынок {index} почти не меняется: {count} смен за 200 шагов (пул {pool_size})"
+            );
+        }
+    }
+
+    #[test]
+    fn maps_stay_in_deficit_and_never_pile_up() {
+        let mut state = GameState::default();
+        for _ in 0..200 {
+            market_step(&mut state);
+        }
+
+        let maps: Vec<&GoodState> = state
+            .traders
+            .iter()
+            .flat_map(|market| market.goods.iter())
+            .filter(|good| good.item_id.starts_with("map_"))
+            .collect();
+
+        assert!(!maps.is_empty(), "на рынке нет ни одной карты");
+        for good in maps {
+            assert_eq!(good.demand, 100, "{} не в дефиците", good.item_id);
+            assert_eq!(good.supply, 5, "{} не в дефиците", good.item_id);
+            assert_eq!(good.trend, 0, "{} плывёт по тренду", good.item_id);
+            assert!(good.stock <= 10, "{} скопилось больше 10", good.item_id);
+            assert!(
+                good.buy_limit <= 10,
+                "у {} лимит скупки больше 10",
+                good.item_id
             );
         }
     }
