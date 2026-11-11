@@ -1481,7 +1481,7 @@ impl GameState {
             };
             return location.id;
         }
-        "deep_mines"
+        "field"
     }
 
     /// `true`, если это последняя открытая локация.
@@ -1588,11 +1588,11 @@ mod tests {
         let state = GameState::default();
         assert!(state.location_unlocked("field"));
         assert!(state.location_unlocked("ravine"));
-        assert!(state.location_unlocked("deep_forest"));
-        assert!(state.location_unlocked("deep_mines"));
+        assert!(!state.location_unlocked("deep_forest"));
+        assert!(!state.location_unlocked("deep_mines"));
         assert!(!state.location_unlocked("forgotten_quarry"));
         assert!(!state.location_unlocked("ancient_ruins"));
-        assert_eq!(state.current_location(), "deep_mines");
+        assert_eq!(state.current_location(), "field");
     }
 
     #[test]

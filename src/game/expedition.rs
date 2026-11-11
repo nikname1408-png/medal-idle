@@ -155,38 +155,42 @@ const FIELD_LOOT: [LootEntry; 3] = [
 /// Таблица лута «Скалистого оврага».
 const RAVINE_LOOT: [LootEntry; 3] = [
     entry("stone", Rarity::Common, 10, 70),
-    entry("iron", Rarity::Common, 5, 15),
+    entry("iron", Rarity::Common, 2, 10),
     entry("quartz", Rarity::Uncommon, 1, 3),
 ];
 
 /// Таблица лута «Дремучего леса».
 const DEEP_FOREST_LOOT: [LootEntry; 3] = [
-    entry("wood", Rarity::Common, 80, 230),
+    entry("wood", Rarity::Common, 50, 100),
     entry("leather", Rarity::Uncommon, 2, 6),
     entry("fiber", Rarity::Uncommon, 5, 15),
 ];
 
 /// Таблица лута «Глубоких шахт».
-const DEEP_MINES_LOOT: [LootEntry; 3] = [
-    entry("stone", Rarity::Common, 150, 250),
-    entry("iron", Rarity::Common, 10, 25),
+const DEEP_MINES_LOOT: [LootEntry; 4] = [
+    entry("stone", Rarity::Common, 80, 120),
+    entry("iron", Rarity::Common, 5, 15),
     entry("quartz", Rarity::Uncommon, 2, 5),
+    entry("silver", Rarity::Rare, 1, 3),
 ];
 
 /// Таблица лута «Забытой каменоломни».
-const FORGOTTEN_QUARRY_LOOT: [LootEntry; 2] = [
-    entry("stone", Rarity::Common, 180, 300),
-    entry("iron", Rarity::Common, 15, 35),
+const FORGOTTEN_QUARRY_LOOT: [LootEntry; 5] = [
+    entry("stone", Rarity::Common, 100, 150),
+    entry("iron", Rarity::Common, 10, 20),
+    entry("silver", Rarity::Rare, 2, 7),
+    entry("gold_ore", Rarity::Epic, 1, 2),
+    entry("gems", Rarity::Legendary, 1, 1),
 ];
 
 /// Таблица лута «Древних руин».
 const ANCIENT_RUINS_LOOT: [LootEntry; 6] = [
     entry("stone", Rarity::Common, 50, 100),
-    entry("iron", Rarity::Common, 15, 35),
+    entry("iron", Rarity::Common, 10, 22),
     entry("quartz", Rarity::Uncommon, 5, 10),
-    entry("silver", Rarity::Rare, 1, 3),
-    entry("gold_ore", Rarity::Epic, 1, 2),
-    entry("gems", Rarity::Legendary, 1, 1),
+    entry("silver", Rarity::Rare, 2, 7),
+    entry("gold_ore", Rarity::Epic, 1, 4),
+    entry("gems", Rarity::Legendary, 1, 2),
 ];
 
 /// Все локации походов по цепочке открытия.
@@ -247,9 +251,9 @@ pub const LOCATIONS: [ExpeditionLocation; 6] = [
     },
 ];
 
-/// Точка входа похода. Лес и шахты открыты с начала: цепочка карт — для
-/// каменоломни и руин.
-pub const STARTING_LOCATIONS: [&str; 4] = ["field", "ravine", "deep_forest", "deep_mines"];
+/// Точка входа похода. С начала открыты только поле и овраг: лес и шахты
+/// открываются картами.
+pub const STARTING_LOCATIONS: [&str; 2] = ["field", "ravine"];
 
 /// Находит локацию по идентификатору.
 pub fn location(id: &str) -> Option<&'static ExpeditionLocation> {
@@ -358,10 +362,12 @@ fn roll_loot_entry(
     rarity: Rarity,
     seed: &mut u64,
 ) -> Option<LootEntry> {
+    // Карта не участвует в обычном выборе: её шанс считается отдельно,
+    // иначе каждый новый редкий предмет в таблице разбавлял бы карту.
     let candidates: Vec<LootEntry> = location
         .table()
         .into_iter()
-        .filter(|entry| entry.rarity == rarity)
+        .filter(|entry| entry.rarity == rarity && Some(entry.item_id) != location.map_reward)
         .collect();
     if candidates.is_empty() {
         return None;
@@ -440,30 +446,26 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
             continue;
         };
 
+        // Карта локации падает только в последней открытой локации и редко.
+        // Проверка идёт до выбора предмета, чтобы шанс карты не зависел
+        // от того, сколько других редких предметов в таблице.
+        if rarity == Rarity::Rare && is_current {
+            if let Some(map_id) = location.map_reward {
+                if roll(&mut seed, 100) < balance::EXPEDITION_MAP_CHANCE as u64 {
+                    // Карта — одна штука, а не стак ресурса.
+                    grant_map(state, &mut tick, map_id);
+                    continue;
+                }
+            }
+        }
+
         let Some(entry) = roll_loot_entry(location, rarity, &mut seed) else {
             continue;
         };
 
-        // Карта локации падает только в последней открытой локации и редко:
-        // карта — лишь малая доля редких находок, остальное заменяется
-        // обычным лутом той же редкости.
-        let is_map = location.map_reward == Some(entry.item_id);
-        if is_map && (!is_current || roll(&mut seed, 100) >= balance::EXPEDITION_MAP_CHANCE as u64)
-        {
-            continue;
-        }
         let span = (entry.max_quantity - entry.min_quantity + 1) as u64;
         let base = entry.min_quantity as f64 + roll(&mut seed, span) as f64;
         let quantity = (base * bonus).round() as u32;
-
-        if is_map {
-            let Some(map_id) = location.map_reward else {
-                continue;
-            };
-            // Карта — одна штука, а не стак ресурса.
-            grant_map(state, &mut tick, map_id);
-            continue;
-        }
 
         if super::state::is_active_resource(entry.item_id) {
             // Излишки сверх лимита склада сгорают.
@@ -698,16 +700,17 @@ mod tests {
 
     #[test]
     fn rarity_downgrades_to_location_max() {
-        // У каменоломни редкая редкость — только через карту руин, поэтому
-        // эпический и легендарный лут становятся редким.
+        // В каменоломне есть все редкости, включая драгоценные камни,
+        // поэтому понижать ничего не нужно.
         let quarry = location("forgotten_quarry").expect("локация");
-        assert_eq!(quarry.downgrade(Rarity::Legendary), Some(Rarity::Rare));
-        assert_eq!(quarry.downgrade(Rarity::Epic), Some(Rarity::Rare));
+        assert_eq!(quarry.downgrade(Rarity::Legendary), Some(Rarity::Legendary));
+        assert_eq!(quarry.downgrade(Rarity::Epic), Some(Rarity::Epic));
 
         let ruins = location("ancient_ruins").expect("локация");
         assert_eq!(ruins.downgrade(Rarity::Legendary), Some(Rarity::Legendary));
 
-        // Своей редкой строки у шахт нет, но карта каменоломни — редкая.
+        // В шахтах своя редкая строка — серебро, поэтому эпический лут
+        // понижается до редкого.
         let mines = location("deep_mines").expect("локация");
         assert_eq!(mines.downgrade(Rarity::Epic), Some(Rarity::Rare));
     }
@@ -765,6 +768,7 @@ mod tests {
         let mut found = 0;
         for seed in 0..300u64 {
             let mut state = endlessly_rich();
+            state.unlock_location("deep_mines"); // ← добавлено
             state.market_seed = seed;
             // Шахты — текущая локация цепочки: карта каменоломни падает только там.
             for second in 1..=20_000u32 {
