@@ -1722,14 +1722,20 @@ mod tests {
         };
         let base_max = state.fire_max();
         let base_coal = state.fire_per_coal();
+        // Первый уровень уже равен норме: fire_max() = 67 × level.
+        assert_eq!(base_max, balance::FORGE_FIRE_MAX_SECONDS);
         state.forge_level = 3;
         assert_eq!(
             state.fire_max(),
             base_max + 2 * balance::FORGE_FIRE_PER_LEVEL
         );
+        assert_eq!(state.fire_max(), 3 * balance::FORGE_FIRE_MAX_SECONDS);
         assert_eq!(
             state.fire_per_coal(),
             base_coal + 2 * balance::FIRE_PER_COAL_PER_LEVEL
         );
+
+        state.forge_level = 10;
+        assert_eq!(state.fire_max(), 670);
     }
 }

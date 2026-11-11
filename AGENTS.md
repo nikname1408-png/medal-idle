@@ -12,8 +12,11 @@
 
 - v0.9.6: запас огня кузницы выровнен по уровню. `FORGE_FIRE_MAX_SECONDS`
   60 → 65, `FORGE_FIRE_PER_LEVEL` 50 → 65, поэтому `fire_max()` =
-  65 + (level−1) × 65 = 65 × level (1 → 65, 5 → 325, 10 → 650).
+  65 + (level−1) × 65 = 65 × level (1 → 65, 5 → 325, 10 → 650), затем
+  по правке игрока — 67 → `fire_max()` = 67 × level (10 → 670).
   `FIRE_SECONDS_PER_COAL` (20) и `FIRE_PER_COAL_PER_LEVEL` (10) не менялись.
+  Тест `fire_goes_green_with_forge_level` теперь проверяет, что 1-й уровень
+  равен `FORGE_FIRE_MAX_SECONDS`, 3-й — 3×, а 10-й — ровно 670.
 - v0.9.5: у паровой машины появилась иконка `steam boiler.aseprite` →
   `assets/icons/item_steam_prototype.png` (70×83): она стоит в карточке
   рецепта `steam_prototype` и в модальном окне «Прототип собран»
