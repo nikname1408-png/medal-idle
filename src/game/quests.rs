@@ -718,6 +718,7 @@ mod tests {
         let id = state.quests[0].id.clone();
         take_quest(&mut state, &id).expect("заказ берётся");
         let clock_before = state.quest_clock;
+        let event_before = state.event_clock;
         let expires_before = state.quests.iter().find(|q| q.id == id).unwrap().expires_at;
 
         state.time = 5.0;
@@ -726,6 +727,10 @@ mod tests {
         assert!(
             (state.quest_clock - clock_before).abs() < 1e-9,
             "тайм-варп не должен двигать часы квестов"
+        );
+        assert!(
+            (state.event_clock - event_before).abs() < 1e-9,
+            "тайм-варп не должен двигать часы событий"
         );
         let quest = state.quests.iter().find(|q| q.id == id).unwrap();
         assert_eq!(quest.status, QuestStatus::Active);

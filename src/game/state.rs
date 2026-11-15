@@ -463,6 +463,9 @@ pub struct GameState {
     /// тиках (1 c/с), не ускоряется тайм-варпом.
     #[serde(default)]
     pub quest_clock: f64,
+    /// Игровое время для событий (баффы, сюжетка). Не ускоряется тайм-варпом.
+    #[serde(default)]
+    pub event_clock: f64,
     /// Накопленное время до следующего шага рынка.
     pub market_timer: f64,
     /// Детерминированное зерно рынка.
@@ -645,6 +648,7 @@ impl Default for GameState {
             debt_tick_at: 0.0,
             collector_tick_at: 0.0,
             quest_clock: 0.0,
+            event_clock: 0.0,
             market_timer: 0.0,
             market_seed: 0x9e37_79b9_7f4a_7c15,
             expedition_timer: 0.0,
@@ -1667,14 +1671,13 @@ impl GameState {
         let last_seen = self.last_seen;
         let total_play_seconds = self.total_play_seconds;
         let quest_clock = self.quest_clock;
+        let event_clock = self.event_clock;
         let rest_clicks = self.rest_clicks;
         let wood_seen = self.wood_seen;
         let stone_seen = self.stone_seen;
         let dev = std::mem::take(&mut self.dev);
         // Время сейчас: пригодится, чтобы выкинуть протухшие глобальные баффы.
-        let now = self.total_play_seconds;
-        self.total_play_seconds = total_play_seconds;
-        self.quest_clock = quest_clock;
+        let now = self.event_clock;
         let global_buffs: Vec<BuffInstance> = self
             .buffs
             .iter()
@@ -1700,16 +1703,18 @@ impl GameState {
         self.time = time;
         self.last_seen = last_seen;
         self.total_play_seconds = total_play_seconds;
+        self.quest_clock = quest_clock;
+        self.event_clock = event_clock;
         self.rest_clicks = rest_clicks;
         self.wood_seen = wood_seen;
         self.stone_seen = stone_seen;
         self.dev = dev;
         // Глобальные баффы возвращаем после сброса — таймер у них уже
-        // в базе `total_play_seconds`, которая теперь сохранена.
+        // в базе `event_clock`, которая теперь сохранена.
         self.buffs = global_buffs;
         // Таймер фонового события в новой игре стартует заново,
         // а очередь оффлайн-событий и action-triggers исчезает вместе со всем.
-        self.next_baseline_at = self.total_play_seconds + balance::EVENTS_BASELINE_FIRST_SECS;
+        self.next_baseline_at = self.event_clock + balance::EVENTS_BASELINE_FIRST_SECS;
         self.quest_board_refresh_at = self.quest_clock + 10.0;
     }
 
@@ -1863,6 +1868,9 @@ impl GameState {
         if self.quest_clock <= 0.0 {
             self.quest_clock = self.total_play_seconds;
         }
+        if self.event_clock <= 0.0 {
+            self.event_clock = self.total_play_seconds;
+        }
         if self.quest_board_refresh_at <= 0.0 {
             self.quest_board_refresh_at = self.quest_clock + 10.0;
         }
@@ -1938,7 +1946,7 @@ impl GameState {
         // События: чистим протухшие баффы (например, если игрок не заходил
         // неделю), очередь оффлайн-событий ограничиваем одним — чтобы не
         // встретить игрока стеной окон.
-        let now = self.total_play_seconds;
+        let now = self.event_clock;
         self.buffs.retain(|buff| buff.expires_at > now);
         self.offline_events.truncate(1);
         // Старое сохранение без поля: ставим таймер от «сейчас».

@@ -1398,7 +1398,9 @@ fn BellPanel(
                                     message,
                                 }
                             } else if letter.id == "debt" {
-                                div { key: "{letter.id}", class: "letter debt-letter",
+                                div {
+                                    key: "{letter.id}",
+                                    class: "letter debt-letter",
                                     span { class: "letter-title", "{i18n::t(\"letter.debt.title\")}" }
                                     span { class: "letter-body", "{i18n::t(\"letter.debt.body\")}" }
                                     div { class: "letter-quest-line",
@@ -2506,56 +2508,49 @@ fn ActionRow(label: String, info: String, available: bool, on_press: EventHandle
 }
 
 #[component]
-fn CostLabel(cost: balance::Cost, view: GameState) -> Element {
-    // Красным подсвечиваем именно те ресурсы, которых не хватает.
-    let poor_wood = (view.active_amount("wood") as f64) < cost.wood;
-    let poor_stone = (view.active_amount("stone") as f64) < cost.stone;
-    let poor_gold = view.gold + 1e-9 < cost.gold;
-    let poor_energy = view.energy + 1e-9 < cost.energy;
-    let poor_boards = view.item_count("board") < cost.boards;
-    let poor_ingots = view.item_count("iron_ingot") < cost.iron_ingots;
+fn CostLabel(view: GameState, cost: balance::Cost) -> Element {
     rsx! {
         span { class: "cost",
             if cost.wood > 0.0 {
                 CostPart {
                     icon: ICON_WOOD,
                     amount: format_num(cost.wood),
-                    poor: poor_wood,
+                    poor: (view.active_amount("wood") as f64) < cost.wood,
                 }
             }
             if cost.stone > 0.0 {
                 CostPart {
                     icon: ICON_STONE,
                     amount: format_num(cost.stone),
-                    poor: poor_stone,
+                    poor: (view.active_amount("stone") as f64) < cost.stone,
                 }
             }
             if cost.gold > 0.0 {
                 CostPart {
                     icon: ICON_GOLD,
                     amount: format_num(cost.gold),
-                    poor: poor_gold,
+                    poor: view.gold + 1e-9 < cost.gold,
                 }
             }
             if cost.energy > 0.0 {
                 CostPart {
                     icon: ICON_ENERGY,
                     amount: format_num(cost.energy),
-                    poor: poor_energy,
+                    poor: view.energy + 1e-9 < cost.energy,
                 }
             }
             if cost.boards > 0 {
                 CostPart {
                     icon: ICON_BOARD,
                     amount: cost.boards.to_string(),
-                    poor: poor_boards,
+                    poor: view.item_count("board") < cost.boards,
                 }
             }
             if cost.iron_ingots > 0 {
                 CostPart {
                     icon: ICON_IRON_INGOT,
                     amount: cost.iron_ingots.to_string(),
-                    poor: poor_ingots,
+                    poor: view.item_count("iron_ingot") < cost.iron_ingots,
                 }
             }
         }
@@ -2602,8 +2597,8 @@ fn BuildRow(
                     div { class: "build-desc", "{description}" }
                     div { class: "build-cost-line",
                         span { class: "build-cost-label", "{i18n::t(\"build.cost_label\")}" }
-                        span { class: if affordable { "build-cost" } else { "build-cost poor" },
-                            CostLabel { cost, view: view.clone() }
+                        span { class: "build-cost", // Убрали проверку affordable здесь
+                            CostLabel { view: view.clone(), cost }
                         }
                     }
                 }
@@ -2908,7 +2903,7 @@ fn EnergyBar(view: GameState) -> Element {
 /// исчезает целиком, когда активных баффов нет.
 #[component]
 fn ActiveBuffs(view: GameState) -> Element {
-    let now = view.total_play_seconds;
+    let now = view.event_clock;
     let active: Vec<_> = view
         .buffs
         .iter()

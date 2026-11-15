@@ -238,16 +238,6 @@ pub fn InventoryScreen(
                         },
                         "{i18n::t(\"bag.craft_open\")}"
                     }
-                    button {
-                        class: if wardrobe_open() { "inv-tool active" } else { "inv-tool" },
-                        onclick: move |_| {
-                            wardrobe_open.set(!wardrobe_open());
-                            craft_open.set(false);
-                            selected_equip.set(None);
-                            selected.set(None);
-                        },
-                        "{i18n::t(\"bag.wardrobe_open\")}"
-                    }
                 }
             }
         }
@@ -257,6 +247,7 @@ pub fn InventoryScreen(
             section { class: "inv-equipment",
                 div { class: "inv-subtitle", "{i18n::t(\"bag.equipment\")}" }
                 div { class: "equip-grid",
+                    // 1. Голова
                     EquipmentSlot {
                         slot: EquipSlot::Head,
                         state,
@@ -271,6 +262,7 @@ pub fn InventoryScreen(
                             selected_equip.set(next);
                         },
                     }
+                    // 2. Аксессуар 1
                     EquipmentSlot {
                         slot: EquipSlot::Accessory1,
                         state,
@@ -285,6 +277,8 @@ pub fn InventoryScreen(
                             selected_equip.set(next);
                         },
                     }
+
+                    // 3. ТЕЛО + СПИНА (в одной ячейке)
                     div { class: "equip-pair",
                         EquipmentSlot {
                             slot: EquipSlot::Body,
@@ -315,6 +309,8 @@ pub fn InventoryScreen(
                             },
                         }
                     }
+
+                    // 4. Руки
                     EquipmentSlot {
                         slot: EquipSlot::Hand,
                         state,
@@ -329,6 +325,7 @@ pub fn InventoryScreen(
                             selected_equip.set(next);
                         },
                     }
+                    // 5. Ноги
                     EquipmentSlot {
                         slot: EquipSlot::Feet,
                         state,
@@ -343,6 +340,7 @@ pub fn InventoryScreen(
                             selected_equip.set(next);
                         },
                     }
+                    // 6. Аксессуар 2
                     EquipmentSlot {
                         slot: EquipSlot::Accessory2,
                         state,
@@ -382,6 +380,17 @@ pub fn InventoryScreen(
                         }
                     }
                 }
+                button {
+                    class: if wardrobe_open() { "inv-tool wardrobe-toggle active" } else { "inv-tool wardrobe-toggle" },
+                    onclick: move |_| {
+                        wardrobe_open.set(!wardrobe_open());
+                        craft_open.set(false);
+                        selected_equip.set(None);
+                        selected.set(None);
+                    },
+                    "{i18n::t(\"bag.wardrobe_open\")}"
+                }
+
                 if wardrobe_open() {
                     WardrobePanel { state, view: view.clone(), message }
                 }
@@ -851,10 +860,9 @@ fn CraftPanel(
                 }
                 div { class: "craft-panel-cost",
                     for (ingredient , have , need , lack) in ingredients.iter() {
-                        div {
-                            key: "{ingredient}",
-                            class: if *lack { "craft-need lack" } else { "craft-need" },
-                            "{ingredient}: {have}/{need}"
+                        div { key: "{ingredient}", class: "craft-need",
+                            span { "{ingredient}: " }
+                            span { class: if *lack { "lack-text" } else { "" }, "{have}/{need}" }
                         }
                     }
                     if result_quantity > 1 {

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::actions::next_random;
 use super::balance;
 use super::i18n;
-use super::items::{self, Category};
+use super::items;
 use super::state::{is_active_resource, GameState};
 
 /// Минимальная доля запаса, которую берёт оптовик.
@@ -71,7 +71,7 @@ pub struct BuffInstance {
     pub buff_id: String,
     pub stat: BuffStat,
     pub value: f64,
-    /// Момент окончания в базе `GameState::total_play_seconds`.
+    /// Момент окончания в базе `GameState::event_clock`.
     pub expires_at: f64,
     /// Переживает ли перерождение.
     pub global: bool,
@@ -221,7 +221,7 @@ pub struct PendingEvent {
     pub payload: EventPayload,
 }
 
-/// Отложенный триггер в базе `total_play_seconds`.
+/// Отложенный триггер в базе `event_clock`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActionTrigger {
     pub fire_at: f64,
@@ -260,7 +260,7 @@ impl EventError {
 
 /// Сумма активных значений баффов по стату.
 pub fn active_buff_sum(state: &GameState, stat: BuffStat) -> f64 {
-    let now = state.total_play_seconds;
+    let now = state.event_clock;
     state
         .buffs
         .iter()
@@ -281,7 +281,7 @@ pub fn apply_buff(
     let Some(def) = BUFFS.iter().find(|buff| buff.id == buff_id) else {
         return;
     };
-    let now = state.total_play_seconds;
+    let now = state.event_clock;
     if let Some(existing) = state.buffs.iter_mut().find(|b| b.buff_id == buff_id) {
         existing.expires_at = existing.expires_at.max(now + duration_secs);
         if value.abs() > existing.value.abs() {
@@ -334,7 +334,7 @@ fn roll_range_u32(seed: &mut u64, min: u32, max: u32) -> u32 {
 /// Откладывает событие на `delay_secs` секунд игрового времени.
 pub fn schedule(state: &mut GameState, kind: TriggerKind, delay_secs: f64) {
     state.action_queue.push(ActionTrigger {
-        fire_at: state.total_play_seconds + delay_secs.max(0.0),
+        fire_at: state.event_clock + delay_secs.max(0.0),
         kind,
     });
 }
@@ -351,7 +351,7 @@ pub fn schedule_thematic(state: &mut GameState, id: &str, min_secs: f64, max_sec
 ///
 /// Порядок приоритетов: оффлайн → action-based → baseline.
 pub fn tick(state: &mut GameState, _dt: f64) {
-    let now = state.total_play_seconds;
+    let now = state.event_clock;
     state.buffs.retain(|buff| buff.expires_at > now);
 
     if state.pending_event.is_some() {
@@ -407,7 +407,7 @@ fn reset_baseline_timer(state: &mut GameState) {
         balance::EVENTS_BASELINE_MAX_SECS,
     );
     state.market_seed = seed;
-    state.next_baseline_at = state.total_play_seconds + delay;
+    state.next_baseline_at = state.event_clock + delay;
 }
 
 // ---------- Генерация ----------
@@ -434,20 +434,32 @@ pub fn spawn_baseline(state: &mut GameState) -> Option<PendingEvent> {
 }
 
 fn spawn_bulk(state: &mut GameState) -> Option<PendingEvent> {
-    // Ищем самый обильный материал с ненулевой ценой.
-    let mut best: Option<(&'static str, u32, u32)> = None; // (id, qty, base_price)
-    for item in items::catalog() {
-        if item.category != Category::Material || item.base_price == 0 || item.slot.is_some() {
+    // Оптовик берёт только предметы из рюкзака — дерево, камень и прочие
+    // активные ресурсы со склада ему не нужны. Выбираем то, чего в
+    // рюкзаке больше всего штук.
+    let mut best: Option<(String, u32, u32)> = None; // (id, qty, base_price)
+    for (item_id, qty) in &state.inventory {
+        if *qty == 0 {
             continue;
         }
-        let qty = state.amount_of(item.id.as_str());
-        if qty == 0 {
+        // Карты и чертежи не продаём: они нужны игроку.
+        if item_id.starts_with("map_")
+            || item_id == "steam_blueprint"
+            || item_id == "steam_prototype"
+        {
             continue;
         }
-        if best.map(|(_, bq, _)| qty > bq).unwrap_or(true) {
-            best = Some((item.id.as_str(), qty, item.base_price));
+        let Some(item) = items::item(item_id) else {
+            continue;
+        };
+        if item.base_price == 0 {
+            continue;
+        }
+        if best.as_ref().map(|(_, bq, _)| *qty > *bq).unwrap_or(true) {
+            best = Some((item_id.clone(), *qty, item.base_price));
         }
     }
+
     let (resource_id, stock, base_price) = best?;
     if stock == 0 {
         return None;
@@ -472,7 +484,7 @@ fn spawn_bulk(state: &mut GameState) -> Option<PendingEvent> {
 
     Some(PendingEvent {
         payload: EventPayload::MerchantBulk {
-            resource_id: resource_id.to_string(),
+            resource_id,
             amount,
             gold: total,
         },
@@ -834,11 +846,17 @@ mod tests {
             gold: 0.0,
             ..GameState::default()
         };
+        // Оптовика интересует рюкзак, а не склад: дерево/камень ему не нужны.
         state.add_active("wood", 500);
+        state.add_item("cloth", 500);
         let event = spawn_bulk(&mut state).expect("оптовик");
         match event.payload {
-            EventPayload::MerchantBulk { amount, gold, .. } => {
-                // 500 дерева × 1.1 = минимум 50 золота, но не больше 10% запаса.
+            EventPayload::MerchantBulk {
+                resource_id,
+                amount,
+                gold,
+            } => {
+                assert_eq!(resource_id, "cloth");
                 assert!(amount >= 10 && amount <= 500);
                 assert!(gold > 0);
             }
@@ -853,12 +871,13 @@ mod tests {
             ..GameState::default()
         };
         state.add_active("wood", 10_000);
-        // Остаток до 1000 = 100 золота; 100 / 2.2 ≈ 45 единиц.
+        state.add_item("cloth", 1000);
+        // Остаток до 1000 = 100 золота; 100 / 12.1 ≈ 8 единиц.
         let event = spawn_bulk(&mut state).expect("оптовик");
         match event.payload {
             EventPayload::MerchantBulk { amount, gold, .. } => {
                 assert!(gold <= 100);
-                assert!(amount <= 46);
+                assert!(amount <= 8);
             }
             _ => panic!(),
         }
@@ -897,7 +916,7 @@ mod tests {
     #[test]
     fn buff_refreshes_timer_and_takes_stronger_value() {
         let mut state = GameState::default();
-        state.total_play_seconds = 100.0;
+        state.event_clock = 100.0;
         apply_buff(&mut state, "good_mood", 1.0, 60.0, false);
         apply_buff(&mut state, "good_mood", 3.0, 60.0, false);
         assert_eq!(state.buffs.len(), 1);
@@ -908,9 +927,9 @@ mod tests {
     #[test]
     fn expired_buffs_are_pruned() {
         let mut state = GameState::default();
-        state.total_play_seconds = 100.0;
+        state.event_clock = 100.0;
         apply_buff(&mut state, "good_mood", 1.0, 10.0, false);
-        state.total_play_seconds = 200.0;
+        state.event_clock = 200.0;
         tick(&mut state, 0.0);
         assert!(state.buffs.is_empty());
     }

@@ -375,6 +375,7 @@ fn tick_inner(state: &mut GameState, dt_seconds: f64, advance_quests: bool) {
     state.total_play_seconds += dt;
     if advance_quests {
         state.quest_clock += dt;
+        state.event_clock += dt;
     }
 
     let regen = state.energy_regen();
@@ -1163,13 +1164,8 @@ pub fn time_warp(state: &mut GameState) -> bool {
     }
     state.time -= 1.0;
     tick_no_quests(state, balance::TIME_WARP_SECONDS);
-    // Экономика ускорена, но квесты идут по своим часам. События же
-    // привязаны к `total_play_seconds`, поэтому прокручиваем их по секундам,
-    // иначе таймер фоновых встреч стоял бы на месте.
-    let seconds = balance::TIME_WARP_SECONDS.round().max(0.0) as u32;
-    for _ in 0..seconds {
-        crate::game::events::tick(state, 1.0);
-    }
+    // Экономика ускорена, но квесты и события идут по своим часам
+    // (`quest_clock` / `event_clock`) и тайм-варпом не двигаются.
     true
 }
 
