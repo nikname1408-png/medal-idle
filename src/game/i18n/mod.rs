@@ -7,14 +7,15 @@
 //! `trader.<id>`, `ach.<id>.name`. Перевод по ключу с подстановками —
 //! [`tf`], без них — [`t`].
 //!
-//! Язык хранится в TLS-ячейке потока. Игра — одна задача на одном потоке, а
-//! тесты так не мешают друг другу: каждый поток начинает с русского.
+//! Язык хранится в общей ячейке (`AtomicU8`): его читают и отрисовка, и
+//! логика, а WebView-рантайм может обслуживать отрисовку на другом потоке,
+//! поэтому потоковая ячейка здесь не подходит.
 
 pub mod catalog;
 
 mod tables;
 
-use std::cell::Cell;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// Язык интерфейса.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -72,24 +73,35 @@ impl Lang {
     }
 }
 
-thread_local! {
-    /// Язык текущего потока (номер словаря, см. `Lang::code`).
-    static LANG: Cell<u8> = const { Cell::new(0) };
-}
+/// Язык интерфейса — один на всю программу. Читают его и рендер, и логика,
+/// поэтому ячейка общая (`AtomicU8`), а не потоковая: WebView-рантайм Dioxus
+/// может обслуживать отрисовку на другом потоке. Тесты, которые переключают
+/// язык, берут [`test_lock`], чтобы не мешать параллельным.
+static LANG: AtomicU8 = AtomicU8::new(0);
 
 /// Текущий язык интерфейса.
 pub fn lang() -> Lang {
-    Lang::from_code(LANG.with(Cell::get))
+    Lang::from_code(LANG.load(Ordering::Relaxed))
 }
 
 /// Номер словаря текущего языка — для кэша каталога.
 pub(crate) fn language_code() -> u8 {
-    LANG.with(Cell::get)
+    LANG.load(Ordering::Relaxed)
 }
 
 /// Переключает язык интерфейса.
 pub fn set_lang(value: Lang) {
-    LANG.with(|cell| cell.set(value.code()));
+    LANG.store(value.code(), Ordering::Relaxed);
+}
+
+/// Общий замок для тестов, которые меняют язык: без него параллельные тесты
+/// экономики видят английские строки.
+#[cfg(test)]
+pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
 }
 
 /// Русский ли сейчас интерфейс.
@@ -135,6 +147,18 @@ pub fn tf(key: &str, args: &[&str]) -> String {
             Some(position) => text.replace_range(position..position + 2, arg),
             None => break,
         }
+    }
+    text
+}
+
+/// Перевод шаблона с именованными подстановками `{name}`.
+///
+/// Нужен там, где порядок частей в переводе отличается от порядка данных
+/// (тексты объявлений: автор может стоять в середине фразы).
+pub fn tf_named(key: &str, args: &[(&str, &str)]) -> String {
+    let mut text = t(key).to_string();
+    for (name, value) in args {
+        text = text.replace(&format!("{{{name}}}"), value);
     }
     text
 }
@@ -212,6 +236,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn named_placeholders_match_between_languages() {
+        // Тексты объявлений собираются через `tf_named`: подстановки в них
+        // именованные ({author}, {request}, {reward}). Если перевод потерял
+        // или переименовал подстановку, в интерфейсе останется «{author}».
+        fn names(value: &str) -> std::collections::BTreeSet<String> {
+            let mut found = std::collections::BTreeSet::new();
+            let mut rest = value;
+            while let Some(start) = rest.find('{') {
+                let tail = &rest[start + 1..];
+                let Some(end) = tail.find('}') else { break };
+                let name = &tail[..end];
+                if !name.is_empty() {
+                    found.insert(name.to_string());
+                }
+                rest = &tail[end + 1..];
+            }
+            found
+        }
+
+        for (key, value) in parts(&tables::TABLES[0]).into_iter().flatten() {
+            let expected = names(value);
+            if expected.is_empty() {
+                continue;
+            }
+            for table in tables::TABLES.iter().skip(1) {
+                let translated = parts(table)
+                    .into_iter()
+                    .flatten()
+                    .find(|(other, _)| other == key)
+                    .map(|(_, v)| *v)
+                    .unwrap();
+                assert_eq!(
+                    names(translated),
+                    expected,
+                    "в ключе {key} другой набор именованных подстановок"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn named_templates_fill_by_name() {
+        set_lang(Lang::Ru);
+        let text = tf_named("quest.author_line", &[("author", "Марта")]);
+        assert!(text.contains("Марта"), "автор не подставился: {text}");
+        assert!(!text.contains('{'), "в тексте осталась подстановка: {text}");
+        set_lang(Lang::Ru);
     }
 
     #[test]

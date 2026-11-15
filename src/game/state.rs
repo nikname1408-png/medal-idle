@@ -1,10 +1,12 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use super::balance;
+use super::events::{self, ActionTrigger, BuffInstance, PendingEvent};
 use super::i18n;
 use super::items::{self, EquipSlot};
+use super::quests::Quest;
 use super::trader::{self, TraderMarket};
 
 /// Виды ресурсов в баре: дерево, камень, уголь, огонь, золото. Руда и прочие
@@ -81,6 +83,7 @@ impl ResearchKind {
 pub struct EquippedItems {
     pub hand: Option<String>,
     pub body: Option<String>,
+    pub back: Option<String>,
     pub head: Option<String>,
     pub feet: Option<String>,
     pub accessory1: Option<String>,
@@ -94,6 +97,7 @@ impl EquippedItems {
         match slot {
             EquipSlot::Hand => self.hand.as_deref(),
             EquipSlot::Body => self.body.as_deref(),
+            EquipSlot::Back => self.back.as_deref(),
             EquipSlot::Head => self.head.as_deref(),
             EquipSlot::Feet => self.feet.as_deref(),
             EquipSlot::Accessory1 => self.accessory1.as_deref(),
@@ -105,6 +109,7 @@ impl EquippedItems {
         match slot {
             EquipSlot::Hand => self.hand = item_id,
             EquipSlot::Body => self.body = item_id,
+            EquipSlot::Back => self.back = item_id,
             EquipSlot::Head => self.head = item_id,
             EquipSlot::Feet => self.feet = item_id,
             EquipSlot::Accessory1 => self.accessory1 = item_id,
@@ -125,6 +130,27 @@ impl EquippedItems {
         } else {
             self.accessory = None;
         }
+    }
+}
+
+/// Переносит плащ или рюкзак из старого слота `Body` в новый `Back`.
+///
+/// Нужно для сохранений до v11: слот `Back` появился позже, и вещи
+/// оставались надетым на тело.
+fn move_body_item_to_back(equipment: &mut EquippedItems) {
+    if equipment.back.is_some() {
+        return;
+    }
+    let Some(body_id) = equipment.body.clone() else {
+        return;
+    };
+    let is_back_item = matches!(
+        body_id.as_str(),
+        "backpack" | "beggars_cloak" | "leather_coat" | "researchers_cloak" | "travelers_cloak"
+    );
+    if is_back_item {
+        equipment.back = Some(body_id);
+        equipment.body = None;
     }
 }
 
@@ -227,6 +253,9 @@ pub struct Letter {
     pub body: String,
     /// ID предложения, которое откроется по нажатию на письмо.
     pub offer: Option<String>,
+    /// ID заказа, к которому относится письмо. У таких писем заголовок и
+    /// текст собираются на лету из живых данных квеста.
+    pub quest: Option<String>,
     pub read: bool,
 }
 
@@ -282,6 +311,19 @@ impl ActiveExpedition {
     }
 }
 
+/// Лучшее предложение от торговцев за текущий предмет (для ажиотажа).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BestOffer {
+    pub item_id: String,
+    pub trader_index: usize,
+    /// Итоговая сумма сделки, а не цена за штуку.
+    pub price: f64,
+    /// Сколько штук было в сделке: по нему считаем цену за штуку, иначе
+    /// партия из десяти предметов «перебивала» бы цену одного.
+    #[serde(default)]
+    pub quantity: u32,
+}
+
 /// Всё состояние игры. Логика не зависит от Dioxus.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -326,6 +368,12 @@ pub struct GameState {
     pub mine_level: u32,
     /// Уровень банка (повышает лимит золота).
     pub bank_level: u32,
+    /// Уровень кузнеца (навык). Сбрасывается при перерождении.
+    #[serde(default = "default_smith_level")]
+    pub smith_level: u32,
+    /// Накопленный опыт кузнеца.
+    #[serde(default)]
+    pub smith_xp: f64,
     /// Открыта ли угольная яма (оплачено письмо). Постройка 0→1 — отдельно.
     #[serde(default)]
     pub coal_pit_unlocked: bool,
@@ -363,6 +411,10 @@ pub struct GameState {
 
     /// Инвентарь: ID предмета -> количество.
     pub inventory: HashMap<String, u32>,
+    /// Гардероб: отдельное хранилище для экипировки. В рюкзаке лежит только
+    /// то, что игрок может продать/надеть; переключаемые наборы живут здесь.
+    #[serde(default)]
+    pub wardrobe: HashMap<String, u32>,
     /// Надетая экипировка активного набора.
     pub equipment: EquippedItems,
     /// Сохранённые наборы экипировки (Set 1–4).
@@ -375,12 +427,38 @@ pub struct GameState {
     pub expedition_bonus: f32,
     /// +% ресурсов от экипировки.
     pub gather_bonus: f32,
+    /// +% к опыту кузнеца от экипировки.
+    #[serde(default = "default_smith_xp_bonus")]
+    pub smith_xp_bonus: f32,
+    /// +% к шансу торга от экипировки.
+    pub haggle_bonus: f32,
+    /// % шанс не потратить ингредиент при крафте.
+    pub ingredient_discount: f32,
     /// −% расход огня кузницы от экипировки.
     pub fire_discount: f32,
     /// −% расход энергии в походах от экипировки.
     pub expedition_energy_discount: f32,
     /// Рынки всех торговцев.
     pub traders: Vec<TraderMarket>,
+    /// Лучшее предложение от торговцев за текущий предмет (для ажиотажа).
+    #[serde(default)]
+    pub best_offer: Option<BestOffer>,
+    /// Доска объявлений: 6 квестов.
+    #[serde(default)]
+    pub quests: Vec<Quest>,
+    /// Момент следующего обновления доски (в `total_play_seconds`).
+    #[serde(default)]
+    pub quest_board_refresh_at: f64,
+    /// Текущий долг (в золоте). Копится при провале квестов, растёт
+    /// на +40% в минуту, максимум 5000.
+    #[serde(default)]
+    pub debt: f64,
+    /// Момент следующего роста долга (в `total_play_seconds`).
+    #[serde(default)]
+    pub debt_tick_at: f64,
+    /// Момент следующего визита коллекторов (в `total_play_seconds`).
+    #[serde(default)]
+    pub collector_tick_at: f64,
     /// Накопленное время до следующего шага рынка.
     pub market_timer: f64,
     /// Детерминированное зерно рынка.
@@ -417,6 +495,24 @@ pub struct GameState {
     /// Банк уже предложен игроку (порог 800 золота).
     #[serde(default)]
     pub bank_seen: bool,
+
+    // ---------- Динамические события ----------
+    /// Событие, которое сейчас на экране (обмен, бафф, кризис).
+    #[serde(default)]
+    pub pending_event: Option<PendingEvent>,
+    /// Очередь оффлайн-событий. Не конкурирует с фоновыми: пока непусто —
+    /// фоновый тик в `events::tick` не спавнит новое.
+    #[serde(default)]
+    pub offline_events: Vec<PendingEvent>,
+    /// Момент следующего фонового события в базе `total_play_seconds`.
+    #[serde(default)]
+    pub next_baseline_at: f64,
+    /// Отложенные action-based триггеры (см. `events::schedule`).
+    #[serde(default)]
+    pub action_queue: Vec<ActionTrigger>,
+    /// Активные баффы и дебаффы. Протухшие вычищаются в `events::tick`.
+    #[serde(default)]
+    pub buffs: Vec<BuffInstance>,
 
     /// Сколько циклов (перерождений) пройдено.
     pub cycles: u32,
@@ -467,6 +563,14 @@ pub struct GameState {
     pub dev: DevSettings,
 }
 
+fn default_smith_level() -> u32 {
+    1
+}
+
+fn default_smith_xp_bonus() -> f32 {
+    1.0
+}
+
 impl Default for GameState {
     fn default() -> Self {
         // Новая игра начинается с пустой сумкой.
@@ -500,6 +604,8 @@ impl Default for GameState {
             sawmill_level: 0,
             mine_level: 0,
             bank_level: 0,
+            smith_level: 1,
+            smith_xp: 0.0,
             coal_pit_unlocked: false,
             forge_unlocked: false,
             bank_unlocked: false,
@@ -515,15 +621,25 @@ impl Default for GameState {
             trader_research: 0.0,
             trader_researchers: 0,
             inventory,
+            wardrobe: HashMap::new(),
             equipment: EquippedItems::default(),
             equipment_sets: std::array::from_fn(|_| EquippedItems::default()),
             active_set: 0,
             trade_bonus: 0.0,
             expedition_bonus: 0.0,
             gather_bonus: 0.0,
+            smith_xp_bonus: 1.0,
+            haggle_bonus: 0.0,
+            ingredient_discount: 0.0,
             fire_discount: 0.0,
             expedition_energy_discount: 0.0,
             traders: trader::default_markets(),
+            best_offer: None,
+            quests: Vec::new(),
+            quest_board_refresh_at: 0.0,
+            debt: 0.0,
+            debt_tick_at: 0.0,
+            collector_tick_at: 0.0,
             market_timer: 0.0,
             market_seed: 0x9e37_79b9_7f4a_7c15,
             expedition_timer: 0.0,
@@ -537,6 +653,13 @@ impl Default for GameState {
             steam_era: false,
             letters: Vec::new(),
             bank_seen: false,
+            pending_event: None,
+            offline_events: Vec::new(),
+            // Первое фоновое событие — через 5 минут игры. `total_play_seconds`
+            // в новой игре равен 0, поэтому константа работает как задержка.
+            next_baseline_at: balance::EVENTS_BASELINE_FIRST_SECS,
+            action_queue: Vec::new(),
+            buffs: Vec::new(),
             cycles: 0,
             cycle_wood: 0.0,
             cycle_stone: 0.0,
@@ -602,10 +725,22 @@ impl GameState {
         balance::BASE_GOLD_CAP + self.bank_level as f64 * balance::GOLD_CAP_PER_LEVEL
     }
 
-    /// Регенерация энергии в секунду. Без дома — ноль.
+    /// Регенерация энергии в секунду. Без дома — ноль, если нет баффа.
+    /// Бафф «Хорошее настроение» (`EnergyRegenFlat`) даёт плоскую прибавку
+    /// и не умножается на X.
     pub fn energy_regen(&self) -> f64 {
-        self.house_level as f64 * balance::HOUSE_ENERGY_PER_LEVEL * self.income_multiplier()
-            + self.dev.energy_regen
+        let base =
+            self.house_level as f64 * balance::HOUSE_ENERGY_PER_LEVEL * self.income_multiplier()
+                + self.dev.energy_regen;
+        (base + events::active_buff_sum(self, events::BuffStat::EnergyRegenFlat)).max(0.0)
+    }
+
+    /// Множитель стоимости энергии от дебаффа «Кривые руки».
+    ///
+    /// Дефолт — 1.0 (без изменений). Применяется к клику добычи и к расходу
+    /// в походе. К `rest_energy` не применяется: отдых — не трата.
+    pub fn energy_cost_multiplier(&self) -> f64 {
+        1.0 + events::active_buff_sum(self, events::BuffStat::EnergyCostMult) / 100.0
     }
 
     /// Сколько энергии даёт одно нажатие «Отдых». Растёт вместе с X.
@@ -664,18 +799,23 @@ impl GameState {
 
     /// Дерево в секунду с лесопилки. Без множителя цикла: он применяется
     /// один раз в `actions::tick`, чтобы не было двойного умножения.
+    /// Дебафф «Комары» (`SawmillMult`) режет выработку, но не ниже нуля.
     pub fn sawmill_wood_per_sec(&self) -> f64 {
-        self.sawmill_workers as f64
+        let base = self.sawmill_workers as f64
             * balance::SAWMILL_WOOD_PER_WORKER_PER_SEC
-            * (1.0 + self.gather_bonus as f64)
+            * (1.0 + self.gather_bonus as f64);
+        let buff = 1.0 + events::active_buff_sum(self, events::BuffStat::SawmillMult) / 100.0;
+        (base * buff).max(0.0)
     }
 
     /// Камень в секунду с шахты (железо теперь только в походах и у торговца).
     /// Множитель цикла, как и у лесопилки, применяется в тике.
     pub fn mine_stone_per_sec(&self) -> f64 {
-        self.mine_workers as f64
+        let base = self.mine_workers as f64
             * balance::MINE_STONE_PER_WORKER_PER_SEC
-            * (1.0 + self.gather_bonus as f64)
+            * (1.0 + self.gather_bonus as f64);
+        let buff = 1.0 + events::active_buff_sum(self, events::BuffStat::MineMult) / 100.0;
+        (base * buff).max(0.0)
     }
 
     /// Уголь в секунду с угольной ямы.
@@ -803,6 +943,57 @@ impl GameState {
         base + equipment_bonus as f64
     }
 
+    /// Текущий уровень кузнеца (гарантированно не меньше 1).
+    pub fn smith_level(&self) -> u32 {
+        self.smith_level.max(1)
+    }
+
+    /// Сколько опыта нужно до следующего уровня.
+    pub fn smith_xp_to_next(&self) -> f64 {
+        balance::smith_xp_for_level(self.smith_level())
+    }
+
+    /// Прогресс до следующего уровня (от 0.0 до 1.0) — для полоски в UI.
+    pub fn smith_xp_ratio(&self) -> f64 {
+        let need = self.smith_xp_to_next();
+        if need.is_finite() && need > 0.0 {
+            (self.smith_xp / need).clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// Начисляет опыт кузнеца. Если уровень повысился, возвращает новый уровень.
+    pub fn add_smith_xp(&mut self, xp: f64) -> Option<u32> {
+        if xp <= 0.0 {
+            return None;
+        }
+        // Уровень 0 возможен только в повреждённом сохранении: без этой
+        // строки `smith_xp_for_level(0)` вернул бы 0 и цикл скакнул бы сразу
+        // на максимальный уровень.
+        self.smith_level = self.smith_level.max(1);
+        self.smith_xp += xp;
+        let mut new_level = None;
+
+        // Проверяем, хватает ли опыта для повышения (может быть скачок через уровень).
+        while self.smith_level < balance::SMITH_MAX_LEVEL {
+            let needed = balance::smith_xp_for_level(self.smith_level);
+            if self.smith_xp + 1e-9 >= needed {
+                self.smith_xp -= needed; // Вычитаем потраченный опыт
+                self.smith_level += 1;
+                new_level = Some(self.smith_level);
+            } else {
+                break;
+            }
+        }
+
+        // Если достигли максимального уровня, обнуляем опыт.
+        if self.smith_level >= balance::SMITH_MAX_LEVEL {
+            self.smith_xp = 0.0;
+        }
+        new_level
+    }
+
     /// Максимальный запас огня кузницы с учётом уровня.
     pub fn fire_max(&self) -> u32 {
         let levels = self.forge_level.saturating_sub(1);
@@ -818,6 +1009,51 @@ impl GameState {
     /// Активный ресурс «X» из склада.
     pub fn active_amount(&self, kind: &str) -> u32 {
         self.active_resources.get(kind).copied().unwrap_or(0)
+    }
+
+    /// Сколько активных квестов у игрока.
+    pub fn active_quests_count(&self) -> u32 {
+        self.quests
+            .iter()
+            .filter(|q| q.status == super::quests::QuestStatus::Active)
+            .count() as u32
+    }
+
+    /// Множитель цены продажи: −25% пока есть долг.
+    pub fn debt_sell_multiplier(&self) -> f64 {
+        if self.debt > 0.0 {
+            0.75
+        } else {
+            1.0
+        }
+    }
+
+    /// Можно ли торговаться (долг блокирует торг).
+    pub fn can_haggle(&self) -> bool {
+        self.debt <= 0.0
+    }
+
+    /// Сколько раундов торга доступно: 3 базовых плюс по одному за каждое
+    /// надетое кольцо, но не больше 6.
+    pub fn haggle_rounds(&self) -> u32 {
+        let rings = EquipSlot::ALL
+            .iter()
+            .filter_map(|slot| self.equipped_item(*slot))
+            .filter(|item| item.id.ends_with("_ring"))
+            .count() as u32;
+        (3 + rings).min(6)
+    }
+
+    /// Сколько единиц предмета у игрока: активный склад (wood/stone/coal)
+    /// или рюкзак (всё остальное, включая руду).
+    /// Одна точка правды: события и торговые проверки не должны знать,
+    /// где именно лежит предмет.
+    pub fn amount_of(&self, item_id: &str) -> u32 {
+        if is_active_resource(item_id) {
+            self.active_amount(item_id)
+        } else {
+            self.item_count(item_id)
+        }
     }
 
     /// Лимит активного ресурса.
@@ -846,6 +1082,7 @@ impl GameState {
             letter.title.clear();
             letter.body.clear();
             letter.offer = offer.map(str::to_string);
+            letter.quest = None;
             letter.read = false;
             return;
         }
@@ -854,8 +1091,34 @@ impl GameState {
             title: String::new(),
             body: String::new(),
             offer: offer.map(str::to_string),
+            quest: None,
             read: false,
         });
+    }
+
+    /// Кладёт в колокольчик письмо о взятом заказе: в нём детали и кнопки
+    /// «Сдать» / «Отклонить». У каждого заказа своё письмо.
+    pub fn add_quest_letter(&mut self, quest_id: &str) {
+        let id = format!("quest:{quest_id}");
+        if let Some(letter) = self.letters.iter_mut().find(|letter| letter.id == id) {
+            letter.quest = Some(quest_id.to_string());
+            letter.read = false;
+            return;
+        }
+        self.letters.push(Letter {
+            id,
+            title: String::new(),
+            body: String::new(),
+            offer: None,
+            quest: Some(quest_id.to_string()),
+            read: false,
+        });
+    }
+
+    /// Убирает письмо о заказе, когда он сдан, отклонён или просрочен.
+    pub fn remove_quest_letter(&mut self, quest_id: &str) {
+        self.letters
+            .retain(|letter| letter.quest.as_deref() != Some(quest_id));
     }
 
     /// Открывает письмо: помечает прочитанным и снова показывает предложение.
@@ -1000,7 +1263,74 @@ impl GameState {
             .saturating_sub(self.inventory_used_slots())
     }
 
+    /// Свободные ячейки с учётом того, что ингредиенты рецепта
+    /// освободят свои ячейки после списания. Нужно для проверки «хватит ли
+    /// места» в `affordable_crafts`: игрок, у которого рюкзак забит только
+    /// ингредиентами, должен всё равно иметь возможность крафтить.
+    pub fn inventory_free_slots_with_freed(&self, recipe: &items::Recipe) -> u32 {
+        let free = self.inventory_free_slots();
+        // Огонь и активные ресурсы склада (wood/stone/coal) в инвентаре
+        // не лежат — списание их не освобождает ячейку.
+        let mut freed = 0;
+        for ingredient in &recipe.ingredients {
+            if ingredient.item_id == "fire" || is_active_resource(ingredient.item_id) {
+                continue;
+            }
+            // Предмет не должен совпадать с результатом: если это тот же id,
+            // что и результат, ячейка не исчезнет — количество в ней просто
+            // пересчитается.
+            if ingredient.item_id == recipe.result_id {
+                continue;
+            }
+            let have = self.item_count(ingredient.item_id);
+            if have > 0 && have <= ingredient.quantity {
+                freed += 1;
+            }
+        }
+        free + freed
+    }
+
+    /// Кладёт предмет экипировки в гардероб. Только экипировку — ресурсы
+    /// и расходники туда не попадают.
+    pub fn add_to_wardrobe(&mut self, item_id: &str, quantity: u32) {
+        if quantity == 0 {
+            return;
+        }
+        if items::item(item_id).and_then(|i| i.slot).is_none() {
+            return;
+        }
+        *self.wardrobe.entry(item_id.to_string()).or_insert(0) += quantity;
+    }
+
+    /// Забирает предмет из гардероба.
+    pub fn remove_from_wardrobe(&mut self, item_id: &str, quantity: u32) -> bool {
+        if quantity == 0 {
+            return true;
+        }
+        let remaining = {
+            let Some(current) = self.wardrobe.get_mut(item_id) else {
+                return false;
+            };
+            if *current < quantity {
+                return false;
+            }
+            *current -= quantity;
+            *current
+        };
+        if remaining == 0 {
+            self.wardrobe.remove(item_id);
+        }
+        true
+    }
+
+    /// Сколько предметов лежит в гардеробе.
+    pub fn wardrobe_count(&self, item_id: &str) -> u32 {
+        self.wardrobe.get(item_id).copied().unwrap_or(0)
+    }
+
     /// Поместится ли предмет в сумку: не больше лимита на ячейку и есть куда класть.
+    /// Если такой предмет уже лежит, свободная ячейка не нужна — он докладывается
+    /// в существующий стак.
     pub fn can_add_item(&self, item_id: &str, quantity: u32) -> bool {
         if quantity == 0 {
             return true;
@@ -1008,7 +1338,24 @@ impl GameState {
         if items::item(item_id).is_none() {
             return false;
         }
-        self.item_capacity_left(item_id) >= quantity && self.inventory_free_slots() > 0
+        self.item_capacity_left(item_id) >= quantity
+            && (self.item_count(item_id) > 0 || self.inventory_free_slots() > 0)
+    }
+
+    /// Поместится ли результат крафта. Отличается от `can_add_item` тем, что
+    /// ингредиенты при списании освобождают свои ячейки.
+    pub fn can_add_crafted(&self, recipe: &items::Recipe) -> bool {
+        let quantity = recipe.result_quantity;
+        if quantity == 0 {
+            return true;
+        }
+        if items::item(recipe.result_id).is_none() {
+            return false;
+        }
+        if self.item_capacity_left(recipe.result_id) < quantity {
+            return false;
+        }
+        self.item_count(recipe.result_id) > 0 || self.inventory_free_slots_with_freed(recipe) > 0
     }
 
     /// Сколько ещё штук предмета влезет в его ячейку.
@@ -1072,7 +1419,9 @@ impl GameState {
     /// из инвентаря, при снятии возвращается.
     pub fn equip_item(&mut self, item_id: &str) -> Result<(), EquipError> {
         let item = items::item(item_id).ok_or(EquipError::UnknownItem)?;
-        if self.item_count(item_id) == 0 {
+        let from_inventory = self.item_count(item_id) > 0;
+        let from_wardrobe = self.wardrobe_count(item_id) > 0;
+        if !from_inventory && !from_wardrobe {
             return Err(EquipError::NotOwned);
         }
         // Проверка «уже надет» — по обоим слотам аксессуаров.
@@ -1099,7 +1448,11 @@ impl GameState {
             }
             None => return Err(EquipError::NotEquippable),
         };
-        self.remove_one_item(item_id);
+        if from_inventory {
+            self.remove_one_item(item_id);
+        } else {
+            self.remove_from_wardrobe(item_id, 1);
+        }
         self.equipment.set(slot, Some(item_id.to_string()));
         self.sync_active_set();
         self.recalculate_stats();
@@ -1118,37 +1471,37 @@ impl GameState {
         self.recalculate_stats();
     }
 
-    /// Переключает активный набор экипировки, сохраняя текущий.
+    /// Переключает активный набор экипировки.
+    ///
+    /// Снятые вещи уходят в гардероб (не в рюкзак), вещи нового набора
+    /// достаются из гардероба или из рюкзака. Если чего-то нет — слот
+    /// остаётся пустым, ничего не откатывается: игрок сам разберётся.
     pub fn switch_set(&mut self, index: usize) {
         if index >= self.equipment_sets.len() || index == self.active_set {
             return;
         }
-        // Сначала возвращаем текущий набор в сумку. Если места не хватило,
-        // откатываем добавленное и оставляем всё как было.
-        let current: Vec<String> = EquipSlot::ALL
-            .iter()
-            .filter_map(|slot| self.equipment.get(*slot).map(str::to_string))
-            .collect();
-        let mut added: Vec<String> = Vec::new();
-        for item_id in &current {
-            if !self.add_item(item_id, 1) {
-                for id in added.iter().rev() {
-                    self.remove_one_item(id);
-                }
-                return;
-            }
-            added.push(item_id.clone());
-        }
-
-        self.equipment_sets[self.active_set] = self.equipment.clone();
-        self.active_set = index;
-        let target = self.equipment_sets[index].clone();
-        self.equipment = EquippedItems::default();
+        // Снимаем текущий набор в гардероб и запоминаем его в слоте набора:
+        // иначе вернуться к нему будет нечем — предметы останутся в гардеробе,
+        // а набор окажется пустым.
+        let mut previous = EquippedItems::default();
         for slot in EquipSlot::ALL {
-            if let Some(item_id) = target.get(slot) {
-                if self.item_count(item_id) > 0 {
-                    self.remove_one_item(item_id);
-                    self.equipment.set(slot, Some(item_id.to_string()));
+            if let Some(item_id) = self.equipment.get(slot).map(str::to_string) {
+                self.add_to_wardrobe(&item_id, 1);
+                previous.set(slot, Some(item_id));
+                self.equipment.clear(slot);
+            }
+        }
+        self.equipment_sets[self.active_set] = previous;
+        self.active_set = index;
+        // Надеваем новый набор: сначала пробуем гардероб, потом рюкзак.
+        let target = self.equipment_sets[index].clone();
+        for slot in EquipSlot::ALL {
+            if let Some(item_id) = target.get(slot).map(str::to_string) {
+                if self.remove_from_wardrobe(&item_id, 1) {
+                    self.equipment.set(slot, Some(item_id));
+                } else if self.item_count(&item_id) > 0 {
+                    self.remove_one_item(&item_id);
+                    self.equipment.set(slot, Some(item_id));
                 }
             }
         }
@@ -1186,19 +1539,22 @@ impl GameState {
         let mut gather_bonus = 0.0;
         let mut fire_discount = 0.0;
         let mut expedition_energy_discount = 0.0;
+        let mut smith_xp_bonus = 0.0;
+        let mut haggle_bonus = 0.0;
+        let mut ingredient_discount = 0.0;
         for slot in EquipSlot::ALL {
             if let Some(item) = self.equipped_item(slot) {
                 let stats = &item.stats;
                 trade_bonus += stats.trade_bonus.unwrap_or(0.0) / 100.0;
                 trade_bonus += stats.gold_bonus.unwrap_or(0.0) / 100.0;
                 expedition_bonus += stats.expedition_bonus.unwrap_or(0.0) / 100.0;
-                gather_bonus += stats.wood_bonus.unwrap_or(0.0) / 100.0;
-                gather_bonus += stats.stone_bonus.unwrap_or(0.0) / 100.0;
-                gather_bonus += stats.ore_bonus.unwrap_or(0.0) / 100.0;
-                gather_bonus += stats.fiber_bonus.unwrap_or(0.0) / 100.0;
+                gather_bonus += stats.gather_bonus.unwrap_or(0.0) / 100.0;
                 fire_discount += stats.fire_discount.unwrap_or(0.0) / 100.0;
                 expedition_energy_discount +=
                     stats.expedition_energy_discount.unwrap_or(0.0) / 100.0;
+                smith_xp_bonus += stats.smith_xp_bonus.unwrap_or(0.0) / 100.0;
+                haggle_bonus += stats.haggle_bonus.unwrap_or(0.0) / 100.0;
+                ingredient_discount += stats.ingredient_discount.unwrap_or(0.0) / 100.0;
             }
         }
         self.trade_bonus = trade_bonus.clamp(0.0, 5.0);
@@ -1206,6 +1562,37 @@ impl GameState {
         self.gather_bonus = gather_bonus.clamp(0.0, 5.0);
         self.fire_discount = fire_discount.clamp(0.0, 0.9);
         self.expedition_energy_discount = expedition_energy_discount.clamp(0.0, 0.9);
+        self.smith_xp_bonus = 1.0 + smith_xp_bonus.clamp(0.0, 2.0);
+        self.haggle_bonus = haggle_bonus.clamp(0.0, 0.5);
+        self.ingredient_discount = ingredient_discount.clamp(0.0, 0.5);
+        // Проверка сета Кузнеца: если надеты все 3 предмета — бонус +15%
+        // к опыту крафта. Считаем по `set_id` у надетых предметов.
+        let mut smith_pieces = 0;
+        for slot in EquipSlot::ALL {
+            if let Some(item) = self.equipped_item(slot) {
+                if item.stats.set_id.as_deref() == Some("smith") {
+                    smith_pieces += 1;
+                }
+            }
+        }
+        if smith_pieces >= 3 {
+            self.smith_xp_bonus *= 1.15;
+        }
+    }
+
+    /// Эффективный расход энергии в походе: базовая цена минус скидка
+    /// от экипировки, умноженная на дебафф «Кривые руки» (если активен).
+    pub fn effective_expedition_energy(&self, base_cost: f64) -> f64 {
+        let discount = self.expedition_energy_discount.clamp(0.0, 0.9) as f64;
+        base_cost * (1.0 - discount) * self.energy_cost_multiplier()
+    }
+
+    /// Множитель скорости/количества лута в походе.
+    /// 1.0 = без бонусов, 1.35 = +35% к количеству находок.
+    pub fn effective_expedition_bonus(&self) -> f64 {
+        let from_equipment = self.expedition_bonus as f64;
+        let from_buffs = events::active_buff_sum(self, events::BuffStat::ExpeditionSpeed) / 100.0;
+        1.0 + from_equipment + from_buffs
     }
 
     /// Убирает торговца из чисел изучения: банк открывается после кузницы.
@@ -1262,16 +1649,30 @@ impl GameState {
     }
 
     /// Сбрасывает прогресс цикла, сохраняя циклы, время и статистику.
+    ///
+    /// Глобальные баффы (`BuffInstance::global`) переживают перерождение,
+    /// обычные — нет. Таймеры событий (`next_baseline_at`, `fire_at`,
+    /// `expires_at`) живут в базе `total_play_seconds`, поэтому его нельзя
+    /// сбрасывать: иначе все отложенные события окажутся «в прошлом».
     pub fn reset_for_cycle(&mut self) {
         let theme = self.theme;
         let stats = self.stats.clone();
         let cycles = self.cycles + 1;
         let time = self.time;
         let last_seen = self.last_seen;
+        let total_play_seconds = self.total_play_seconds;
         let rest_clicks = self.rest_clicks;
         let wood_seen = self.wood_seen;
         let stone_seen = self.stone_seen;
         let dev = std::mem::take(&mut self.dev);
+        // Время сейчас: пригодится, чтобы выкинуть протухшие глобальные баффы.
+        let now = self.total_play_seconds;
+        let global_buffs: Vec<BuffInstance> = self
+            .buffs
+            .iter()
+            .filter(|buff| buff.global && buff.expires_at > now)
+            .cloned()
+            .collect();
 
         *self = GameState::default();
         self.gold = 0.0;
@@ -1281,12 +1682,26 @@ impl GameState {
         self.theme = theme;
         self.stats = stats;
         self.cycles = cycles;
+        // 5 опыта за каждый пройденный цикл (кроме первого). Опыт проводим
+        // через `add_smith_xp`, чтобы он сразу превратился в уровни, а не
+        // висел на полоске как «45 / 5».
+        self.smith_level = 1;
+        self.smith_xp = 0.0;
+        let bonus = balance::SMITH_XP_PER_CYCLE * (cycles.saturating_sub(1)) as f64;
+        self.add_smith_xp(bonus);
         self.time = time;
         self.last_seen = last_seen;
+        self.total_play_seconds = total_play_seconds;
         self.rest_clicks = rest_clicks;
         self.wood_seen = wood_seen;
         self.stone_seen = stone_seen;
         self.dev = dev;
+        // Глобальные баффы возвращаем после сброса — таймер у них уже
+        // в базе `total_play_seconds`, которая теперь сохранена.
+        self.buffs = global_buffs;
+        // Таймер фонового события в новой игре стартует заново,
+        // а очередь оффлайн-событий и action-triggers исчезает вместе со всем.
+        self.next_baseline_at = self.total_play_seconds + balance::EVENTS_BASELINE_FIRST_SECS;
     }
 
     /// Открыта ли добыча ресурсов.
@@ -1418,13 +1833,35 @@ impl GameState {
         self.inventory.remove("strength_potion");
         self.inventory.remove("iron_ore");
         // Предметы, которых больше нет в новой экономике.
-        for removed in ["coal_amulet", "iron_armor"] {
-            self.inventory.remove(removed);
-        }
+        self.inventory.remove("coal_amulet");
         // Одна ячейка — не больше лимита штук.
         for quantity in self.inventory.values_mut() {
             *quantity = (*quantity).min(items::ITEM_STACK_LIMIT);
         }
+
+        // Слот Back появился в v11: старые сохранения держали плащи и рюкзак
+        // Гардероб появился в v11. У старых сохранений его нет — serde
+        // уже подставил пустую карту через `#[serde(default)]`, но проверим
+        // на случай ручной правки JSON.
+        if !self.wardrobe.is_empty() {
+            // Отфильтровываем не-экипировку (на случай, если кто-то вручную
+            // вписал туда ресурсы).
+            self.wardrobe
+                .retain(|id, _| items::item(id).and_then(|i| i.slot).is_some());
+        }
+        // Доска объявлений появилась в v12: квесты, таймер обновления, долг.
+        if self.quest_board_refresh_at <= 0.0 {
+            // Первое обновление — через 10 секунд после загрузки, чтобы
+            // игрок сразу увидел доску.
+            self.quest_board_refresh_at = self.total_play_seconds + 10.0;
+        }
+        // Слот Back появился в v11: старые сохранения держали плащи и рюкзак
+        // в Body. Переносим и в активном наборе, и в сохранённых.
+        move_body_item_to_back(&mut self.equipment);
+        for set in &mut self.equipment_sets {
+            move_body_item_to_back(set);
+        }
+
         // Старые сохранения: если постройка уже построена или исследована,
         // считаем её открытой, чтобы кнопка «Построить 0→1» не появлялась
         // повторно и не требовала оплаты открытия заново.
@@ -1445,6 +1882,10 @@ impl GameState {
             self.steam_prototype_built = true;
         }
         self.inventory.retain(|_, quantity| *quantity > 0);
+        // Если загрузили старое сохранение, где нет уровня кузнеца — ставим 1.
+        if self.smith_level == 0 {
+            self.smith_level = 1;
+        }
         self.ensure_markets();
         if self.active_set >= self.equipment_sets.len() {
             self.active_set = 0;
@@ -1476,6 +1917,19 @@ impl GameState {
             self.active_expedition = None;
             self.expedition_timer = 0.0;
         }
+        // События: чистим протухшие баффы (например, если игрок не заходил
+        // неделю), очередь оффлайн-событий ограничиваем одним — чтобы не
+        // встретить игрока стеной окон.
+        let now = self.total_play_seconds;
+        self.buffs.retain(|buff| buff.expires_at > now);
+        self.offline_events.truncate(1);
+        // Старое сохранение без поля: ставим таймер от «сейчас».
+        // Сохранение с полем в прошлом (игрок не заходил) — тоже от «сейчас»,
+        // иначе первое же событие выпадет мгновенно при заходе.
+        if self.next_baseline_at <= now {
+            self.next_baseline_at = now + balance::EVENTS_BASELINE_FIRST_SECS;
+        }
+        self.recalculate_stats();
     }
 
     /// Приводит рынки в соответствие с каталогом торговцев.
@@ -1573,19 +2027,22 @@ mod tests {
     }
 
     #[test]
-    fn six_slots_accept_two_accessories() {
+    fn seven_slots_accept_all_items() {
         let mut state = GameState::default();
         for item_id in [
             "wretched_hat",
             "iron_armor",
+            "backpack",
             "iron_shovel",
             "leather_boots",
             "silver_ring",
             "miner_amulet",
         ] {
             state.add_item(item_id, 1);
-            assert_eq!(state.equip_item(item_id), Ok(()), "не надет {item_id}");
+            assert_eq!(state.equip_item(item_id), Ok(()), "не надеть {item_id}");
         }
+        // Шапка даёт +5 к запасу энергии, броня — +30.
+        assert_eq!(state.max_energy(), 100.0 + 5.0 + 30.0);
 
         for slot in EquipSlot::ALL {
             assert!(
@@ -1594,8 +2051,18 @@ mod tests {
                 slot.label()
             );
         }
-        assert_eq!(state.max_energy(), 100.0 + 5.0 + 30.0);
-        assert!((state.gather_bonus - (0.12 + 0.08 + 0.15 + 0.15)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn smith_set_fits_three_pieces_and_boosts_craft_xp() {
+        let mut state = GameState::default();
+        for item_id in ["smith_ring", "smith_amulet", "smith_belt"] {
+            state.add_item(item_id, 1);
+            assert_eq!(state.equip_item(item_id), Ok(()), "не надеть {item_id}");
+        }
+
+        // Кольцо +10%, амулет +10%, сет +15% → 1.2 × 1.15 = 1.38.
+        assert!((state.smith_xp_bonus - 1.38).abs() < 1e-6);
     }
 
     #[test]
@@ -1659,6 +2126,48 @@ mod tests {
     }
 
     #[test]
+    fn gold_stops_at_cap_and_does_not_reset() {
+        let mut state = GameState::default();
+        let cap = state.gold_cap();
+        state.add_resource(ResourceKind::Gold, cap);
+        assert_eq!(state.gold, cap);
+
+        // Попытка добавить сверх лимита ничего не отнимает.
+        let added = state.add_resource(ResourceKind::Gold, 500.0);
+        assert_eq!(added, 0.0);
+        assert_eq!(state.gold, cap);
+
+        // Сверх лимита золото тоже не растёт и не обнуляется.
+        state.add_resource(ResourceKind::Gold, 1_000_000.0);
+        assert_eq!(state.gold, cap);
+
+        // Банк поднимает лимит — золото на месте.
+        state.bank_level = 1;
+        assert_eq!(state.gold, cap);
+        state.add_resource(ResourceKind::Gold, 500.0);
+        assert_eq!(state.gold, cap + 500.0);
+    }
+
+    #[test]
+    fn gold_at_cap_survives_saving_and_bank_upgrade() {
+        let mut state = GameState::default();
+        state.add_resource(ResourceKind::Gold, 5_000.0);
+        assert_eq!(state.gold, state.gold_cap());
+
+        // Полный бар золота переживает круговую сериализацию.
+        let text = serde_json::to_string(&state).expect("сериализация");
+        let mut restored: GameState = serde_json::from_str(&text).expect("десериализация");
+        assert_eq!(restored.gold, state.gold_cap());
+        restored.migrate();
+        assert_eq!(restored.gold, state.gold_cap());
+
+        // Апгрейд банка поднимает лимит и не сбрасывает золото.
+        restored.bank_level = 1;
+        restored.refresh_unlocks();
+        assert_eq!(restored.gold, state.gold_cap());
+    }
+
+    #[test]
     fn migration_moves_ore_from_storage_to_backpack() {
         let mut state = GameState {
             version: 7,
@@ -1710,5 +2219,89 @@ mod tests {
 
         state.forge_level = 10;
         assert_eq!(state.fire_max(), 670);
+    }
+
+    #[test]
+    fn smith_xp_can_jump_several_levels() {
+        let mut state = GameState::default();
+        // 10 опыта — 1 → 2, ещё 40 — 2 → 3. Ровно 50 закрывает оба порога.
+        state.add_smith_xp(50.0);
+        assert_eq!(state.smith_level, 3);
+        assert_eq!(state.smith_xp, 0.0);
+    }
+
+    #[test]
+    fn smith_level_stops_at_max() {
+        let mut state = GameState {
+            smith_level: 19,
+            ..GameState::default()
+        };
+        state.add_smith_xp(1_000_000.0);
+        assert_eq!(state.smith_level, balance::SMITH_MAX_LEVEL);
+        assert_eq!(state.smith_xp, 0.0);
+        // Полоска на максимуме полная, а не NaN.
+        assert_eq!(state.smith_xp_ratio(), 1.0);
+    }
+
+    #[test]
+    fn switch_set_moves_items_to_wardrobe() {
+        let mut state = GameState::default();
+        state.add_item("wretched_hat", 1);
+        state.add_item("trader_ring", 1);
+        state.add_item("iron_boots", 1);
+
+        // Собираем Set 1.
+        assert_eq!(state.equip_item("wretched_hat"), Ok(()));
+        assert_eq!(state.equip_item("trader_ring"), Ok(()));
+        assert_eq!(state.equip_item("iron_boots"), Ok(()));
+
+        // Переключаемся на пустой Set 2.
+        state.switch_set(1);
+
+        // Все предметы теперь в гардеробе, а не в рюкзаке.
+        assert_eq!(state.wardrobe_count("wretched_hat"), 1);
+        assert_eq!(state.wardrobe_count("trader_ring"), 1);
+        assert_eq!(state.wardrobe_count("iron_boots"), 1);
+        assert_eq!(state.item_count("wretched_hat"), 0);
+        for slot in EquipSlot::ALL {
+            assert!(
+                state.equipped(slot).is_none(),
+                "слот {} не пуст",
+                slot.label()
+            );
+        }
+
+        // Возвращаемся к Set 1 — предметы должны надеться из гардероба.
+        state.switch_set(0);
+        assert!(state.wardrobe.is_empty());
+        assert_eq!(state.equipped(EquipSlot::Head), Some("wretched_hat"));
+        assert_eq!(state.equipped(EquipSlot::Accessory1), Some("trader_ring"));
+        assert_eq!(state.equipped(EquipSlot::Feet), Some("iron_boots"));
+    }
+
+    #[test]
+    fn wardrobe_items_can_be_moved_back_to_bag() {
+        let mut state = GameState::default();
+        state.add_to_wardrobe("wretched_hat", 1);
+        assert_eq!(state.wardrobe_count("wretched_hat"), 1);
+        assert_eq!(state.item_count("wretched_hat"), 0);
+
+        // Нельзя положить не-экипировку.
+        state.add_to_wardrobe("wood", 5);
+        assert_eq!(state.wardrobe_count("wood"), 0);
+
+        let moved = actions::take_from_wardrobe(&mut state, "wretched_hat");
+        assert!(moved);
+        assert_eq!(state.wardrobe_count("wretched_hat"), 0);
+        assert_eq!(state.item_count("wretched_hat"), 1);
+    }
+
+    #[test]
+    fn new_game_has_empty_quest_board_and_no_debt() {
+        let state = GameState::default();
+        assert!(state.quests.is_empty());
+        assert_eq!(state.debt, 0.0);
+        // Таймер обновления — 0.0 (поставится в migrate).
+        assert_eq!(state.quest_board_refresh_at, 0.0);
     }
 }

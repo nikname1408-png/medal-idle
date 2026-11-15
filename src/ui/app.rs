@@ -57,10 +57,12 @@ const TABS: [(&str, &str); 7] = [
 ];
 
 /// Одна строка цены: PNG-иконка и количество.
+/// `poor` — этого ресурса не хватает: число красное.
 #[component]
-fn CostPart(icon: Asset, amount: String) -> Element {
+fn CostPart(icon: Asset, amount: String, poor: bool) -> Element {
+    let class = if poor { "cost-part poor" } else { "cost-part" };
     rsx! {
-        span { class: "cost-part",
+        span { class: "{class}",
             img { class: "cost-img", src: "{icon}", alt: "" }
             span { class: "cost-num", "{amount}" }
         }
@@ -78,11 +80,17 @@ pub fn App() -> Element {
     let mut dev_open = use_signal(|| false);
     let mut back = use_signal(|| 0u32);
     let mut menu_back = use_signal(|| *back.peek());
+    // Язык живёт в словаре, но сигналом сверху: чтение в `App` перерисовывает
+    // всё дерево экранов, а не только «Настройки».
+    let mut lang = use_signal(i18n::lang);
 
     // Загружаем сохранение один раз при старте.
     use_future(move || async move {
         match save::load_lang().await {
-            Ok(Some(lang)) => i18n::set_lang(lang),
+            Ok(Some(saved_lang)) => {
+                i18n::set_lang(saved_lang);
+                lang.set(saved_lang);
+            }
             Ok(None) => {}
             Err(error) => eprintln!("Не удалось загрузить язык: {error}"),
         }
@@ -90,10 +98,13 @@ pub fn App() -> Element {
             Ok(Some(mut saved)) => {
                 let now = actions::unix_now();
                 if saved.last_seen > 0 && now > saved.last_seen {
+                    let hours_away = (now - saved.last_seen) as f64 / 3600.0;
                     let gained = actions::offline_time((now - saved.last_seen) as f64);
                     if gained > 0.0 {
                         saved.time = (saved.time + gained).min(balance::TIME_CAP);
                     }
+                    // «Пока вас не было»: не больше одного события в очередь.
+                    crate::game::events::check_offline(&mut saved, hours_away);
                 }
                 saved.last_seen = now;
                 saved.refresh_unlocks();
@@ -119,6 +130,8 @@ pub fn App() -> Element {
                 let mut guard = state.write();
                 actions::tick(&mut guard, 1.0);
                 expedition::tick_active_expedition(&mut guard, 1.0);
+                // Тик событий: снимает протухшие баффы и решает, что показать.
+                crate::game::events::tick(&mut guard, 1.0);
                 let mut snapshot = guard.clone();
                 // Панель разработчика показывает живые числа без сброса ввода.
                 if *dev_open.peek() {
@@ -204,6 +217,10 @@ pub fn App() -> Element {
     });
 
     // Экраны перерисовываются по снимку `VIEW`; сами действия пишут в `state`.
+    // Подписка на язык нужна отдельно: он не часть `GameState`, а смена языка
+    // должна перерисовать всё дерево, а не только «Настройки».
+    let language_now = lang();
+    let _ = language_now;
     let snapshot = VIEW();
     let theme_class = theme_css_class(snapshot.theme);
     let title = match active_tab() {
@@ -244,7 +261,7 @@ pub fn App() -> Element {
                 StatsScreen { view: snapshot.clone() }
             },
             TAB_SETTINGS => rsx! {
-                SettingsScreen { state, view: snapshot.clone() }
+                SettingsScreen { state, view: snapshot.clone(), lang }
             },
             index => rsx! {
                 PlaceholderScreen { title: i18n::t(TABS[index].1).to_string() }
@@ -263,7 +280,10 @@ pub fn App() -> Element {
                 on_menu: move |_| menu_open.set(!menu_open()),
                 on_bell: move |_| bell_open.set(!bell_open()),
             }
-            main { class: "content", {screen} }
+            main { class: "content",
+                ActiveBuffs { view: snapshot.clone() }
+                {screen}
+            }
             div { class: "bottom",
                 ResourceBar { view: snapshot.clone() }
                 TabBar { active: active_tab }
@@ -271,6 +291,7 @@ pub fn App() -> Element {
             }
             if bell_open() {
                 BellPanel {
+                    state,
                     view: snapshot.clone(),
                     on_close: move |_| bell_open.set(false),
                     on_open_letter: move |letter_id: String| {
@@ -305,6 +326,9 @@ pub fn App() -> Element {
                     on_close: move |_| trader_open.set(false),
                 }
             }
+            // Приоритет модалок: оффер постройки → паровая машина → событие.
+            // Событие идёт последним: если одновременно пришёл оффер и событие,
+            // игрок сначала закроет оффер, потом увидит событие.
             if let Some(offer_id) = snapshot.pending_offer.clone() {
                 if !trader_open() && !menu_open() {
                     OfferModal { state, view: snapshot.clone(), offer_id }
@@ -312,6 +336,9 @@ pub fn App() -> Element {
             }
             if snapshot.steam_prototype_event && !trader_open() && !menu_open() {
                 SteamEventModal { state }
+            }
+            if snapshot.pending_event.is_some() && !trader_open() && !menu_open() {
+                EventModal { state, view: snapshot.clone() }
             }
             if dev_open() {
                 DevPanel { state, on_close: move |_| dev_open.set(false) }
@@ -350,10 +377,12 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
     let gather_yield = (balance::CLICK_YIELD + snapshot.dev.gather_yield)
         * (1.0 + snapshot.gather_bonus as f64)
         * snapshot.income_multiplier();
+    // Дебафф «Кривые руки» удорожает клик — показываем фактическую цену.
+    let click_energy = balance::CLICK_ENERGY_COST * snapshot.energy_cost_multiplier();
     let rest_available = snapshot.energy < snapshot.max_energy();
-    let wood_available = snapshot.energy >= balance::CLICK_ENERGY_COST
+    let wood_available = snapshot.energy >= click_energy
         && (snapshot.active_amount("wood") as f64) < snapshot.cap(ResourceKind::Wood);
-    let stone_available = snapshot.energy >= balance::CLICK_ENERGY_COST
+    let stone_available = snapshot.energy >= click_energy
         && (snapshot.active_amount("stone") as f64) < snapshot.cap(ResourceKind::Stone);
 
     let fire_max = snapshot.fire_max();
@@ -410,6 +439,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             "storage.barn_full",
             &[
                 &format_num(snapshot.barn_level as f64 * balance::BARN_CAP_PER_LEVEL),
+                &format_num(snapshot.cap(ResourceKind::Wood)),
                 &format_num(balance::BARN_CAP_PER_LEVEL),
             ],
         )
@@ -484,17 +514,11 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
 
     let gather_wood_info = i18n::tf(
         "gather.wood.info",
-        &[
-            &format_num(gather_yield),
-            &format_num(balance::CLICK_ENERGY_COST),
-        ],
+        &[&format_num(gather_yield), &format_num(click_energy)],
     );
     let gather_stone_info = i18n::tf(
         "gather.stone.info",
-        &[
-            &format_num(gather_yield),
-            &format_num(balance::CLICK_ENERGY_COST),
-        ],
+        &[&format_num(gather_yield), &format_num(click_energy)],
     );
     let feed_label = i18n::tf("field.feed", &[&snapshot.fire_per_coal().to_string()]);
     let fire_info = i18n::tf(
@@ -516,6 +540,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
 
         CollapsibleSection { title: i18n::t("sec.energy").to_string(),
             BuildRow {
+                view: snapshot.clone(),
                 title: i18n::t("build.house").to_string(),
                 level: snapshot.house_level,
                 description: house_description,
@@ -524,6 +549,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 on_build: move |_| do_build_house(state),
             }
             BuildRow {
+                view: snapshot.clone(),
                 title: i18n::t("build.comfort").to_string(),
                 level: snapshot.comfort_level,
                 description: comfort_description,
@@ -534,6 +560,11 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
         if snapshot.gathering_unlocked() {
             CollapsibleSection { title: i18n::t("sec.gather").to_string(),
+                if snapshot.gather_bonus > 0.0 {
+                    div { class: "gather-bonus",
+                        "{i18n::tf(\"gather.bonus_line\", &[&snapshot.gather_bonus.to_string()])}"
+                    }
+                }
                 ActionRow {
                     label: i18n::t("res.wood").to_string(),
                     info: gather_wood_info,
@@ -554,6 +585,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         if snapshot.stone_unlocked() {
             CollapsibleSection { title: i18n::t("sec.storage").to_string(),
                 BuildRow {
+                    view: snapshot.clone(),
                     title: i18n::t("build.storage").to_string(),
                     level: snapshot.storage_level,
                     description: storage_description,
@@ -563,6 +595,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
                 if snapshot.barn_unlocked() {
                     BuildRow {
+                        view: snapshot.clone(),
                         title: i18n::t("build.barn").to_string(),
                         level: snapshot.barn_level,
                         description: barn_description,
@@ -577,7 +610,8 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         if snapshot.house_level > 0 {
             CollapsibleSection { title: i18n::t("sec.houses").to_string(),
                 BuildRow {
-                    title: i18n::t("build.worker_house_title").to_string(),
+                    view: snapshot.clone(),
+                    title: i18n::t("build.worker_house").to_string(),
                     level: snapshot.worker_house_level,
                     description: worker_house_description,
                     cost: worker_house_cost,
@@ -591,6 +625,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
             CollapsibleSection { title: i18n::t("sec.buildings").to_string(),
                 if snapshot.house_level > 0 {
                     BuildRow {
+                        view: snapshot.clone(),
                         title: i18n::t("build.sawmill").to_string(),
                         level: snapshot.sawmill_level,
                         description: sawmill_description,
@@ -601,6 +636,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
                 if snapshot.coal_pit_unlocked {
                     BuildRow {
+                        view: snapshot.clone(),
                         title: i18n::t("build.coal_pit").to_string(),
                         level: snapshot.coal_pit_level,
                         description: coal_pit_description,
@@ -609,8 +645,9 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
                         on_build: move |_| do_build_with(state, actions::build_coal_pit),
                     }
                 }
-                if snapshot.coal_pit_level > 0 {
+                if snapshot.sawmill_level > 0 {
                     BuildRow {
+                        view: snapshot.clone(),
                         title: i18n::t("build.mine").to_string(),
                         level: snapshot.mine_level,
                         description: mine_description,
@@ -625,6 +662,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         if snapshot.forge_unlocked {
             CollapsibleSection { title: i18n::t("sec.forge").to_string(),
                 BuildRow {
+                    view: snapshot.clone(),
                     title: i18n::t("build.forge").to_string(),
                     level: snapshot.forge_level,
                     description: forge_description,
@@ -671,6 +709,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         if snapshot.bank_unlocked {
             CollapsibleSection { title: i18n::t("sec.bank").to_string(),
                 BuildRow {
+                    view: snapshot.clone(),
                     title: i18n::t("build.bank").to_string(),
                     level: snapshot.bank_level,
                     description: bank_description,
@@ -756,7 +795,7 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                     },
                 }
 
-                if snapshot.coal_pit_researched {
+                if snapshot.sawmill_level > 0 {
                     WorkerRow {
                         title: i18n::t("build.mine").to_string(),
                         detail: mine_detail,
@@ -778,6 +817,9 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                             refresh_view(state);
                         },
                     }
+                }
+
+                if snapshot.coal_pit_researched {
                     WorkerRow {
                         title: i18n::t("build.coal_pit").to_string(),
                         detail: coal_detail,
@@ -1100,13 +1142,11 @@ fn StatRow(label: String, value: String) -> Element {
 }
 
 #[component]
-fn SettingsScreen(state: Signal<GameState>, view: GameState) -> Element {
+fn SettingsScreen(state: Signal<GameState>, view: GameState, lang: Signal<i18n::Lang>) -> Element {
     let mut state = state;
+    let mut lang = lang;
     let reset_armed = use_signal(|| false);
     let theme = view.theme;
-    // Язык хранится в словаре, а не в состоянии игры. Сигнал нужен, чтобы
-    // экран перерисовался сразу после нажатия на язык.
-    let mut lang = use_signal(i18n::lang);
     let lang_now = lang();
 
     // Сразу после выбора записываем язык в localStorage.
@@ -1173,7 +1213,6 @@ fn SettingsScreen(state: Signal<GameState>, view: GameState) -> Element {
                         on_pick: move |_| {
                             i18n::set_lang(option);
                             lang.set(option);
-                            refresh_view(state);
                         },
                     }
                 }
@@ -1326,11 +1365,14 @@ fn BurgerMenu(
 
 #[component]
 fn BellPanel(
+    state: Signal<GameState>,
     view: GameState,
     on_close: EventHandler<()>,
     on_open_letter: EventHandler<String>,
 ) -> Element {
+    let message = use_signal(String::new);
     let letters = view.letters.clone();
+    let message_now = message();
     rsx! {
         div { class: "notif-overlay", onclick: move |_| on_close.call(()),
             div {
@@ -1347,21 +1389,121 @@ fn BellPanel(
                 if !letters.is_empty() {
                     div { class: "letters",
                         for letter in letters {
-                            button {
-                                key: "{letter.id}",
-                                class: if letter.read { "letter" } else { "letter unread" },
-                                onclick: {
-                                    let id = letter.id.clone();
-                                    move |_| on_open_letter.call(id.clone())
-                                },
-                                span { class: "letter-title", "{letter.title()}" }
-                                span { class: "letter-body", "{letter.body()}" }
+                            if let Some(quest_id) = letter.quest.clone() {
+                                QuestLetterCard {
+                                    key: "{letter.id}",
+                                    view: view.clone(),
+                                    quest_id,
+                                    state,
+                                    message,
+                                }
+                            } else {
+                                button {
+                                    key: "{letter.id}",
+                                    class: if letter.read { "letter" } else { "letter unread" },
+                                    onclick: {
+                                        let id = letter.id.clone();
+                                        move |_| on_open_letter.call(id.clone())
+                                    },
+                                    span { class: "letter-title", "{letter.title()}" }
+                                    span { class: "letter-body", "{letter.body()}" }
+                                }
                             }
                         }
                     }
                 }
+                if !message_now.is_empty() {
+                    div { class: "letter-message", "{message_now}" }
+                }
                 div { class: "goal-panel-body",
                     CurrentGoal { state: view }
+                }
+            }
+        }
+    }
+}
+
+/// Письмо о взятом заказе: детали и кнопки «Сдать» / «Отклонить».
+#[component]
+fn QuestLetterCard(
+    view: GameState,
+    quest_id: String,
+    state: Signal<GameState>,
+    message: Signal<String>,
+) -> Element {
+    let mut state = state;
+    let mut message = message;
+    let Some(quest) = view.quests.iter().find(|quest| quest.id == quest_id) else {
+        return rsx! {};
+    };
+    let author = quest.author.display_name();
+    let request_text = quest
+        .request
+        .iter()
+        .map(|(id, qty)| format!("{qty} {}", super::inventory::ingredient_name(id)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let reward_text = quest.reward.describe();
+    let now = view.total_play_seconds;
+    let left_minutes = ((quest.expires_at - now).max(0.0) / 60.0).ceil() as u32;
+    let is_active = quest.status == crate::game::quests::QuestStatus::Active;
+    let can_complete = is_active
+        && quest
+            .request
+            .iter()
+            .all(|(id, qty)| view.amount_of(id) >= *qty);
+    let can_decline = is_active
+        && (now - (quest.expires_at - crate::game::quests::QUEST_DURATION))
+            <= crate::game::quests::DECLINE_WINDOW;
+
+    let complete_id = quest_id.clone();
+    let decline_id = quest_id;
+
+    rsx! {
+        div { class: "letter quest-letter",
+            span { class: "letter-title", "{i18n::t(\"letter.quest_taken.title\")}" }
+            div { class: "letter-quest-author", "{author}" }
+            div { class: "letter-quest-line",
+                "{i18n::tf(\"mail.quest.request\", &[&request_text])}"
+            }
+            div { class: "letter-quest-line",
+                "{i18n::tf(\"mail.quest.reward\", &[&reward_text])}"
+            }
+            div { class: "letter-quest-line",
+                "{i18n::tf(\"mail.quest.left\", &[&left_minutes.to_string()])}"
+            }
+            div { class: "letter-quest-actions",
+                button {
+                    class: if can_complete { "trade-btn primary" } else { "trade-btn" },
+                    disabled: !can_complete,
+                    onclick: move |_| {
+                        let result = {
+                            let mut guard = state.write();
+                            crate::game::quests::complete_quest(&mut guard, &complete_id)
+                        };
+                        match result {
+                            Ok(()) => message.set(String::new()),
+                            Err(error) => message.set(error.text().to_string()),
+                        }
+                        refresh_view(state);
+                    },
+                    "{i18n::t(\"quest.btn.complete\")}"
+                }
+                button {
+                    class: if can_decline { "trade-btn cancel" } else { "trade-btn cancel disabled" },
+                    disabled: !can_decline,
+                    onclick: move |_| {
+                        let result = {
+                            let mut guard = state.write();
+                            crate::game::quests::decline_quest(&mut guard, &decline_id)
+                        };
+                        match result {
+                            Ok(()) => message.set(String::new()),
+                            Err(error) => message.set(error.text().to_string()),
+                        }
+                        refresh_view(state);
+                    },
+                    "{i18n::t(\"quest.btn.decline\")}"
                 }
             }
         }
@@ -1397,7 +1539,7 @@ fn OfferModal(state: Signal<GameState>, view: GameState, offer_id: String) -> El
                             }
                             refresh_view(state);
                         },
-                        CostLabel { cost: def.cost }
+                        CostLabel { cost: def.cost, view: view.clone() }
                     }
                     button {
                         class: "offer-later",
@@ -1424,7 +1566,11 @@ fn SteamEventModal(state: Signal<GameState>) -> Element {
     rsx! {
         div { class: "offer-overlay",
             div { class: "offer-card steam-card",
-                img { class: "steam-card-icon", src: "{ICON_STEAM_PROTOTYPE}", alt: "" }
+                img {
+                    class: "steam-card-icon",
+                    src: "{ICON_STEAM_PROTOTYPE}",
+                    alt: "",
+                }
                 div { class: "offer-title", "{i18n::t(\"steam.event.title\")}" }
                 div { class: "offer-body", "{i18n::t(\"steam.event.body_ui\")}" }
                 div { class: "offer-actions",
@@ -1435,6 +1581,282 @@ fn SteamEventModal(state: Signal<GameState>) -> Element {
                             refresh_view(state);
                         },
                         "{i18n::t(\"btn.next\")}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Модальное окно динамического события: обмен, бафф, кризис или сюжет.
+#[component]
+fn EventModal(state: Signal<GameState>, view: GameState) -> Element {
+    let mut state = state;
+    let Some(pending) = view.pending_event.clone() else {
+        return rsx! {};
+    };
+
+    // (icon, title, body, kind) — kind решает, какие кнопки рисовать.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Buttons {
+        AcceptReject,
+        Ok,
+        StoneOrHands,
+        CheckOrGuard,
+        RepairOrMake,
+        TakeOne,
+    }
+
+    let (icon, title, body, buttons) = match &pending.payload {
+        crate::game::events::EventPayload::MerchantBulk {
+            resource_id,
+            amount,
+            gold,
+        } => {
+            let name = super::inventory::ingredient_name(resource_id);
+            let title = i18n::t("event.bulk.title").to_string();
+            let body = i18n::tf(
+                "event.bulk.body",
+                &[&amount.to_string(), name, &gold.to_string()],
+            );
+            ("💰", title, body, Buttons::AcceptReject)
+        }
+        crate::game::events::EventPayload::CollectorsArrived { gold_taken, items } => {
+            let title = i18n::t("event.collectors.title").to_string();
+            let items_text = items
+                .iter()
+                .map(|(id, qty)| {
+                    let name = super::inventory::ingredient_name(id);
+                    format!("{qty} {name}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let amount_text = format!("{}", *gold_taken as u32);
+            let body = i18n::tf("event.collectors.body", &[&amount_text, &items_text]);
+            ("🕵", title, body, Buttons::Ok)
+        }
+        crate::game::events::EventPayload::MerchantCollector {
+            item_id,
+            quantity,
+            gold,
+        } => {
+            let name = super::inventory::ingredient_name(item_id);
+            let title = i18n::t("event.collector.title").to_string();
+            // Показываем цену за штуку и обычную цену: иначе непонятно,
+            // выгодно ли предложение.
+            let base = crate::game::items::item(item_id)
+                .map(|item| item.base_price)
+                .unwrap_or(0);
+            let unit = (*gold as f64 / *quantity as f64).round() as u32;
+            let body = i18n::tf(
+                "event.collector.body",
+                &[
+                    &quantity.to_string(),
+                    name,
+                    &gold.to_string(),
+                    &unit.to_string(),
+                    &base.to_string(),
+                ],
+            );
+            ("💎", title, body, Buttons::AcceptReject)
+        }
+        crate::game::events::EventPayload::BuffApplied {
+            buff_id,
+            value,
+            duration_secs,
+        } => {
+            let name = crate::game::events::buff_name(buff_id).to_string();
+            let desc = crate::game::events::buff_desc(buff_id, *value);
+            let minutes = (*duration_secs as f64 / 60.0).round() as u32;
+            let body = i18n::tf("event.buff.body", &[&desc, &minutes.to_string()]);
+            ("✨", name, body, Buttons::Ok)
+        }
+        crate::game::events::EventPayload::OfflineRats { lost_wood } => {
+            let title = i18n::t("event.offline.rats.title").to_string();
+            let body = i18n::tf("event.offline.rats.body", &[&lost_wood.to_string()]);
+            ("🐀", title, body, Buttons::Ok)
+        }
+        crate::game::events::EventPayload::OfflineMineFind { iron } => {
+            let title = i18n::t("event.offline.mine.title").to_string();
+            let body = i18n::tf("event.offline.mine.body", &[&iron.to_string()]);
+            ("⛏", title, body, Buttons::Ok)
+        }
+        crate::game::events::EventPayload::CrisisMud { item_id, quantity } => {
+            let name = super::inventory::ingredient_name(item_id);
+            let title = i18n::t("event.mud.title").to_string();
+            let body = i18n::tf("event.mud.body", &[&quantity.to_string(), name]);
+            ("🟤", title, body, Buttons::TakeOne)
+        }
+        crate::game::events::EventPayload::CrisisFire => {
+            let title = i18n::t("event.fire.title").to_string();
+            let body = i18n::t("event.fire.body").to_string();
+            ("🔥", title, body, Buttons::StoneOrHands)
+        }
+        crate::game::events::EventPayload::CrisisThieves => {
+            let title = i18n::t("event.thieves.title").to_string();
+            let body = i18n::t("event.thieves.body").to_string();
+            ("🥷", title, body, Buttons::CheckOrGuard)
+        }
+        crate::game::events::EventPayload::CrisisToolBroken => {
+            let title = i18n::t("event.tool.title").to_string();
+            let body = i18n::t("event.tool.body").to_string();
+            ("🔨", title, body, Buttons::RepairOrMake)
+        }
+        crate::game::events::EventPayload::Thematic { id } => {
+            let title = i18n::t_or(&format!("event.thematic.{id}.title"), "").to_string();
+            let body = i18n::t_or(&format!("event.thematic.{id}.body"), "").to_string();
+            ("📜", title, body, Buttons::Ok)
+        }
+    };
+
+    let left_label = match &buttons {
+        Buttons::AcceptReject => i18n::t("btn.accept").to_string(),
+        Buttons::StoneOrHands => i18n::tf(
+            "event.fire.choice_stone",
+            &[&balance::CRISIS_FIRE_STONE.to_string()],
+        ),
+        Buttons::CheckOrGuard => i18n::t("event.thieves.choice_check").to_string(),
+        Buttons::RepairOrMake => i18n::tf(
+            "event.tool.choice_repair",
+            &[&balance::CRISIS_TOOL_IRON.to_string()],
+        ),
+        Buttons::TakeOne => i18n::t("btn.accept").to_string(),
+        Buttons::Ok => i18n::t("btn.ok").to_string(),
+    };
+    let right_label = match &buttons {
+        Buttons::AcceptReject => i18n::t("btn.later").to_string(),
+        Buttons::StoneOrHands => i18n::tf(
+            "event.fire.choice_hands",
+            &[
+                &balance::CRISIS_FIRE_ENERGY.to_string(),
+                &balance::CRISIS_FIRE_DEBUFF_MIN_SECS.to_string(),
+            ],
+        ),
+        Buttons::CheckOrGuard => i18n::tf(
+            "event.thieves.choice_guard",
+            &[&balance::CRISIS_THIEVES_GOLD.to_string()],
+        ),
+        Buttons::RepairOrMake => i18n::t("event.tool.choice_make").to_string(),
+        _ => String::new(),
+    };
+    let has_right = !matches!(buttons, Buttons::TakeOne | Buttons::Ok);
+
+    // Доступность кнопок по текущим ресурсам.
+    let (left_enabled, right_enabled) = match &buttons {
+        Buttons::StoneOrHands => (
+            view.active_amount("stone") >= balance::CRISIS_FIRE_STONE,
+            view.energy + 1e-9 >= balance::CRISIS_FIRE_ENERGY as f64,
+        ),
+        Buttons::CheckOrGuard => (
+            true,
+            view.gold + 1e-9 >= balance::CRISIS_THIEVES_GOLD as f64,
+        ),
+        Buttons::RepairOrMake => (view.item_count("iron") >= balance::CRISIS_TOOL_IRON, true),
+        _ => (true, true),
+    };
+
+    let is_choice = matches!(
+        buttons,
+        Buttons::StoneOrHands | Buttons::CheckOrGuard | Buttons::RepairOrMake
+    );
+    // Обе кнопки недоступны → нужна третья «Пропустить», иначе тупик.
+    let needs_skip = is_choice && !left_enabled && !right_enabled;
+
+    rsx! {
+        div { class: "offer-overlay",
+            div { class: "offer-card",
+                div { class: "event-icon", "{icon}" }
+                div { class: "offer-title", "{title}" }
+                div { class: "offer-body", "{body}" }
+                div { class: "offer-actions",
+                    if is_choice {
+                        button {
+                            class: if left_enabled { "offer-price" } else { "offer-price missing" },
+                            disabled: !left_enabled,
+                            onclick: move |_| {
+                                {
+                                    let mut guard = state.write();
+                                    let _ = crate::game::events::resolve_choice(&mut guard, 0);
+                                }
+                                refresh_view(state);
+                            },
+                            "{left_label}"
+                        }
+                        if has_right {
+                            button {
+                                class: if right_enabled { "offer-later" } else { "offer-later missing" },
+                                disabled: !right_enabled,
+                                onclick: move |_| {
+                                    {
+                                        let mut guard = state.write();
+                                        let _ = crate::game::events::resolve_choice(&mut guard, 1);
+                                    }
+                                    refresh_view(state);
+                                },
+                                "{right_label}"
+                            }
+                        }
+                        if needs_skip {
+                            button {
+                                class: "offer-later",
+                                onclick: move |_| {
+                                    {
+                                        let mut guard = state.write();
+                                        let _ = crate::game::events::resolve_choice(&mut guard, 2);
+                                    }
+                                    refresh_view(state);
+                                },
+                                "{i18n::t(\"btn.skip\")}"
+                            }
+                        }
+                    } else if matches!(buttons, Buttons::AcceptReject) {
+                        button {
+                            class: "offer-price",
+                            onclick: move |_| {
+                                {
+                                    let mut guard = state.write();
+                                    let _ = crate::game::events::resolve(&mut guard, true);
+                                }
+                                refresh_view(state);
+                            },
+                            "{left_label}"
+                        }
+                        button {
+                            class: "offer-later",
+                            onclick: move |_| {
+                                {
+                                    let mut guard = state.write();
+                                    let _ = crate::game::events::resolve(&mut guard, false);
+                                }
+                                refresh_view(state);
+                            },
+                            "{right_label}"
+                        }
+                    } else if matches!(buttons, Buttons::TakeOne) {
+                        button {
+                            class: "offer-price",
+                            onclick: move |_| {
+                                {
+                                    let mut guard = state.write();
+                                    let _ = crate::game::events::resolve_choice(&mut guard, 0);
+                                }
+                                refresh_view(state);
+                            },
+                            "{left_label}"
+                        }
+                    } else {
+                        // Ok и Thematic.
+                        button {
+                            class: "offer-price",
+                            onclick: move |_| {
+                                {
+                                    let mut guard = state.write();
+                                    let _ = crate::game::events::resolve(&mut guard, true);
+                                }
+                                refresh_view(state);
+                            },
+                            "{left_label}"
+                        }
                     }
                 }
             }
@@ -2072,26 +2494,57 @@ fn ActionRow(label: String, info: String, available: bool, on_press: EventHandle
 }
 
 #[component]
-fn CostLabel(cost: balance::Cost) -> Element {
+fn CostLabel(cost: balance::Cost, view: GameState) -> Element {
+    // Красным подсвечиваем именно те ресурсы, которых не хватает.
+    let poor_wood = (view.active_amount("wood") as f64) < cost.wood;
+    let poor_stone = (view.active_amount("stone") as f64) < cost.stone;
+    let poor_gold = view.gold + 1e-9 < cost.gold;
+    let poor_energy = view.energy + 1e-9 < cost.energy;
+    let poor_boards = view.item_count("board") < cost.boards;
+    let poor_ingots = view.item_count("iron_ingot") < cost.iron_ingots;
     rsx! {
         span { class: "cost",
             if cost.wood > 0.0 {
-                CostPart { icon: ICON_WOOD, amount: format_num(cost.wood) }
+                CostPart {
+                    icon: ICON_WOOD,
+                    amount: format_num(cost.wood),
+                    poor: poor_wood,
+                }
             }
             if cost.stone > 0.0 {
-                CostPart { icon: ICON_STONE, amount: format_num(cost.stone) }
+                CostPart {
+                    icon: ICON_STONE,
+                    amount: format_num(cost.stone),
+                    poor: poor_stone,
+                }
             }
             if cost.gold > 0.0 {
-                CostPart { icon: ICON_GOLD, amount: format_num(cost.gold) }
+                CostPart {
+                    icon: ICON_GOLD,
+                    amount: format_num(cost.gold),
+                    poor: poor_gold,
+                }
             }
             if cost.energy > 0.0 {
-                CostPart { icon: ICON_FIRE, amount: format_num(cost.energy) }
+                CostPart {
+                    icon: ICON_ENERGY,
+                    amount: format_num(cost.energy),
+                    poor: poor_energy,
+                }
             }
             if cost.boards > 0 {
-                CostPart { icon: ICON_BOARD, amount: cost.boards.to_string() }
+                CostPart {
+                    icon: ICON_BOARD,
+                    amount: cost.boards.to_string(),
+                    poor: poor_boards,
+                }
             }
             if cost.iron_ingots > 0 {
-                CostPart { icon: ICON_IRON_INGOT, amount: cost.iron_ingots.to_string() }
+                CostPart {
+                    icon: ICON_IRON_INGOT,
+                    amount: cost.iron_ingots.to_string(),
+                    poor: poor_ingots,
+                }
             }
         }
     }
@@ -2100,6 +2553,7 @@ fn CostLabel(cost: balance::Cost) -> Element {
 #[component]
 fn BuildRow(
     title: String,
+    view: GameState,
     level: u32,
     description: String,
     cost: balance::Cost,
@@ -2137,7 +2591,7 @@ fn BuildRow(
                     div { class: "build-cost-line",
                         span { class: "build-cost-label", "{i18n::t(\"build.cost_label\")}" }
                         span { class: if affordable { "build-cost" } else { "build-cost poor" },
-                            CostLabel { cost }
+                            CostLabel { cost, view: view.clone() }
                         }
                     }
                 }
@@ -2250,7 +2704,7 @@ fn CurrentGoal(state: GameState) -> Element {
                 None => rsx! {
                     if let Some(cost) = goal_hint {
                         div { class: "goal-cost",
-                            CostLabel { cost }
+                            CostLabel { cost, view: state.clone() }
                         }
                     }
                 },
@@ -2435,6 +2889,50 @@ fn EnergyBar(view: GameState) -> Element {
                 span { class: "energy-label", "{label}" }
             }
         }
+    }
+}
+
+/// Полоска активных баффов и дебаффов. Показывается в начале контента,
+/// исчезает целиком, когда активных баффов нет.
+#[component]
+fn ActiveBuffs(view: GameState) -> Element {
+    let now = view.total_play_seconds;
+    let active: Vec<_> = view
+        .buffs
+        .iter()
+        .filter(|buff| buff.is_active(now))
+        .collect();
+    if active.is_empty() {
+        return rsx! {};
+    }
+
+    rsx! {
+        div { class: "active-buffs",
+            for buff in active {
+                div { class: "buff-chip", key: "{buff.buff_id}",
+                    span { class: "buff-name", "{buff.name()}" }
+                    span { class: "buff-value", "{buff.summary()}" }
+                    span { class: "buff-timer", "{format_buff_time(buff.remaining_secs(now))}" }
+                }
+            }
+        }
+    }
+}
+
+/// Оставшееся время баффа в человекочитаемом виде.
+fn format_buff_time(seconds: f64) -> String {
+    let total = seconds.max(0.0).round() as u64;
+    let minutes = total / 60;
+    let secs = total % 60;
+    if minutes > 0 && secs > 0 {
+        i18n::tf(
+            "time.minutes_seconds",
+            &[&minutes.to_string(), &secs.to_string()],
+        )
+    } else if minutes > 0 {
+        i18n::tf("time.minutes_only", &[&minutes.to_string()])
+    } else {
+        i18n::tf("time.seconds", &[&secs.to_string()])
     }
 }
 

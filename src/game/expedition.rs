@@ -1,4 +1,4 @@
-﻿//! Походы по локациям.
+//! Походы по локациям.
 //!
 //! Поход длится, пока есть энергия: каждую секунду пути тратится расход
 //! локации. Каждую секунду с шансом [`balance::EXPEDITION_LOOT_CHANCE`]
@@ -12,6 +12,7 @@
 
 use super::actions::next_random;
 use super::balance;
+use super::events;
 use super::i18n;
 use super::state::GameState;
 
@@ -419,7 +420,8 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
 
     // Зимние перчатки и куртка снижают расход энергии в пути.
     let energy_discount = state.expedition_energy_discount.clamp(0.0, 0.9) as f64;
-    let energy_cost = location.energy_per_second * (1.0 - energy_discount);
+    let energy_cost =
+        location.energy_per_second * (1.0 - energy_discount) * state.energy_cost_multiplier();
     if !state.spend_energy(energy_cost * dt.max(0.0)) {
         tick.out_of_energy = true;
         return tick;
@@ -429,7 +431,9 @@ pub fn step_expedition(state: &mut GameState, location_id: &str, dt: f64) -> Exp
         return tick;
     }
 
-    let bonus = 1.0 + state.expedition_bonus as f64;
+    let bonus = 1.0
+        + state.expedition_bonus as f64
+        + events::active_buff_sum(state, events::BuffStat::ExpeditionSpeed) / 100.0;
     let loot_chance = balance::EXPEDITION_LOOT_CHANCE as u64;
     // Карта падает в любой открытой локации.
     let is_current = state.location_unlocked(location.id);

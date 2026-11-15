@@ -474,6 +474,26 @@ button {
     font-variant-numeric: tabular-nums;
 }
 
+/* Бонус снаряжения к ручной добыче в разделе «Сбор». */
+.gather-bonus {
+    margin: 0 0 8px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    background: var(--accent-soft);
+    font-size: 12px;
+    color: var(--text);
+}
+
+/* Не хватает этого ресурса: подсвечиваем только его. */
+.cost-part.poor .cost-num {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.cost-part.poor .cost-img {
+    opacity: 0.75;
+}
+
 .build-info {
     padding: 10px 12px;
     border-radius: 4px;
@@ -932,6 +952,35 @@ button {
     opacity: 0.75;
 }
 
+/* Письмо о взятом заказе: детали и кнопки прямо в колокольчике. */
+.letter.quest-letter {
+    border-left: 3px solid var(--select);
+    gap: 4px;
+}
+
+.letter-quest-author {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.letter-quest-line {
+    font-size: 11px;
+    line-height: 1.35;
+    opacity: 0.8;
+}
+
+.letter-quest-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.letter-message {
+    padding: 6px 12px;
+    color: var(--danger);
+    font-size: 12px;
+}
+
 .offer-overlay {
     position: fixed;
     inset: 0;
@@ -1002,6 +1051,11 @@ button {
     font-weight: 600;
 }
 
+.offer-later.missing {
+    border-color: var(--danger);
+    color: var(--danger);
+    cursor: default;
+}
 /* ---------- Эпоха Пара ---------- */
 
 .steam-intro {
@@ -1829,6 +1883,13 @@ button {
     color: var(--select);
 }
 
+/* Предупреждение о неходовой части партии в окне торга. */
+.trade-warning {
+    color: var(--danger);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
 .trade-actions {
     display: flex;
     flex-wrap: wrap;
@@ -2318,6 +2379,12 @@ button {
 
 .equip-detail-actions .inv-tool {
     flex: 1;
+}
+
+.equip-set-status {
+    flex-basis: 100%;
+    color: var(--select);
+    font-weight: 700;
 }
 
 .inv-sets {
@@ -3056,4 +3123,374 @@ button {
     height: 100%;
     background: var(--select);
     transition: width 0.3s ease;
+}
+
+/* ---------- Активные баффы ---------- */
+.active-buffs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin: 4px 6px 0;
+}
+
+.buff-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 3px 7px;
+    border: 1px solid var(--select);
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--text);
+    font-size: 10.5px;
+    white-space: nowrap;
+}
+
+.buff-name {
+    font-weight: 700;
+    color: var(--select);
+}
+
+.buff-value {
+    color: var(--muted);
+}
+
+.buff-timer {
+    color: var(--gold);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Иконка в карточке события (эмодзи, крупный). */
+.event-icon {
+    font-size: 42px;
+    line-height: 1;
+    text-align: center;
+    margin-bottom: 4px;
+}
+
+/* ---------- Полоска уровня кузнеца ---------- */
+.smith-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 8px;
+    padding: 0 4px;
+}
+
+.smith-bar-lvl {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--gold);
+    white-space: nowrap;
+}
+
+.smith-bar-track {
+    flex: 1;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.42);
+    overflow: hidden;
+}
+
+.smith-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #8c6a28, var(--energy-bar));
+    transition: width 0.3s ease;
+}
+
+.smith-bar-xp {
+    font-size: 10.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* ---------- Заблокированные рецепты ---------- */
+.inv-item.locked {
+    opacity: 0.55;
+    cursor: not-allowed;
+    /* Убираем подсветку, чтобы не выглядело активным */
+    background: rgba(0, 0, 0, 0.28) !important; 
+    border-color: var(--line) !important;
+}
+
+.inv-lock-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 3px;
+    pointer-events: none; /* Чтобы клик проходил на кнопку */
+}
+
+.trade-locked {
+    color: var(--danger);
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: -2px;
+    margin-bottom: 2px;
+}
+
+/* ---------- Окно предложения товара ---------- */
+.trade-offer-card {
+    aspect-ratio: auto; /* Разрешаем окну быть прямоугольным */
+    max-height: 85%;    /* Чтобы не вылезало за экран телефона */
+    overflow-y: auto;   /* Внутри будет скролл, если вещей много */
+}
+
+.trade-offer-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr); /* 5 колонок, как в сумке */
+    gap: 4px;
+    margin: 8px 0;
+    padding: 4px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+}
+
+.trade-offer-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 4px;
+    margin-bottom: 8px;
+}
+
+.trade-offer-line {
+    display: flex;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 14px;
+}
+
+/* ---------- Гардероб ---------- */
+.wardrobe-cell {
+    flex-direction: column;
+    aspect-ratio: auto;
+    min-height: 80px;
+    padding: 4px;
+}
+
+.wardrobe-actions {
+    display: flex;
+    gap: 2px;
+    margin-top: 2px;
+}
+
+.inv-tool.small {
+    padding: 2px 4px;
+    font-size: 9px;
+}
+
+/* ---------- Ползунок торга ---------- */
+.haggle-row {
+    display: flex;
+    gap: 10px;
+    margin: 8px 0;
+    align-items: stretch;
+}
+
+.haggle-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 11px;
+}
+
+.haggle-chance {
+    color: #7fcf7a;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.haggle-slider-wrap {
+    width: 40px;
+    height: 120px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.haggle-slider {
+    /* Поворачиваем горизонтальный слайдер на -90°, чтобы получить вертикальный. */
+    transform: rotate(-90deg);
+    width: 120px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--select);
+    cursor: pointer;
+}
+
+.haggle-slider:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.haggle-manual {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.haggle-input {
+    flex: 1;
+    padding: 4px 6px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.3);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+}
+
+/* ---------- Доска объявлений ---------- */
+.quest-board {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 10px;
+}
+
+.quest-board-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.quest-board-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--gold);
+}
+
+.quest-board-counter {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.quest-board-hint {
+    font-size: 10.5px;
+    line-height: 1.35;
+    color: var(--muted);
+    margin-bottom: 4px;
+}
+
+.quest-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.quest-card.active {
+    border-left: 3px solid var(--gold);
+}
+
+.quest-card.failed {
+    border-left: 3px solid var(--danger);
+    opacity: 0.7;
+}
+
+.quest-card.completed {
+    opacity: 0.5;
+    text-decoration: line-through;
+}
+
+.quest-author {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--select);
+}
+
+.quest-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.quest-body {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--muted);
+}
+
+.quest-timer {
+    font-size: 11px;
+    color: var(--gold);
+    font-variant-numeric: tabular-nums;
+}
+
+.quest-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+}
+
+.quest-declined {
+    font-size: 11px;
+    color: var(--muted);
+    font-style: italic;
+}
+
+.quest-debt {
+    padding: 8px 10px;
+    border: 1px solid var(--danger);
+    border-radius: 4px;
+    background: rgba(200, 96, 78, 0.12);
+    margin-bottom: 4px;
+}
+
+.quest-debt-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--danger);
+}
+
+.quest-debt-gold {
+    color: var(--gold);
+    font-weight: 400;
+}
+
+.quest-debt-hint {
+    font-size: 10.5px;
+    line-height: 1.35;
+    color: var(--muted);
+    margin-top: 2px;
+}
+
+.quest-debt-actions {
+    margin-top: 4px;
+    display: flex;
+    gap: 4px;
+}
+
+.quest-empty {
+    padding: 16px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
 }

@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 /// Версия формата сохранения. Меняется при несовместимых правках.
-pub const SAVE_VERSION: u32 = 9;
+pub const SAVE_VERSION: u32 = 12;
 
 /// Стартовый капитал новой игры. Ноль: всё добывается и зарабатывается.
 pub const START_GOLD: f64 = 0.0;
@@ -37,9 +37,9 @@ pub const STONE_UNLOCK_WOOD: f64 = 2.0;
 /// Базовый лимит ресурсов без склада.
 pub const BASE_STORAGE_CAP: f64 = 100.0;
 /// Прирост лимита ресурсов за уровень склада.
-pub const STORAGE_CAP_PER_LEVEL: f64 = 350.0;
+pub const STORAGE_CAP_PER_LEVEL: f64 = 500.0;
 /// Прирост лимита ресурсов за уровень амбара.
-pub const BARN_CAP_PER_LEVEL: f64 = 500.0;
+pub const BARN_CAP_PER_LEVEL: f64 = 1_000.0;
 /// Уровень склада, на котором открывается амбар.
 pub const BARN_UNLOCK_STORAGE_LEVEL: u32 = 8;
 
@@ -285,6 +285,19 @@ pub fn bank_cost(level: u32) -> Cost {
     }
 }
 
+// ---------- События ----------
+/// Первое фоновое событие в новой игре (5 минут).
+pub const EVENTS_BASELINE_FIRST_SECS: f64 = 5.0 * 60.0;
+/// Минимальный интервал между фоновыми событиями.
+pub const EVENTS_BASELINE_MIN_SECS: f64 = 15.0 * 60.0;
+/// Максимальный интервал между фоновыми событиями.
+pub const EVENTS_BASELINE_MAX_SECS: f64 = 20.0 * 60.0;
+/// Шанс, что фоновое событие вообще сработает (в процентах).
+pub const EVENTS_BASELINE_CHANCE: u64 = 70;
+
+/// Минимальная сумма сделки оптовика, чтобы предложение имело смысл.
+pub const EVENTS_BULK_MIN_GOLD: u32 = 50;
+
 /// Сколько работников даёт один уровень дома для работников.
 pub const WORKERS_PER_HOUSE_LEVEL: u32 = 1;
 /// Сколько исследователей даёт один уровень дома для изучения.
@@ -340,9 +353,9 @@ pub const GOLD_CAP_PER_LEVEL: f64 = 1_000.0;
 /// X линейный и без потолка: на R = 10 он равен ровно 7. Множитель
 /// применяется к «Труду» и «Отдыху», но не к ручной добыче — там обмен
 /// «энергия → ресурс» фиксированный.
-pub const CYCLE_INCOME_PER_LEVEL: f64 = 0.6;
+pub const CYCLE_INCOME_PER_LEVEL: f64 = 0.4;
 /// Базовый порог перерождения (R = 0) в единицах дерева и камня за цикл.
-pub const CYCLE_THRESHOLD_BASE: f64 = 3_000.0;
+pub const CYCLE_THRESHOLD_BASE: f64 = 6_000.0;
 /// Во сколько раз базовый порог растёт за каждый цикл: Порог = П0 × (1 + 0.5R).
 ///
 /// Коэффициент чуть ниже прироста X (0.6), поэтому циклы медленно
@@ -486,7 +499,7 @@ const FORGE_FIRST_STONE: f64 = 250.0;
 
 const FORGE_UPGRADE_WOOD: f64 = 150.0;
 const FORGE_UPGRADE_STONE: f64 = 100.0;
-const FORGE_COST_GROWTH: f64 = 1.8;
+const FORGE_COST_GROWTH: f64 = 1.55;
 
 const MINE_BASE_COST_WOOD: f64 = 45.0;
 const MINE_BASE_COST_GOLD: f64 = 80.0;
@@ -503,3 +516,74 @@ const BANK_FIRST_GOLD: f64 = 300.0;
 const BANK_UPGRADE_WOOD: f64 = 200.0;
 const BANK_UPGRADE_STONE: f64 = 150.0;
 const BANK_COST_GROWTH: f64 = 1.8;
+
+// ---------- Кризисы ----------
+/// «Пожар»: [Залить камнем] тратит столько камня.
+pub const CRISIS_FIRE_STONE: u32 = 100;
+/// «Пожар»: [Потушить руками] тратит столько энергии.
+pub const CRISIS_FIRE_ENERGY: u32 = 50;
+/// «Пожар»: длительность дебаффа к регенерации после тушения руками.
+pub const CRISIS_FIRE_DEBUFF_MIN_SECS: f64 = 180.0;
+pub const CRISIS_FIRE_DEBUFF_MAX_SECS: f64 = 240.0;
+
+/// «Воры»: [Проверить] теряет столько процентов дерева.
+pub const CRISIS_THIEVES_WOOD_PERCENT: u32 = 20;
+/// «Воры»: [Проверить] даёт столько железа.
+pub const CRISIS_THIEVES_IRON: u32 = 10;
+/// «Воры»: [Стража] стоит столько золота.
+pub const CRISIS_THIEVES_GOLD: u32 = 500;
+
+/// «Сломался инструмент»: [Починить] тратит столько руды.
+pub const CRISIS_TOOL_IRON: u32 = 50;
+/// «Сломался инструмент»: длительность дебаффа к шахте после «Сколотить».
+pub const CRISIS_TOOL_DEBUFF_MIN_SECS: f64 = 120.0;
+pub const CRISIS_TOOL_DEBUFF_MAX_SECS: f64 = 180.0;
+
+/// Максимальный уровень навыка кузнеца.
+pub const SMITH_MAX_LEVEL: u32 = 20;
+/// Базовый опыт за один крафт (до прибавки за цену).
+pub const SMITH_XP_PER_CRAFT_BASE: f64 = 1.0;
+/// Делитель цены предмета для расчета бонусного опыта.
+pub const SMITH_XP_PRICE_DIVISOR: f64 = 40.0;
+/// Потолок опыта за один предмет (чтобы золотые кольца не давали по 50 опыта).
+pub const SMITH_XP_CAP_PER_CRAFT: f64 = 5.0;
+/// Множитель цены у торговца для неразблокированных предметов (в 5 раз дороже).
+pub const LOCKED_ITEM_PRICE_MULT: f64 = 5.0;
+/// Стартовый опыт кузнеца за каждый пройденный цикл после перерождения.
+pub const SMITH_XP_PER_CYCLE: f64 = 5.0;
+/// Опыт за собранный прототип паровой машины.
+pub const SMITH_XP_STEAM_PROTOTYPE: f64 = 50.0;
+/// Опыт за крафт досок (крафтятся пачками).
+pub const SMITH_XP_BOARD: f64 = 0.5;
+/// Опыт за крафт каменных блоков (камня нужно больше).
+pub const SMITH_XP_STONE_BLOCK: f64 = 0.8;
+
+/// Сколько опыта нужно, чтобы перейти с `level` на `level + 1`.
+/// Формула: 10 * уровень². (На 1 уровне нужно 10 опыта, на 2-м — 40,
+/// на 10-м — 1000; до 20-го уровня суммарно ~24 700 опыта).
+pub fn smith_xp_for_level(level: u32) -> f64 {
+    if level >= SMITH_MAX_LEVEL {
+        return f64::INFINITY;
+    }
+    // 10 * уровень^2
+    10.0 * (level as f64).powi(2)
+}
+
+/// Считает, сколько опыта игрок получит за крафт рецепта.
+pub fn smith_xp_per_craft(recipe_id: &str, base_price: u32, quantity: u32) -> f64 {
+    if recipe_id == "board" {
+        return SMITH_XP_BOARD * quantity.max(1) as f64;
+    }
+    if recipe_id == "stone_block" {
+        return SMITH_XP_STONE_BLOCK * quantity.max(1) as f64;
+    }
+
+    let bonus = (base_price as f64 / SMITH_XP_PRICE_DIVISOR)
+        .min(SMITH_XP_CAP_PER_CRAFT - SMITH_XP_PER_CRAFT_BASE);
+
+    (SMITH_XP_PER_CRAFT_BASE + bonus) * quantity.max(1) as f64
+}
+
+/// Доля ресурсов, которая возвращается при разборе предмета.
+/// 0.5 — вернётся половина ингредиентов (кроме огня).
+pub const DISMANTLE_REFUND: f64 = 0.5;
