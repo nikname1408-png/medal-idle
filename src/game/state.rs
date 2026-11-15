@@ -459,6 +459,10 @@ pub struct GameState {
     /// Момент следующего визита коллекторов (в `total_play_seconds`).
     #[serde(default)]
     pub collector_tick_at: f64,
+    /// Игровое время для квестов, доски и долга. Идёт только в реальных
+    /// тиках (1 c/с), не ускоряется тайм-варпом.
+    #[serde(default)]
+    pub quest_clock: f64,
     /// Накопленное время до следующего шага рынка.
     pub market_timer: f64,
     /// Детерминированное зерно рынка.
@@ -640,6 +644,7 @@ impl Default for GameState {
             debt: 0.0,
             debt_tick_at: 0.0,
             collector_tick_at: 0.0,
+            quest_clock: 0.0,
             market_timer: 0.0,
             market_seed: 0x9e37_79b9_7f4a_7c15,
             expedition_timer: 0.0,
@@ -1661,12 +1666,15 @@ impl GameState {
         let time = self.time;
         let last_seen = self.last_seen;
         let total_play_seconds = self.total_play_seconds;
+        let quest_clock = self.quest_clock;
         let rest_clicks = self.rest_clicks;
         let wood_seen = self.wood_seen;
         let stone_seen = self.stone_seen;
         let dev = std::mem::take(&mut self.dev);
         // Время сейчас: пригодится, чтобы выкинуть протухшие глобальные баффы.
         let now = self.total_play_seconds;
+        self.total_play_seconds = total_play_seconds;
+        self.quest_clock = quest_clock;
         let global_buffs: Vec<BuffInstance> = self
             .buffs
             .iter()
@@ -1702,6 +1710,7 @@ impl GameState {
         // Таймер фонового события в новой игре стартует заново,
         // а очередь оффлайн-событий и action-triggers исчезает вместе со всем.
         self.next_baseline_at = self.total_play_seconds + balance::EVENTS_BASELINE_FIRST_SECS;
+        self.quest_board_refresh_at = self.quest_clock + 10.0;
     }
 
     /// Открыта ли добыча ресурсов.
@@ -1849,11 +1858,20 @@ impl GameState {
             self.wardrobe
                 .retain(|id, _| items::item(id).and_then(|i| i.slot).is_some());
         }
-        // Доска объявлений появилась в v12: квесты, таймер обновления, долг.
+        // Доска объявлений появилась в v12. У старых сохранений quest_clock
+        // = 0, а таймеры квестов живут в total_play_seconds — переносим.
+        if self.quest_clock <= 0.0 {
+            self.quest_clock = self.total_play_seconds;
+        }
         if self.quest_board_refresh_at <= 0.0 {
-            // Первое обновление — через 10 секунд после загрузки, чтобы
-            // игрок сразу увидел доску.
-            self.quest_board_refresh_at = self.total_play_seconds + 10.0;
+            self.quest_board_refresh_at = self.quest_clock + 10.0;
+        }
+        // Коллекторы раньше приходили раз в 10 минут. Если в сохранении
+        // остался длинный таймер, срезаем его до нового интервала, иначе
+        // первый визит после обновления пришлось бы ждать вдвое дольше.
+        let max_collector_wait = super::quests::COLLECTOR_INTERVAL;
+        if self.collector_tick_at > self.quest_clock + max_collector_wait {
+            self.collector_tick_at = self.quest_clock + max_collector_wait;
         }
         // Слот Back появился в v11: старые сохранения держали плащи и рюкзак
         // в Body. Переносим и в активном наборе, и в сохранённых.

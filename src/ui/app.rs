@@ -1397,6 +1397,14 @@ fn BellPanel(
                                     state,
                                     message,
                                 }
+                            } else if letter.id == "debt" {
+                                div { key: "{letter.id}", class: "letter debt-letter",
+                                    span { class: "letter-title", "{i18n::t(\"letter.debt.title\")}" }
+                                    span { class: "letter-body", "{i18n::t(\"letter.debt.body\")}" }
+                                    div { class: "letter-quest-line",
+                                        "{i18n::tf(\"quest.debt_label\", &[&format_num(view.debt)])}"
+                                    }
+                                }
                             } else {
                                 button {
                                     key: "{letter.id}",
@@ -1444,7 +1452,7 @@ fn QuestLetterCard(
         .collect::<Vec<_>>()
         .join(", ");
     let reward_text = quest.reward.describe();
-    let now = view.total_play_seconds;
+    let now = view.quest_clock;
     let left_minutes = ((quest.expires_at - now).max(0.0) / 60.0).ceil() as u32;
     let is_active = quest.status == crate::game::quests::QuestStatus::Active;
     let can_complete = is_active
@@ -1463,12 +1471,8 @@ fn QuestLetterCard(
         div { class: "letter quest-letter",
             span { class: "letter-title", "{i18n::t(\"letter.quest_taken.title\")}" }
             div { class: "letter-quest-author", "{author}" }
-            div { class: "letter-quest-line",
-                "{i18n::tf(\"mail.quest.request\", &[&request_text])}"
-            }
-            div { class: "letter-quest-line",
-                "{i18n::tf(\"mail.quest.reward\", &[&reward_text])}"
-            }
+            div { class: "letter-quest-line", "{i18n::tf(\"mail.quest.request\", &[&request_text])}" }
+            div { class: "letter-quest-line", "{i18n::tf(\"mail.quest.reward\", &[&reward_text])}" }
             div { class: "letter-quest-line",
                 "{i18n::tf(\"mail.quest.left\", &[&left_minutes.to_string()])}"
             }
@@ -1621,7 +1625,11 @@ fn EventModal(state: Signal<GameState>, view: GameState) -> Element {
             );
             ("💰", title, body, Buttons::AcceptReject)
         }
-        crate::game::events::EventPayload::CollectorsArrived { gold_taken, items } => {
+        crate::game::events::EventPayload::CollectorsArrived {
+            gold_taken,
+            items,
+            remaining_debt,
+        } => {
             let title = i18n::t("event.collectors.title").to_string();
             let items_text = items
                 .iter()
@@ -1632,7 +1640,11 @@ fn EventModal(state: Signal<GameState>, view: GameState) -> Element {
                 .collect::<Vec<_>>()
                 .join(", ");
             let amount_text = format!("{}", *gold_taken as u32);
-            let body = i18n::tf("event.collectors.body", &[&amount_text, &items_text]);
+            let remaining_text = format!("{}", remaining_debt.round() as u32);
+            let body = i18n::tf(
+                "event.collectors.body",
+                &[&amount_text, &items_text, &remaining_text],
+            );
             ("🕵", title, body, Buttons::Ok)
         }
         crate::game::events::EventPayload::MerchantCollector {

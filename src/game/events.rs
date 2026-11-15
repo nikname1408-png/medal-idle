@@ -211,6 +211,7 @@ pub enum EventPayload {
     CollectorsArrived {
         gold_taken: f64,
         items: Vec<(String, u32)>,
+        remaining_debt: f64,
     },
 }
 

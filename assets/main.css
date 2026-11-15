@@ -3494,3 +3494,62 @@ button {
     font-size: 12px;
     color: var(--muted);
 }
+
+.equip-pair {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+}
+
+/* ---------- Гардероб ---------- */
+.wardrobe-panel {
+    margin-top: 6px;
+    padding: 6px;
+    border-top: 1px solid var(--line);
+}
+
+.wardrobe-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 4px;
+}
+
+.wardrobe-hint {
+    font-size: 10px;
+    line-height: 1.35;
+    color: var(--muted);
+    margin-bottom: 6px;
+}
+
+.wardrobe-empty {
+    padding: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+}
+
+.wardrobe-cell {
+    flex-direction: column;
+    aspect-ratio: auto;
+    min-height: 80px;
+    padding: 4px;
+}
+
+.wardrobe-actions {
+    display: flex;
+    gap: 2px;
+    margin-top: 2px;
+}
+
+.inv-tool.small {
+    padding: 2px 4px;
+    font-size: 9px;
+}
+
+.resource-value.debt-value {
+    color: var(--danger);
+}

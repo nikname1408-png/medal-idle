@@ -644,18 +644,22 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("quest.board_hint", "6 notices, refresh every 10–20 min. Max 3 active."),
     ("quest.board_empty", "No notices yet. Check back in a few minutes."),
     ("event.collectors.title", "Collectors"),
-    ("event.collectors.body", "Collectors came and took items worth {} gold: {}."),
+    (
+        "event.collectors.body",
+        "Collectors came for the debt and took items worth {} gold: {}. Remaining debt: {} gold. Pay it off on the notice board.",
+    ),
     ("trade.debt_no_haggle", "Debt blocks haggling. Pay it off first."),
     ("quest.debt_label", "Debt: {} gold"),
     ("quest.debt_pay_btn", "Pay debt"),
     ("quest.debt_clear", "Pay all"),
-    ("quest.debt_hint", "While debt is unpaid: −25% sell price, haggling blocked. Collectors come every 10 minutes."),
+    ("quest.debt_hint", "While debt is unpaid: −25% sell price, haggling blocked. Collectors come every 5 minutes."),
     ("quest.debt_next", "Collectors arrive in {}"),
     ("err.not_dismantlable", "This item cannot be dismantled"),
     ("err.dismantle_no_space", "No room in the bag for ingredients"),
     ("btn.dismantle", "Dismantle"),
     ("bag.dismantle_hint", "Returns 50% of ingredients (fire is not refunded)"),
     ("bag.dismantled", "Dismantled: {}"),
+    ("quest.debt_short", "Debt"),
 ];
 
 /// Item names: `cat.<id>.name`.
@@ -978,6 +982,11 @@ pub static WORLD: &[(&str, &str)] = &[
         "You already have 800 gold. Unlock the bank - then it can be built on the Forge tab.",
     ),
     ("letter.steam_era.title", "Steam Era"),
+    ("letter.debt.title", "Debt"),
+    (
+        "letter.debt.body",
+        "You have an unpaid debt. While it stands: −25% sell price, haggling blocked. Collectors come every 5 minutes and take items to cover the debt. Pay it off on the notice board at the traders.",
+    ),
     (
         "letter.steam_era.body",
         "The engine works. Steam drives the machines and all gathering goes faster. A new era begins.",

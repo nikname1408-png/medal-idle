@@ -1143,6 +1143,10 @@ pub fn recipe_min_smith_level(recipe_id: &str) -> u32 {
         "winter_gloves" | "beggars_gloves" => 7,
         "leather_hat" | "wretched_hat" | "beggars_cloak" | "jacket" => 8,
 
+        // Сет Кузнеца — с 8-го уровня, чтобы его можно было собрать
+        // к середине игры, а не на 14-м.
+        "smith_ring" | "smith_amulet" | "smith_belt" => 8,
+
         // Уровни 9-14: металл и кожа
         "war_hat" | "coif" | "norman_shield" | "chainmail_gloves" => 9,
         "silver_ingot" | "silver_ring" | "iron_bracers" | "wanderers_belt" => 10,

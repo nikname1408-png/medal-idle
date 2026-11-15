@@ -671,18 +671,27 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("quest.board_hint", "6 anuncios, actualización cada 10–20 min. Máximo 3 activos."),
     ("quest.board_empty", "Aún no hay anuncios. Vuelve en unos minutos."),
     ("event.collectors.title", "Cobradores"),
-    ("event.collectors.body", "Vinieron los cobradores y se llevaron objetos por valor de {} oro: {}."),
+    ("letter.debt.title", "Deuda"),
+    (
+        "letter.debt.body",
+        "Tienes una deuda pendiente. Mientras esté activa: −25% al precio de venta, regateo bloqueado. Los cobradores vienen cada 5 minutos y se llevan objetos para cubrir la deuda. Págala en el tablón de anuncios de los comerciantes.",
+    ),
+    (
+        "event.collectors.body",
+        "Vinieron los cobradores por la deuda y se llevaron objetos por valor de {} oro: {}. Deuda restante: {} oro. Págala en el tablón de anuncios.",
+    ),
     ("trade.debt_no_haggle", "La deuda bloquea el regateo. Págala primero."),
     ("quest.debt_label", "Deuda: {} oro"),
     ("quest.debt_pay_btn", "Pagar deuda"),
     ("quest.debt_clear", "Pagar todo"),
-    ("quest.debt_hint", "Mientras la deuda no se pague: −25% al precio de venta, regateo bloqueado. Los cobradores vienen cada 10 minutos."),
+    ("quest.debt_hint", "Mientras la deuda no se pague: −25% al precio de venta, regateo bloqueado. Los cobradores vienen cada 5 minutos."),
     ("quest.debt_next", "Los cobradores llegan en {}"),
     ("err.not_dismantlable", "Este objeto no se puede desmontar"),
     ("err.dismantle_no_space", "No hay espacio en la bolsa para los ingredientes"),
     ("btn.dismantle", "Desmontar"),
     ("bag.dismantle_hint", "Devuelve el 50% de los ingredientes (el fuego no se devuelve)"),
     ("bag.dismantled", "Desmontado: {}"),
+    ("quest.debt_short", "Deuda"),
 ];
 
 /// Nombres de objetos: `cat.<id>.name`.

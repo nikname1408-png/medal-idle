@@ -184,6 +184,8 @@ pub fn InventoryScreen(
         handled_back.set(count);
         if selected.peek().is_some() {
             selected.set(None);
+        } else if *wardrobe_open.peek() {
+            wardrobe_open.set(false);
         } else if *craft_open.peek() {
             craft_open.set(false);
         } else if selected_equip.peek().is_some() {
@@ -230,6 +232,8 @@ pub fn InventoryScreen(
                         class: if craft_now { "inv-tool active" } else { "inv-tool" },
                         onclick: move |_| {
                             craft_open.set(!craft_now);
+                            wardrobe_open.set(false);
+                            selected_equip.set(None);
                             selected.set(None);
                         },
                         "{i18n::t(\"bag.craft_open\")}"
@@ -239,6 +243,7 @@ pub fn InventoryScreen(
                         onclick: move |_| {
                             wardrobe_open.set(!wardrobe_open());
                             craft_open.set(false);
+                            selected_equip.set(None);
                             selected.set(None);
                         },
                         "{i18n::t(\"bag.wardrobe_open\")}"
@@ -280,33 +285,35 @@ pub fn InventoryScreen(
                             selected_equip.set(next);
                         },
                     }
-                    EquipmentSlot {
-                        slot: EquipSlot::Body,
-                        state,
-                        view: view.clone(),
-                        selected: selected_equip() == Some(EquipSlot::Body),
-                        on_select: move |_| {
-                            let next = if selected_equip() == Some(EquipSlot::Body) {
-                                None
-                            } else {
-                                Some(EquipSlot::Body)
-                            };
-                            selected_equip.set(next);
-                        },
-                    }
-                    EquipmentSlot {
-                        slot: EquipSlot::Back,
-                        state,
-                        view: view.clone(),
-                        selected: selected_equip() == Some(EquipSlot::Back),
-                        on_select: move |_| {
-                            let next = if selected_equip() == Some(EquipSlot::Back) {
-                                None
-                            } else {
-                                Some(EquipSlot::Back)
-                            };
-                            selected_equip.set(next);
-                        },
+                    div { class: "equip-pair",
+                        EquipmentSlot {
+                            slot: EquipSlot::Body,
+                            state,
+                            view: view.clone(),
+                            selected: selected_equip() == Some(EquipSlot::Body),
+                            on_select: move |_| {
+                                let next = if selected_equip() == Some(EquipSlot::Body) {
+                                    None
+                                } else {
+                                    Some(EquipSlot::Body)
+                                };
+                                selected_equip.set(next);
+                            },
+                        }
+                        EquipmentSlot {
+                            slot: EquipSlot::Back,
+                            state,
+                            view: view.clone(),
+                            selected: selected_equip() == Some(EquipSlot::Back),
+                            on_select: move |_| {
+                                let next = if selected_equip() == Some(EquipSlot::Back) {
+                                    None
+                                } else {
+                                    Some(EquipSlot::Back)
+                                };
+                                selected_equip.set(next);
+                            },
+                        }
                     }
                     EquipmentSlot {
                         slot: EquipSlot::Hand,
@@ -375,6 +382,9 @@ pub fn InventoryScreen(
                         }
                     }
                 }
+                if wardrobe_open() {
+                    WardrobePanel { state, view: view.clone(), message }
+                }
             }
         }
 
@@ -382,14 +392,7 @@ pub fn InventoryScreen(
             div { class: "inv-message", "{message_text}" }
         }
 
-        if wardrobe_open() {
-            WardrobeScreen {
-                state,
-                view: view.clone(),
-                message,
-                on_close: move |_| wardrobe_open.set(false),
-            }
-        } else if craft_now {
+        if craft_now {
             CraftScreen {
                 state,
                 view: view.clone(),
@@ -1116,18 +1119,12 @@ fn InventoryCard(
     }
 }
 
-/// Экран «Гардероб» — отдельное хранилище экипировки.
+/// Панель «Гардероб» — отдельное хранилище экипировки.
 #[component]
-pub fn WardrobeScreen(
-    state: Signal<GameState>,
-    view: GameState,
-    message: Signal<String>,
-    on_close: EventHandler<()>,
-) -> Element {
+fn WardrobePanel(state: Signal<GameState>, view: GameState, message: Signal<String>) -> Element {
     let mut state = state;
     let mut message = message;
 
-    // Сортируем гардероб по имени, чтобы порядок был стабильным.
     let mut items_in_wardrobe: Vec<(String, u32)> = view
         .wardrobe
         .iter()
@@ -1141,16 +1138,11 @@ pub fn WardrobeScreen(
     });
 
     rsx! {
-        section { class: "inv-craft",
-            div { class: "inv-title-row",
-                h2 { class: "inv-title", "{i18n::t(\"bag.wardrobe\")}" }
-                button { class: "inv-tool", onclick: move |_| on_close.call(()),
-                    "{i18n::t(\"btn.back\")}"
-                }
-            }
-            div { class: "inv-subtitle", "{i18n::t(\"bag.wardrobe_hint\")}" }
+        div { class: "wardrobe-panel",
+            div { class: "wardrobe-title", "{i18n::t(\"bag.wardrobe\")}" }
+            div { class: "wardrobe-hint", "{i18n::t(\"bag.wardrobe_hint\")}" }
             if items_in_wardrobe.is_empty() {
-                div { class: "inv-detail empty", "{i18n::t(\"bag.wardrobe_empty\")}" }
+                div { class: "wardrobe-empty", "{i18n::t(\"bag.wardrobe_empty\")}" }
             } else {
                 div { class: "inv-grid",
                     for (id , count) in items_in_wardrobe.iter().cloned() {

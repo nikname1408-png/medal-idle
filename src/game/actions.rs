@@ -1,4 +1,4 @@
-use super::balance::{self, Cost};
+﻿use super::balance::{self, Cost};
 use super::events;
 use super::expedition;
 use super::i18n;
@@ -360,9 +360,22 @@ pub fn enter_steam_era(state: &mut GameState) -> bool {
 
 /// Один игровой тик: энергия, лесопилка, исследование и угольная яма.
 pub fn tick(state: &mut GameState, dt_seconds: f64) {
+    tick_inner(state, dt_seconds, true);
+}
+
+/// Тик без квестов — используется тайм-варпом: он ускоряет экономику,
+/// но не доску объявлений, не активные квесты и не долг.
+pub fn tick_no_quests(state: &mut GameState, dt_seconds: f64) {
+    tick_inner(state, dt_seconds, false);
+}
+
+fn tick_inner(state: &mut GameState, dt_seconds: f64, advance_quests: bool) {
     let dt = dt_seconds.max(0.0);
     state.stats.play_seconds += dt;
     state.total_play_seconds += dt;
+    if advance_quests {
+        state.quest_clock += dt;
+    }
 
     let regen = state.energy_regen();
     if regen > 0.0 {
@@ -378,7 +391,6 @@ pub fn tick(state: &mut GameState, dt_seconds: f64) {
     state.add_resource(ResourceKind::Wood, wood * dt);
     state.add_resource(ResourceKind::Stone, stone * dt);
     state.add_resource(ResourceKind::Gold, gold * dt);
-    // Руда и уголь — инвентарные предметы, а не активные склады.
     if iron > 0.0 {
         let added = state.add_item("iron", (iron * dt).round().max(0.0) as u32);
         if added {
@@ -390,7 +402,6 @@ pub fn tick(state: &mut GameState, dt_seconds: f64) {
         state.stats.coal_produced += added as f64;
     }
 
-    // Множитель цикла применяется здесь один раз и только к «Труду».
     let income = state.income_multiplier();
 
     let sawmill = state.sawmill_wood_per_sec() * income * dt;
@@ -407,8 +418,10 @@ pub fn tick(state: &mut GameState, dt_seconds: f64) {
     tick_coal_pit(state, dt);
     tick_forge_fire(state, dt);
     trader::tick_markets(state, dt);
-    crate::game::quests::tick_quests(state);
-    crate::game::quests::tick_collectors(state);
+    if advance_quests {
+        crate::game::quests::tick_quests(state);
+        crate::game::quests::tick_collectors(state);
+    }
     check_offers(state);
 }
 
@@ -1149,8 +1162,9 @@ pub fn time_warp(state: &mut GameState) -> bool {
         return false;
     }
     state.time -= 1.0;
-    tick(state, balance::TIME_WARP_SECONDS);
-    // Ускорение времени ускоряет и события: прокручиваем их по секундам,
+    tick_no_quests(state, balance::TIME_WARP_SECONDS);
+    // Экономика ускорена, но квесты идут по своим часам. События же
+    // привязаны к `total_play_seconds`, поэтому прокручиваем их по секундам,
     // иначе таймер фоновых встреч стоял бы на месте.
     let seconds = balance::TIME_WARP_SECONDS.round().max(0.0) as u32;
     for _ in 0..seconds {

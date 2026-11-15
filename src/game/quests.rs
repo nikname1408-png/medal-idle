@@ -135,7 +135,7 @@ use super::trader::random_below;
 /// Обновляет доску: оставляет активные квесты, генерирует новые
 /// до 6 штук. Вызывается из `tick_quests`.
 pub fn refresh_board(state: &mut GameState) {
-    let now = state.total_play_seconds;
+    let now = state.quest_clock;
     state.quests.retain(|q| q.status == QuestStatus::Active);
 
     let need = 6_usize.saturating_sub(state.quests.len());
@@ -310,7 +310,7 @@ fn generate_quest(state: &GameState, seed: &mut u64, slot: usize) -> Option<Ques
     }
 
     let template_id = random_below(seed, 8) as u8;
-    let id = format!("q{slot}_{}", state.total_play_seconds as u64);
+    let id = format!("q{slot}_{}", state.quest_clock as u64);
 
     Some(Quest {
         id,
@@ -318,7 +318,7 @@ fn generate_quest(state: &GameState, seed: &mut u64, slot: usize) -> Option<Ques
         request,
         reward,
         status: QuestStatus::Available,
-        created_at: state.total_play_seconds,
+        created_at: state.quest_clock,
         expires_at: 0.0,
         declined: false,
         template_id,
@@ -327,7 +327,7 @@ fn generate_quest(state: &GameState, seed: &mut u64, slot: usize) -> Option<Ques
 
 /// Игровой тик: обновляет доску, проверяет просрочку, растит долг.
 pub fn tick_quests(state: &mut GameState) {
-    let now = state.total_play_seconds;
+    let now = state.quest_clock;
 
     // 1. Обновление доски.
     if state.quest_board_refresh_at <= 0.0 {
@@ -339,16 +339,18 @@ pub fn tick_quests(state: &mut GameState) {
     }
 
     // 2. Просрочка активных квестов.
+    let mut debt_changed = false;
     let mut expired = Vec::new();
     for q in state.quests.iter_mut() {
         if q.status == QuestStatus::Active && q.expires_at > 0.0 && now >= q.expires_at {
             q.status = QuestStatus::Failed;
             let penalty = q.reward.base_value() * 0.2;
             state.debt += penalty;
+            debt_changed = true;
+            expired.push(q.id.clone());
             if state.debt_tick_at <= 0.0 {
                 state.debt_tick_at = now + 60.0;
             }
-            expired.push(q.id.clone());
         }
     }
     for quest_id in expired {
@@ -365,6 +367,9 @@ pub fn tick_quests(state: &mut GameState) {
         }
     } else {
         state.debt_tick_at = 0.0;
+    }
+    if debt_changed {
+        refresh_debt_letter(state);
     }
 }
 
@@ -412,7 +417,7 @@ pub const DECLINE_WINDOW: f64 = 60.0;
 
 /// Взять квест с доски.
 pub fn take_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestError> {
-    let now = state.total_play_seconds;
+    let now = state.quest_clock;
 
     let active_count = state
         .quests
@@ -525,7 +530,7 @@ pub fn complete_quest(state: &mut GameState, quest_id: &str) -> Result<(), Quest
 
 /// Отказаться от квеста (только в первую минуту после взятия).
 pub fn decline_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestError> {
-    let now = state.total_play_seconds;
+    let now = state.quest_clock;
 
     let quest = state
         .quests
@@ -553,8 +558,10 @@ pub fn decline_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestE
     if state.debt_tick_at <= 0.0 {
         state.debt_tick_at = now + 60.0;
     }
-
+    // Письмо снятого заказа убираем: заказ остался на доске отклонённым,
+    // а в колокольчике висит только письмо о долге.
     state.remove_quest_letter(quest_id);
+    refresh_debt_letter(state);
 
     Ok(())
 }
@@ -563,13 +570,13 @@ pub fn decline_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestE
 const COLLECTOR_TAKE_PERCENT: f64 = 0.15;
 /// Максимум стоимости, которую могут забрать за визит (золото).
 const COLLECTOR_MAX_TAKE: f64 = 500.0;
-/// Интервал между визитами коллекторов (секунды).
-const COLLECTOR_INTERVAL: f64 = 600.0;
+/// Интервал между визитами коллекторов (секунды). 300 = 5 минут.
+pub const COLLECTOR_INTERVAL: f64 = 300.0;
 
 /// Проверяет, не пора ли коллекторам прийти. Если долг есть — забирают
 /// предметы из инвентаря на часть суммы.
 pub fn tick_collectors(state: &mut GameState) {
-    let now = state.total_play_seconds;
+    let now = state.quest_clock;
 
     if state.debt <= 0.0 {
         state.collector_tick_at = 0.0;
@@ -596,8 +603,10 @@ pub fn tick_collectors(state: &mut GameState) {
             payload: super::events::EventPayload::CollectorsArrived {
                 gold_taken: taken_value,
                 items: taken_items,
+                remaining_debt: state.debt,
             },
         });
+        refresh_debt_letter(state);
     }
 
     // Если долг всё ещё есть — следующий визит через COLLECTOR_INTERVAL.
@@ -653,7 +662,20 @@ pub fn pay_debt(state: &mut GameState, amount: f64) -> f64 {
         state.debt_tick_at = 0.0;
         state.collector_tick_at = 0.0;
     }
+    refresh_debt_letter(state);
     amount
+}
+
+/// Обновляет письмо о долге в колокольчике.
+///
+/// Пока долг > 0 — письмо висит в колокольчике (переоткрывается как новое
+/// после каждого визита коллекторов). Когда долг погашен — удаляется.
+pub fn refresh_debt_letter(state: &mut GameState) {
+    if state.debt <= 0.0 {
+        state.letters.retain(|l| l.id != "debt");
+        return;
+    }
+    state.add_letter("debt", None);
 }
 
 #[cfg(test)]
@@ -677,12 +699,37 @@ mod tests {
     fn board_refreshes_after_interval() {
         let mut state = GameState::default();
         state.quest_board_refresh_at = 10.0;
-        state.total_play_seconds = 0.0;
+        state.quest_clock = 0.0;
         tick_quests(&mut state); // не должен обновить
         assert!(state.quests.is_empty());
-        state.total_play_seconds = 11.0;
+        state.quest_clock = 11.0;
         tick_quests(&mut state); // обновит
         assert_eq!(state.quests.len(), 6);
+    }
+
+    #[test]
+    fn time_warp_does_not_accelerate_quests() {
+        // Тайм-варп ускоряет экономику, но доска объявлений живёт по
+        // отдельным часам `quest_clock`, иначе 120 секунд прокрутки
+        // съедали бы таймер взятого заказа.
+        use crate::game::actions;
+        let mut state = GameState::default();
+        refresh_board(&mut state);
+        let id = state.quests[0].id.clone();
+        take_quest(&mut state, &id).expect("заказ берётся");
+        let clock_before = state.quest_clock;
+        let expires_before = state.quests.iter().find(|q| q.id == id).unwrap().expires_at;
+
+        state.time = 5.0;
+        assert!(actions::time_warp(&mut state));
+
+        assert!(
+            (state.quest_clock - clock_before).abs() < 1e-9,
+            "тайм-варп не должен двигать часы квестов"
+        );
+        let quest = state.quests.iter().find(|q| q.id == id).unwrap();
+        assert_eq!(quest.status, QuestStatus::Active);
+        assert!((quest.expires_at - expires_before).abs() < 1e-9);
     }
 
     #[test]
@@ -692,7 +739,7 @@ mod tests {
         let mut state = GameState::default();
         tick_quests(&mut state);
         assert!(state.quests.is_empty());
-        state.total_play_seconds = 11.0;
+        state.quest_clock = 11.0;
         tick_quests(&mut state);
         assert_eq!(state.quests.len(), 6);
     }
@@ -756,7 +803,7 @@ mod tests {
         quest.status = QuestStatus::Active;
         quest.expires_at = 5.0;
         let reward_value = quest.reward.base_value();
-        state.total_play_seconds = 10.0;
+        state.quest_clock = 10.0;
         tick_quests(&mut state);
         assert!(state.debt > 0.0);
         assert!((state.debt - reward_value * 0.2).abs() < 1e-9);
@@ -767,12 +814,12 @@ mod tests {
         let mut state = GameState::default();
         state.debt = 100.0;
         state.debt_tick_at = 60.0;
-        state.total_play_seconds = 60.0;
+        state.quest_clock = 60.0;
         tick_quests(&mut state);
         assert!((state.debt - 140.0).abs() < 1e-9);
         // Через 100 минут долг упрётся в 5000.
         for _ in 0..200 {
-            state.total_play_seconds += 60.0;
+            state.quest_clock += 60.0;
             tick_quests(&mut state);
         }
         assert!((state.debt - 5000.0).abs() < 1e-9);
@@ -786,7 +833,7 @@ mod tests {
         assert_eq!(take_quest(&mut state, &id), Ok(()));
         let quest = state.quests.iter().find(|q| q.id == id).unwrap();
         assert_eq!(quest.status, QuestStatus::Active);
-        assert!((quest.expires_at - (state.total_play_seconds + QUEST_DURATION)).abs() < 1e-9);
+        assert!((quest.expires_at - (state.quest_clock + QUEST_DURATION)).abs() < 1e-9);
     }
 
     #[test]
@@ -860,7 +907,7 @@ mod tests {
             declined: false,
             template_id: 0,
         });
-        state.total_play_seconds = 30.0;
+        state.quest_clock = 30.0;
         assert_eq!(decline_quest(&mut state, "test"), Ok(()));
         assert_eq!(state.debt, DECLINE_PENALTY);
         let quest = state.quests.iter().find(|q| q.id == "test").unwrap();
@@ -882,7 +929,7 @@ mod tests {
             declined: false,
             template_id: 0,
         });
-        state.total_play_seconds = 120.0;
+        state.quest_clock = 120.0;
         assert_eq!(
             decline_quest(&mut state, "test"),
             Err(QuestError::TooLateToDecline)
@@ -903,7 +950,7 @@ mod tests {
         let mut state = GameState::default();
         state.debt = 1000.0;
         state.collector_tick_at = 100.0;
-        state.total_play_seconds = 100.0;
+        state.quest_clock = 100.0;
         state.add_item("iron_ingot", 50);
 
         tick_collectors(&mut state);
@@ -913,6 +960,82 @@ mod tests {
         assert!(state.debt < 1000.0);
         assert!(state.item_count("iron_ingot") < 50);
         assert!(state.pending_event.is_some());
+    }
+
+    #[test]
+    fn debt_letter_follows_the_debt() {
+        let mut state = GameState::default();
+        refresh_debt_letter(&mut state);
+        assert!(
+            state.letters.iter().all(|letter| letter.id != "debt"),
+            "без долга письма быть не должно"
+        );
+
+        state.debt = 100.0;
+        refresh_debt_letter(&mut state);
+        assert!(
+            state.letters.iter().any(|letter| letter.id == "debt"),
+            "долг должен повесить письмо в колокольчик"
+        );
+
+        state.debt = 0.0;
+        refresh_debt_letter(&mut state);
+        assert!(
+            state.letters.iter().all(|letter| letter.id != "debt"),
+            "погашенный долг убирает письмо"
+        );
+    }
+
+    #[test]
+    fn collectors_come_every_five_minutes() {
+        let mut state = GameState::default();
+        state.debt = 1000.0;
+        state.add_item("iron_ingot", 100);
+
+        // Первый тик только назначает визит: через 5 минут.
+        tick_collectors(&mut state);
+        assert!((state.collector_tick_at - COLLECTOR_INTERVAL).abs() < 1e-9);
+
+        let mut visits = 0;
+        let mut second_visit_at = 0.0;
+        let mut t = 0.0;
+        while t < COLLECTOR_INTERVAL * 2.0 + 1.0 {
+            t += 1.0;
+            state.quest_clock = t;
+            tick_collectors(&mut state);
+            if state.pending_event.is_some() {
+                visits += 1;
+                if visits == 2 {
+                    second_visit_at = t;
+                }
+                state.pending_event = None;
+                state.add_item("iron_ingot", 100);
+            }
+        }
+
+        assert_eq!(visits, 2, "за 10 минут коллекторы должны прийти дважды");
+        assert!(
+            (second_visit_at - COLLECTOR_INTERVAL * 2.0).abs() < 1e-9,
+            "второй визит должен быть ровно через 5 минут после первого"
+        );
+    }
+
+    #[test]
+    fn old_ten_minute_collector_timer_is_clamped() {
+        // У сохранения из версии с 10-минутным интервалом таймер мог
+        // остаться далеко в будущем. После обновления он не должен
+        // заставлять ждать дольше пяти минут.
+        let mut state = GameState::default();
+        state.quest_clock = 1000.0;
+        state.total_play_seconds = 1000.0;
+        state.debt = 500.0;
+        state.collector_tick_at = 1600.0;
+        state.migrate();
+        assert!(
+            state.collector_tick_at <= state.quest_clock + COLLECTOR_INTERVAL + 1e-9,
+            "старый таймер коллекторов не срезан: {}",
+            state.collector_tick_at
+        );
     }
 
     #[test]

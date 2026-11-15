@@ -1056,8 +1056,8 @@ fn OfferModal(
                                     button {
                                         class: "trade-btn",
                                         disabled: rounds == 0
-                                                                                                                                                                                                                                                                                                                                                                                                                                                            || (target - current_price).abs() < 0.5
-                                                                                                                                                                                                                                                                                                                                                                                                                                                            || !view.can_haggle(),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    || (target - current_price).abs() < 0.5
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    || !view.can_haggle(),
                                         onclick: move |_| {
                                             if offer_item().is_none() {
                                                 return;
@@ -1147,7 +1147,7 @@ fn OfferModal(
 fn QuestBoard(state: Signal<GameState>, view: GameState) -> Element {
     let mut state = state;
     let message = use_signal(String::new);
-    let now = view.total_play_seconds;
+    let now = view.quest_clock;
 
     // Сортируем: сначала активные, потом доступные, потом остальные.
     let mut quests_sorted: Vec<_> = view.quests.to_vec();
@@ -1197,7 +1197,9 @@ fn QuestBoard(state: Signal<GameState>, view: GameState) -> Element {
                 div { class: "quest-debt",
                     div { class: "quest-debt-line",
                         span { "{i18n::tf(\"quest.debt_label\", &[&format_money(debt)])}" }
-                        span { class: "quest-debt-gold", "{i18n::tf(\"trade.gold\", &[&format_money(gold)])}" }
+                        span { class: "quest-debt-gold",
+                            "{i18n::tf(\"trade.gold\", &[&format_money(gold)])}"
+                        }
                     }
                     div { class: "quest-debt-hint", "{i18n::t(\"quest.debt_hint\")}" }
                     if !collector_text.is_empty() {
@@ -1323,35 +1325,37 @@ fn QuestCard(
 
     rsx! {
         div { class: "{class}",
-            div { class: "quest-author", "{i18n::tf_named(\"quest.author_line\", &[(\"author\", &author)])}" }
+            div { class: "quest-author",
+                "{i18n::tf_named(\"quest.author_line\", &[(\"author\", &author)])}"
+            }
             div { class: "quest-title", "{title}" }
             div { class: "quest-body", "{body}" }
 
             if is_active {
-                div { class: "quest-timer", "{i18n::tf_named(\"quest.timer_line\", &[(\"time\", &timer_text)])}" }
+                div { class: "quest-timer",
+                    "{i18n::tf_named(\"quest.timer_line\", &[(\"time\", &timer_text)])}"
+                }
             }
 
             div { class: "quest-actions",
                 if is_available {
                     if declined {
-                        div { class: "quest-declined",
-                            "{i18n::t(\"quest.status.declined\")}"
-                        }
+                        div { class: "quest-declined", "{i18n::t(\"quest.status.declined\")}" }
                     } else {
                         button {
                             class: "trade-btn primary",
                             onclick: {
                                 let quest_id = quest_id.clone();
                                 move |_| {
-                                let result = {
-                                    let mut guard = state.write();
-                                    crate::game::quests::take_quest(&mut guard, &quest_id)
-                                };
-                                match result {
-                                    Ok(()) => message.set(String::new()),
-                                    Err(e) => message.set(e.text().to_string()),
-                                }
-                                refresh_view(state);
+                                    let result = {
+                                        let mut guard = state.write();
+                                        crate::game::quests::take_quest(&mut guard, &quest_id)
+                                    };
+                                    match result {
+                                        Ok(()) => message.set(String::new()),
+                                        Err(e) => message.set(e.text().to_string()),
+                                    }
+                                    refresh_view(state);
                                 }
                             },
                             "{i18n::t(\"quest.btn.take\")}"
@@ -1364,15 +1368,15 @@ fn QuestCard(
                         onclick: {
                             let quest_id = quest_id.clone();
                             move |_| {
-                            let result = {
-                                let mut guard = state.write();
-                                crate::game::quests::complete_quest(&mut guard, &quest_id)
-                            };
-                            match result {
-                                Ok(()) => message.set(String::new()),
-                                Err(e) => message.set(e.text().to_string()),
-                            }
-                            refresh_view(state);
+                                let result = {
+                                    let mut guard = state.write();
+                                    crate::game::quests::complete_quest(&mut guard, &quest_id)
+                                };
+                                match result {
+                                    Ok(()) => message.set(String::new()),
+                                    Err(e) => message.set(e.text().to_string()),
+                                }
+                                refresh_view(state);
                             }
                         },
                         "{i18n::t(\"quest.btn.complete\")}"
@@ -1383,15 +1387,15 @@ fn QuestCard(
                         onclick: {
                             let quest_id = quest_id.clone();
                             move |_| {
-                            let result = {
-                                let mut guard = state.write();
-                                crate::game::quests::decline_quest(&mut guard, &quest_id)
-                            };
-                            match result {
-                                Ok(()) => message.set(String::new()),
-                                Err(e) => message.set(e.text().to_string()),
-                            }
-                            refresh_view(state);
+                                let result = {
+                                    let mut guard = state.write();
+                                    crate::game::quests::decline_quest(&mut guard, &quest_id)
+                                };
+                                match result {
+                                    Ok(()) => message.set(String::new()),
+                                    Err(e) => message.set(e.text().to_string()),
+                                }
+                                refresh_view(state);
                             }
                         },
                         "{i18n::t(\"quest.btn.decline\")}"
