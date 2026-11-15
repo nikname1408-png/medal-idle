@@ -167,9 +167,13 @@ pub static ENTRIES: &[(&str, &str)] = &[
     // ---------- Добыча и отдых ----------
     ("gather.rest.info", "+{} энергии за клик. Пассивно: +{}/с."),
     ("gather.wood.info", "+{} за клик ({} энергия)."),
+    ("gather.mods.bonus", "Бонусы:"),
+    ("gather.mods.penalty", "Штрафы:"),
+    ("gather.mod.equip", "снаряжение"),
+    ("gather.mod.cycle", "перерождения (X)"),
+    ("gather.mod.energy_cost", "расход энергии"),
     ("gather.stone.info", "+{} за клик ({} энергия)."),
     ("gather.click_note", "+{} за клик ({} энергия)."),
-    ("gather.bonus_line", "Снаряжение даёт +{}% к ручной добыче."),
     ("gather.rest_label", "Отдых"),
     ("storage.worker_house_slots", "Сейчас работников: {}. Улучшение добавит ещё одного."),
     (
@@ -543,6 +547,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("quest.debt_clear", "Оплатить всё"),
     ("quest.debt_hint", "Пока долг не погашен: −25% к цене продажи, торг заблокирован. Коллекторы приходят раз в 5 минут."),
     ("quest.debt_next", "Коллекторы придут через {}"),
+    ("err.no_transit_space", "У торговца нет места на витрине для ваших вещей"),
     ("err.not_dismantlable", "Этот предмет нельзя разобрать"),
     ("err.dismantle_no_space", "Нет места в сумке для ингредиентов"),
     ("btn.dismantle", "Разобрать"),
@@ -980,7 +985,7 @@ pub static WORLD: &[(&str, &str)] = &[
     ("event.collector.title", "Коллекционер"),
     (
         "event.collector.body",
-        "Коллекционер скупает {} {} за {} золота — по {} за штуку (обычная цена — {}).",
+        "Коллекционер хочет купить {} × {} за {} золота.",
     ),
     ("event.buff.body", "{} · {} мин"),
     ("event.offline.rats.title", "Крысы на складе"),

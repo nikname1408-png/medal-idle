@@ -512,13 +512,73 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         ],
     );
 
-    let gather_wood_info = i18n::tf(
-        "gather.wood.info",
-        &[&format_num(gather_yield), &format_num(click_energy)],
+    // Собираем информацию о бонусах и штрафах
+    let mut bonus_parts = Vec::new();
+    let mut penalty_parts = Vec::new();
+
+    if snapshot.gather_bonus > 0.0 {
+        bonus_parts.push(format!(
+            "+{:.0}% ({})",
+            snapshot.gather_bonus * 100.0,
+            i18n::t("gather.mod.equip")
+        ));
+    }
+    if snapshot.income_multiplier() > 1.0 {
+        bonus_parts.push(format!(
+            "x{:.1} ({})",
+            snapshot.income_multiplier(),
+            i18n::t("gather.mod.cycle")
+        ));
+    }
+
+    let energy_mult = snapshot.energy_cost_multiplier();
+    if energy_mult > 1.0 {
+        penalty_parts.push(format!(
+            "+{:.0}% ({})",
+            (energy_mult - 1.0) * 100.0,
+            i18n::t("gather.mod.energy_cost")
+        ));
+    }
+
+    let mut mods_text = String::new();
+    if !bonus_parts.is_empty() || !penalty_parts.is_empty() {
+        mods_text.push_str("\n\n");
+        if !bonus_parts.is_empty() {
+            mods_text.push_str(&format!(
+                "{} {}",
+                i18n::t("gather.mods.bonus"),
+                bonus_parts.join(", ")
+            ));
+        }
+        if !penalty_parts.is_empty() {
+            if !bonus_parts.is_empty() {
+                mods_text.push('\n');
+            }
+            mods_text.push_str(&format!(
+                "{} {}",
+                i18n::t("gather.mods.penalty"),
+                penalty_parts.join(", ")
+            ));
+        }
+    }
+
+    // Формируем итоговые строки с учетом бонусов
+    let gather_wood_info = format!(
+        "{}{}",
+        i18n::tf(
+            "gather.wood.info",
+            &[&format_num(gather_yield), &format_num(click_energy)]
+        ),
+        mods_text
     );
-    let gather_stone_info = i18n::tf(
-        "gather.stone.info",
-        &[&format_num(gather_yield), &format_num(click_energy)],
+
+    let gather_stone_info = format!(
+        "{}{}",
+        i18n::tf(
+            "gather.stone.info",
+            &[&format_num(gather_yield), &format_num(click_energy)]
+        ),
+        mods_text
     );
     let feed_label = i18n::tf("field.feed", &[&snapshot.fire_per_coal().to_string()]);
     let fire_info = i18n::tf(
@@ -560,11 +620,6 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
         if snapshot.gathering_unlocked() {
             CollapsibleSection { title: i18n::t("sec.gather").to_string(),
-                if snapshot.gather_bonus > 0.0 {
-                    div { class: "gather-bonus",
-                        "{i18n::tf(\"gather.bonus_line\", &[&snapshot.gather_bonus.to_string()])}"
-                    }
-                }
                 ActionRow {
                     label: i18n::t("res.wood").to_string(),
                     info: gather_wood_info,
@@ -1656,21 +1711,9 @@ fn EventModal(state: Signal<GameState>, view: GameState) -> Element {
         } => {
             let name = super::inventory::ingredient_name(item_id);
             let title = i18n::t("event.collector.title").to_string();
-            // Показываем цену за штуку и обычную цену: иначе непонятно,
-            // выгодно ли предложение.
-            let base = crate::game::items::item(item_id)
-                .map(|item| item.base_price)
-                .unwrap_or(0);
-            let unit = (*gold as f64 / *quantity as f64).round() as u32;
             let body = i18n::tf(
                 "event.collector.body",
-                &[
-                    &quantity.to_string(),
-                    name,
-                    &gold.to_string(),
-                    &unit.to_string(),
-                    &base.to_string(),
-                ],
+                &[&quantity.to_string(), name, &gold.to_string()],
             );
             ("💎", title, body, Buttons::AcceptReject)
         }

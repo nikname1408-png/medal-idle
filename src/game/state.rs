@@ -1965,7 +1965,15 @@ impl GameState {
             return;
         }
         for (index, market) in self.traders.iter_mut().enumerate() {
-            if market.goods.len() != trader::TRADERS[index].goods.len() {
+            // Витрина — это подмножество ассортимента, а не весь список,
+            // поэтому сверяем не длины, а сами товары. Резервные карточки
+            // (вещи игрока) законны и переживают загрузку.
+            let roster = trader::TRADERS[index].goods;
+            let has_foreign = market
+                .goods
+                .iter()
+                .any(|good| !good.is_reserve() && !roster.contains(&good.item_id.as_str()));
+            if has_foreign {
                 *market = trader::default_market(index);
             }
         }
@@ -2149,6 +2157,30 @@ mod tests {
         assert_eq!(state.gold_cap(), 1_000.0);
         state.bank_level = 2;
         assert_eq!(state.gold_cap(), 3_000.0);
+    }
+
+    #[test]
+    fn migration_keeps_player_reserve_cards() {
+        // Витрина — подмножество ассортимента, поэтому миграция не должна
+        // сбрасывать её только из-за несовпадения длины. Резервные карточки
+        // (вещи игрока) переживают загрузку.
+        let mut state = GameState::default();
+        let mut reserve = trader::GoodState::default();
+        reserve.item_id = "archers_jacket".to_string();
+        reserve.stock = 1;
+        reserve.buy_limit = 0;
+        reserve.avg_cost = Some(100.0);
+        state.traders[0].goods.push(reserve);
+
+        state.migrate();
+
+        assert!(
+            state.traders[0]
+                .goods
+                .iter()
+                .any(|good| good.item_id == "archers_jacket" && good.is_reserve()),
+            "резервная карточка пропала при миграции"
+        );
     }
 
     #[test]

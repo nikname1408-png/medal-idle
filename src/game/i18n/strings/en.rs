@@ -119,6 +119,11 @@ pub static ENTRIES: &[(&str, &str)] = &[
     // ---------- Gathering ----------
     ("gather.rest.info", "+{} energy per tap. Passive: +{}/s."),
     ("gather.wood.info", "+{} per tap ({} energy)."),
+    ("gather.mods.bonus", "Bonuses:"),
+    ("gather.mods.penalty", "Penalties:"),
+    ("gather.mod.equip", "equipment"),
+    ("gather.mod.cycle", "rebirths (X)"),
+    ("gather.mod.energy_cost", "energy cost"),
     ("gather.stone.info", "+{} per tap ({} energy)."),
     (
         "gather.rest_hint",
@@ -361,7 +366,6 @@ pub static ENTRIES: &[(&str, &str)] = &[
         "Develop the house: more energy per rest and per second.",
     ),
     ("gather.click_note", "+{} per click ({} energy)."),
-    ("gather.bonus_line", "Gear gives +{}% to manual gathering."),
     ("gather.rest_label", "Rest"),
     (
         "storage.worker_house_slots",
@@ -654,6 +658,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("quest.debt_clear", "Pay all"),
     ("quest.debt_hint", "While debt is unpaid: −25% sell price, haggling blocked. Collectors come every 5 minutes."),
     ("quest.debt_next", "Collectors arrive in {}"),
+    ("err.no_transit_space", "The trader has no counter space for your goods"),
     ("err.not_dismantlable", "This item cannot be dismantled"),
     ("err.dismantle_no_space", "No room in the bag for ingredients"),
     ("btn.dismantle", "Dismantle"),
@@ -1003,7 +1008,7 @@ pub static WORLD: &[(&str, &str)] = &[
     ("event.collector.title", "Collector"),
     (
         "event.collector.body",
-        "The collector buys {} {} for {} gold — {} per unit (usual price is {}).",
+        "The collector wants to buy {} × {} for {} gold.",
     ),
     ("event.buff.body", "{} · {} min"),
     ("event.offline.rats.title", "Rats in the warehouse"),

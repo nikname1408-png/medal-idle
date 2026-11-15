@@ -492,28 +492,35 @@ fn spawn_bulk(state: &mut GameState) -> Option<PendingEvent> {
 }
 
 fn spawn_collector(state: &mut GameState) -> Option<PendingEvent> {
-    // Коллекционер скупает ресурсы со склада (дерево, камень, уголь),
-    // а не предметы из рюкзака: раньше он предлагал копейки за дорогую вещь.
-    let mut best: Option<(&'static str, u32, u32)> = None; // (id, stock, base_price)
-    for resource_id in ["wood", "stone", "coal"] {
-        let stock = state.active_amount(resource_id);
-        if stock == 0 {
+    // Коллекционер покупает самый дорогой предмет рюкзака (по цене за
+    // штуку). Дерево, камень и уголь со склада его не интересуют, карты и
+    // чертежи он не трогает.
+    let mut best: Option<(String, u32, u32)> = None; // (id, stock, base_price)
+    for (item_id, qty) in &state.inventory {
+        if *qty == 0 {
             continue;
         }
-        let Some(item) = items::item(resource_id) else {
+        if item_id.starts_with("map_")
+            || item_id == "steam_blueprint"
+            || item_id == "steam_prototype"
+        {
+            continue;
+        }
+        let Some(item) = items::item(item_id) else {
             continue;
         };
-        // Берём ресурс, за партию которого выйдет больше золота.
-        let better = best
-            .map(|(_, best_stock, best_price)| {
-                stock as u64 * item.base_price as u64 > best_stock as u64 * best_price as u64
-            })
-            .unwrap_or(true);
-        if better {
-            best = Some((resource_id, stock, item.base_price));
+        if item.base_price == 0 {
+            continue;
+        }
+        if best
+            .as_ref()
+            .map(|(_, _, best_price)| item.base_price > *best_price)
+            .unwrap_or(true)
+        {
+            best = Some((item_id.clone(), *qty, item.base_price));
         }
     }
-    let (resource_id, stock, base_price) = best?;
+    let (item_id, stock, base_price) = best?;
 
     let mut seed = state.market_seed;
     let mult = roll_range(&mut seed, COLLECTOR_MIN_MULT, COLLECTOR_MAX_MULT);
@@ -535,7 +542,7 @@ fn spawn_collector(state: &mut GameState) -> Option<PendingEvent> {
 
     Some(PendingEvent {
         payload: EventPayload::MerchantCollector {
-            item_id: resource_id.to_string(),
+            item_id,
             quantity: buy_qty,
             gold: total,
         },
@@ -884,9 +891,11 @@ mod tests {
     }
 
     #[test]
-    fn collector_buys_active_resources_not_bag_items() {
+    fn collector_buys_the_most_expensive_bag_item() {
         let mut state = GameState::default();
+        state.add_item("cloth", 500);
         state.add_item("sickle", 2);
+        // Ресурсы со склада коллекционера не интересуют.
         state.add_active("wood", 500);
         state.add_active("stone", 100);
 
@@ -897,20 +906,19 @@ mod tests {
                 quantity,
                 gold,
             } => {
-                // За партию дерева выйдет больше золота, чем за камень.
-                assert_eq!(item_id, "wood");
-                assert!(quantity >= COLLECTOR_MIN_UNITS, "партия слишком мелкая");
-                assert!(quantity <= 500);
-                // Коллекционер платит выше базовой цены (2 за дерево).
-                assert!(gold >= (quantity as f64 * 2.0 * 1.15).round() as u32);
+                // Серп (96 за штуку) дороже ткани (11), несмотря на запас.
+                assert_eq!(item_id, "sickle");
+                assert!(quantity <= 2);
+                assert!(quantity >= 1);
+                assert!(gold >= (quantity as f64 * 96.0 * 1.15).round() as u32);
             }
             _ => panic!(),
         }
 
-        // Предметы из рюкзака коллекционера не интересуют.
-        let mut bag_only = GameState::default();
-        bag_only.add_item("sickle", 2);
-        assert!(spawn_collector(&mut bag_only).is_none());
+        // Без предметов в рюкзаке коллекционеру нечего предложить.
+        let mut store_only = GameState::default();
+        store_only.add_active("wood", 500);
+        assert!(spawn_collector(&mut store_only).is_none());
     }
 
     #[test]

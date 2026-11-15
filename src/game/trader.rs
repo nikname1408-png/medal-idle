@@ -561,6 +561,7 @@ pub enum TradeError {
     NoSpace,
     ItemNotSellable,
     NothingToOffer,
+    NoTransitSpace,
 }
 
 impl TradeError {
@@ -577,6 +578,7 @@ impl TradeError {
             Self::NoSpace => i18n::t("err.bag_full"),
             Self::ItemNotSellable => i18n::t("err.item_not_sellable"),
             Self::NothingToOffer => i18n::t("err.nothing_to_offer"),
+            Self::NoTransitSpace => i18n::t("err.no_transit_space"),
         }
     }
 }
@@ -1214,6 +1216,20 @@ pub fn execute_offer(
     let trader = TRADERS.get(trader_idx).ok_or(TradeError::UnknownTrader)?;
     let is_native = trader.goods.contains(&item_id);
 
+    // Транзитных карточек (вещей игрока) на витрине не больше двух. Проверяем
+    // это до списания предмета: иначе отказ съедал бы товар, а золото уже
+    // было бы начислено. Уже выставленный товар просто обновляем.
+    let market_goods = &state
+        .traders
+        .get(trader_idx)
+        .ok_or(TradeError::UnknownTrader)?
+        .goods;
+    let already_listed = market_goods.iter().any(|good| good.item_id == item_id);
+    let reserve_count = market_goods.iter().filter(|good| good.is_reserve()).count();
+    if !already_listed && reserve_count >= 2 {
+        return Err(TradeError::NoTransitSpace);
+    }
+
     let cap = state.gold_cap();
     if state.gold + final_price > cap + 1e-9 {
         return Err(TradeError::GoldCapReached);
@@ -1236,15 +1252,13 @@ pub fn execute_offer(
         .ok_or(TradeError::UnknownTrader)?;
 
     if let Some(good) = market.good_mut(item_id) {
-        // Товар уже есть на витрине.
+        // Товар уже есть на витрине (родной или транзитный) — обновляем его.
         let old_stock = good.stock as f64;
         let old_avg = good.avg_cost.unwrap_or(good_price(item, good));
         let new_avg =
             (old_avg * old_stock + unit_cost * quantity as f64) / (old_stock + quantity as f64);
         good.stock = good.stock.saturating_add(quantity);
         good.avg_cost = Some(new_avg);
-        // Для профильного — buy_limit не трогаем (он тратится только через
-        // обычную вкладку «Продать»). Для непрофильного — 0.
         if !is_native {
             good.buy_limit = 0;
         }
@@ -1252,35 +1266,20 @@ pub fn execute_offer(
         good.supply = good.supply.saturating_add(impact).min(100);
         good.demand = good.demand.saturating_sub(impact).max(5);
     } else {
-        // Новая позиция — резервная карточка: торговец держит проданную
-        // вещь на витрине, пока не перепродаст. Больше двух таких карточек
-        // не держим, иначе витрина разрастается с каждой сделкой.
+        // Новая позиция — резервная карточка. Место на витрине уже проверено
+        // выше; карточка висит, пока её не купят.
         let new_good = GoodState {
             item_id: item_id.to_string(),
             stock: quantity,
             demand: 70,
             supply: 30,
             trend: 0,
+            // buy_limit = 0: торговец больше не скупает этот товар, пока
+            // карточка не уйдёт с витрины.
             buy_limit: 0,
             avg_cost: Some(unit_cost),
         };
         market.goods.push(new_good);
-    }
-
-    // Обрезаем резервные карточки до двух.
-    // Пересчитываем индексы после каждого удаления, иначе они сдвигаются.
-    loop {
-        let transient_positions: Vec<usize> = market
-            .goods
-            .iter()
-            .enumerate()
-            .filter(|(_, g)| g.is_reserve())
-            .map(|(i, _)| i)
-            .collect();
-        if transient_positions.len() <= 2 {
-            break;
-        }
-        market.goods.remove(transient_positions[0]);
     }
 
     // Запоминаем лучшее предложение.
@@ -2059,24 +2058,44 @@ mod tests {
 
     #[test]
     fn sold_goods_stay_as_two_reserve_cards() {
-        // Марта торгует крафтовыми товарами: проданные вещи раньше
-        // добавлялись в ассортимент навсегда, и витрина разрасталась.
+        // Марта держит на витрине не больше двух вещей игрока. Третий товар
+        // она не берёт — иначе витрина разрасталась бы с каждой сделкой.
         let mut state = GameState::default();
         let before = state.traders[0].goods.len();
-        for item_id in ["archers_jacket", "leather_coat", "winter_gloves"] {
+        let items = ["archers_jacket", "leather_coat", "winter_gloves"];
+        for item_id in items {
             state.add_item(item_id, 1);
-            let quote = evaluate_offer(&mut state, 0, item_id, 1).expect("оценка");
-            execute_offer(&mut state, 0, item_id, 1, quote.total).expect("продажа");
         }
+
+        for (sold, item_id) in items.iter().enumerate() {
+            // Убираем родную карточку, чтобы продажа создавала новую.
+            state.traders[0]
+                .goods
+                .retain(|good| good.item_id != *item_id);
+            let quote = evaluate_offer(&mut state, 0, item_id, 1).expect("оценка");
+            let result = execute_offer(&mut state, 0, item_id, 1, quote.total);
+            if sold < 2 {
+                assert_eq!(result, Ok(()), "первые две вещи должны продаться");
+            } else {
+                assert_eq!(result, Err(TradeError::NoTransitSpace));
+                assert_eq!(
+                    state.item_count(item_id),
+                    1,
+                    "отказ не должен съедать товар"
+                );
+            }
+        }
+
         let market = &state.traders[0];
         assert!(
             market.goods.len() <= before + 2,
             "витрина выросла до {} позиций",
             market.goods.len()
         );
-        assert!(
-            market.goods.iter().filter(|good| good.is_reserve()).count() <= 2,
-            "резервных карточек больше двух"
+        assert_eq!(
+            market.goods.iter().filter(|good| good.is_reserve()).count(),
+            2,
+            "резервных карточек должно быть ровно две"
         );
     }
 
@@ -2136,10 +2155,23 @@ mod tests {
     fn transient_goods_cap_at_two() {
         let mut state = GameState::default();
         // У Рудокопа нет курток, перчаток, шапок в профиле — все будут транзитными.
-        for item_id in ["jacket", "leather_gloves", "wretched_hat"] {
+        let items = ["jacket", "leather_gloves", "wretched_hat"];
+        for item_id in items {
             state.add_item(item_id, 5);
+        }
+        for (sold, item_id) in items.iter().enumerate() {
             let quote = evaluate_offer(&mut state, 3, item_id, 5).expect("оценка");
-            assert!(execute_offer(&mut state, 3, item_id, 5, quote.total).is_ok());
+            let result = execute_offer(&mut state, 3, item_id, 5, quote.total);
+            if sold < 2 {
+                assert!(result.is_ok(), "первые две вещи должны продаться");
+            } else {
+                assert_eq!(result, Err(TradeError::NoTransitSpace));
+                assert_eq!(
+                    state.item_count(item_id),
+                    5,
+                    "отказ не должен съедать товар"
+                );
+            }
         }
         let market = &state.traders[3];
         let transient: Vec<_> = market
@@ -2147,6 +2179,10 @@ mod tests {
             .iter()
             .filter(|g| g.buy_limit == 0 && g.avg_cost.is_some())
             .collect();
-        assert!(transient.len() <= 2, "транзитных позиций больше двух");
+        assert_eq!(
+            transient.len(),
+            2,
+            "транзитных позиций должно быть ровно две"
+        );
     }
 }
