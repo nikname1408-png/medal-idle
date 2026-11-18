@@ -736,6 +736,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("shop.per_unit", "{} per item"),
     ("demand.shelf", "Demand: {}%"),
     ("demand.dead", "Demand exhausted"),
+    ("demand.pair", "Demand {} · supply {}"),
     ("shop.remove", "×"),
     ("shop.closed", "The shop is closed."),
     ("shop.reopen", "Reopen for {}"),
@@ -1464,6 +1465,10 @@ pub static WORLD: &[(&str, &str)] = &[
     ("hire.total_salary", "Total wages: {}"),
     ("hire.next_pay", "Next payment in {}"),
     ("hire.left", "The hired hands left: no coin to pay them."),
+    (
+        "hire.charter_hint",
+        "Hired hands will appear in Work once you buy the charter in the Town Hall.",
+    ),
     ("charter.name", "Charter of hiring"),
     (
         "charter.desc",

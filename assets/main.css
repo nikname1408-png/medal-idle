@@ -3781,6 +3781,46 @@ button {
     color: var(--muted);
 }
 
+/* Статус рынка: ДЕФИЦИТ / БАЛАНС / ИЗБЫТОК и стрелка направления. */
+.market-status {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+}
+
+.market-short {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.market-short.deficit,
+.market-status.deficit {
+    color: var(--energy);
+}
+
+.market-short.surplus,
+.market-status.surplus {
+    color: var(--danger, #d05a5a);
+}
+
+.market-short.balance,
+.market-status.balance {
+    color: var(--muted);
+}
+
+.market-arrow.up {
+    color: var(--energy);
+}
+
+.market-arrow.down {
+    color: var(--danger, #d05a5a);
+}
+
+.market-arrow.flat {
+    color: var(--muted);
+}
+
 /* Кнопка рынка над картой города. */
 .city-topbar {
     display: flex;

@@ -1800,8 +1800,6 @@ impl GameState {
         let rest_clicks = self.rest_clicks;
         let wood_seen = self.wood_seen;
         let stone_seen = self.stone_seen;
-        // Город — долгосрочная постройка: перерождение его не сносит.
-        let city = self.city.clone();
         let dev = std::mem::take(&mut self.dev);
         let now = self.event_clock;
         let global_buffs: Vec<BuffInstance> = self
@@ -1836,7 +1834,9 @@ impl GameState {
         self.rest_clicks = rest_clicks;
         self.wood_seen = wood_seen;
         self.stone_seen = stone_seen;
-        self.city = city;
+        // Город сбрасывается целиком: лавка, наёмные, кузнецы, приказчик,
+        // путешественники и все покупки в городе делаются заново, и вкладка
+        // города заново появляется после сюжетной цепочки Мартина.
         self.dev = dev;
         self.buffs = global_buffs;
 
@@ -1849,6 +1849,8 @@ impl GameState {
         // 6. Таймеры событий/квестов.
         self.next_baseline_at = self.event_clock + balance::EVENTS_BASELINE_FIRST_SECS;
         self.quest_board_refresh_at = self.quest_clock + 10.0;
+        // 7. Сюжет города начинается заново: квест Мартина на доске.
+        city::ensure_intro_quest(self);
     }
 
     /// Открыта ли добыча ресурсов.
@@ -2103,6 +2105,8 @@ impl GameState {
         city::migrate_smiths(self);
         // Старые сохранения могли держать на полках распроданные позиции.
         city::drop_empty_slots(self);
+        // Спрос города переехал на торговую модель (спрос/предложение/тренд).
+        city::migrate_demand(self);
         self.recalculate_stats();
 
         // Рекорды появились в новой версии. У старых сохранений их нет —

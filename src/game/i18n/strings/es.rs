@@ -768,6 +768,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("shop.per_unit", "{} por unidad"),
     ("demand.shelf", "Demanda: {}%"),
     ("demand.dead", "Demanda agotada"),
+    ("demand.pair", "Demanda {} · oferta {}"),
     ("shop.remove", "×"),
     ("shop.closed", "La tienda está cerrada."),
     ("shop.reopen", "Reabrir por {}"),
@@ -1542,6 +1543,10 @@ pub static WORLD: &[(&str, &str)] = &[
     ("hire.total_salary", "Salarios totales: {}"),
     ("hire.next_pay", "Próximo pago en {}"),
     ("hire.left", "Los contratados se fueron: no hay con qué pagarles."),
+    (
+        "hire.charter_hint",
+        "Los contratados aparecerán en Trabajo cuando compres el fuero en el Ayuntamiento.",
+    ),
     ("charter.name", "Carta de contratación"),
     (
         "charter.desc",

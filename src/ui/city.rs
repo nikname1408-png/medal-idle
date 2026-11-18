@@ -597,6 +597,8 @@ struct SlotView {
     demand_percent: u32,
     demand_text: String,
     demand_dead: bool,
+    status: String,
+    status_class: &'static str,
 }
 
 /// Товар из сумки для сетки «что выставить».
@@ -616,6 +618,8 @@ struct MarketRow {
     demand: String,
     demand_percent: u32,
     dead: bool,
+    status: String,
+    status_class: &'static str,
     trend: &'static str,
     trend_class: &'static str,
 }
@@ -624,16 +628,12 @@ struct MarketRow {
 #[component]
 fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
     let _ = state;
-    // Горячий спрос — наверху, остальное — по убыванию.
+    // Дефицит — наверху: там товара ждут, туда и стоит выставлять.
     let mut rows: Vec<MarketRow> = items::catalog()
         .iter()
         .map(|item| {
             let entry = city::demand_of(&view, &item.id);
-            let ratio = if entry.capacity > 0.0 {
-                (entry.available / entry.capacity).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
+            let ratio = (entry.available / entry.capacity.max(1.0)).clamp(0.0, 1.0);
             let percent = (ratio * 100.0).round() as u32;
             let trend = city::market_trend(&view, &item.id);
             let (trend_label, trend_class) = if trend > 0 {
@@ -642,6 +642,12 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                 (i18n::t("market.down"), "down")
             } else {
                 (i18n::t("market.flat"), "flat")
+            };
+            let market_status = city::demand_status(&view, &item.id);
+            let status_class = match market_status {
+                super::super::game::trader::MarketStatus::Deficit => "deficit",
+                super::super::game::trader::MarketStatus::Surplus => "surplus",
+                super::super::game::trader::MarketStatus::Balance => "balance",
             };
             MarketRow {
                 id: item.id.clone(),
@@ -654,6 +660,8 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                 ),
                 demand_percent: percent,
                 dead: percent == 0,
+                status: market_status.short().to_string(),
+                status_class,
                 trend: trend_label,
                 trend_class,
             }
@@ -681,7 +689,10 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                     span { class: "market-name", "{row.name}" }
                     span { class: "market-price", "{row.price}" }
                     span { class: "market-demand", "{row.demand}" }
-                    span { class: "market-trend {row.trend_class}", "{row.trend}" }
+                    span { class: "market-trend market-status {row.status_class}",
+                        span { class: "market-short", "{row.status}" }
+                        span { class: "market-arrow {row.trend_class}", "{row.trend}" }
+                    }
                 }
             }
         }
@@ -731,12 +742,22 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
         .iter()
         .enumerate()
         .map(|(index, slot)| {
+            let entry = city::demand_of(&view, &slot.item_id);
             let ratio = city::demand_ratio(&view, &slot.item_id);
             let percent = (ratio * 100.0).round() as u32;
             let demand_text = if percent == 0 {
                 i18n::t("demand.dead").to_string()
             } else {
-                i18n::tf("demand.shelf", &[&percent.to_string()])
+                i18n::tf(
+                    "demand.pair",
+                    &[&entry.demand.to_string(), &entry.supply.to_string()],
+                )
+            };
+            let status = city::demand_status(&view, &slot.item_id);
+            let status_class = match status {
+                super::super::game::trader::MarketStatus::Deficit => "deficit",
+                super::super::game::trader::MarketStatus::Surplus => "surplus",
+                super::super::game::trader::MarketStatus::Balance => "balance",
             };
             SlotView {
                 index,
@@ -750,6 +771,8 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                 demand_percent: percent,
                 demand_text,
                 demand_dead: percent == 0,
+                status: status.short().to_string(),
+                status_class,
             }
         })
         .collect();
@@ -1413,6 +1436,7 @@ fn ShopSlotCard(state: Signal<GameState>, slot: SlotView) -> Element {
                     class: if slot.demand_dead { "demand-label dead" } else { "demand-label" },
                     "{slot.demand_text}"
                 }
+                span { class: "market-short {slot.status_class}", "{slot.status}" }
                 div { class: "demand-bar",
                     div {
                         class: if slot.demand_dead { "demand-fill dead" } else { "demand-fill" },
@@ -1898,8 +1922,8 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
             if history.is_empty() {
                 p { class: "city-hint", "{i18n::t(\"town_hall.nothing\")}" }
             } else {
-// Ключ — номер строки: одинаковые продажи дают одинаковый ключ.
-                // а повторяющиеся ключи ломают перерисовку списка.
+                // Ключ — номер строки: одинаковые продажи дают одинаковый
+                // ключ, а повторяющиеся ключи ломают перерисовку списка.
                 for (index , line) in history.into_iter().enumerate() {
                     div { class: "city-row muted", key: "{index}", span { "{line}" } }
                 }
@@ -2059,7 +2083,7 @@ fn TavernScreen(state: Signal<GameState>, view: GameState) -> Element {
                 onclick: move |_| tab.set(0),
                 "{i18n::t(\"tavern.tab_rumors\")}"
             }
-            if !house_built {
+            if !view.city.travelers.is_empty() && !house_built {
                 button {
                     class: if tab() == 1 { "city-tab active" } else { "city-btn small" },
                     onclick: move |_| tab.set(1),
@@ -2206,7 +2230,8 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
         ],
     );
     let away_text = i18n::t("traveler.all_away").to_string();
-    let away_lines: Vec<String> = if travelers.iter().all(|traveler| !traveler.ready) {
+    // Пустой список — «все ушли» только когда они вообще завелись.
+    let away_lines: Vec<String> = if !travelers.is_empty() && travelers.iter().all(|t| !t.ready) {
         view.city
             .travelers
             .iter()

@@ -459,6 +459,57 @@
   - Тесты: `every_key_exists_in_all_languages`, `keys_are_unique`,
     `placeholders_match_between_languages` (согласованность трёх словарей),
     `english_keeps_a_plain_hyphen`.
+- [x] v0.24 «Живой рынок и город с нуля» — единая экономика торговцев и
+      города, сброс города при перерождении.
+  - **Общее ядро.** `src/game/market.rs`: `TREND_LIMIT = 20`,
+    `drift_trend` (блуждающий тренд с памятью и тягой к нулю),
+    `approach`, `noise`, `status`, `ratio` (порог ±16 — тот же
+    `MARKET_TREND_THRESHOLD`). Ни логики города, ни Dioxus внутри.
+  - **Единая модель.** У торговцев и у города один механизм: пара
+    «спрос / предложение» 5..95, тренд дня, возврат к равновесию по 1
+    пункту за шаг и шум ±2. Разный только масштаб
+    (`capacity_per_trend`, `DEMAND_CITY_SCALE`), поэтому дефицит,
+    баланс и избыток значат одно и то же в обоих местах.
+  - **Город.** `DemandEntry { available, capacity, demand, supply,
+    trend, step }`; `advance_demand` шагает раз в `DEMAND_STEP_SECS = 20`
+    (догоняет пропущенное время), `demand_capacity` — цеховая ёмкость
+    от цены товара (`DEMAND_UNIT_BUDGET / цена`), `capacity_of`
+    поднимает/опускает её по разнице пары. Товар живёт сам: тренд
+    уводит полку в дефицит или избыток часами, без единой продажи.
+  - **Покупатель.** `buyer_decision` (`Skip` / `Leave` / `Buy { vip }`):
+    обычный обходит насыщенный товар и всё дороже
+    `SHOP_VIP_ONLY_PRICE`, VIP берёт насыщенное с шансом ухода
+    `DEMAND_LEAVE_MAX = 0.6`; `SHOP_BUYER_MAX` 1 → 3, `SHOP_VIP_MAX`
+    2 → 5 (город берёт партиями `SHOP_VISIT_MULT`). Продажа
+    `consume_demand` пьёт налитое и сдвигает пару: 16 штук — пункт
+    спроса (`DEMAND_SALE_DRAIN`).
+  - **Наценка.** Плавная квадратичная кривая вместо ступенек:
+    `SHOP_PRICE_LEAVE_FROM = 1.3` (0 %) → `SHOP_PRICE_LEAVE_FULL = 2.0`
+    (100 %), ярмарка снимает штраф.
+  - **Миграция.** `migrate_demand` переводит старые записи
+    (`available`/`capacity`) на пару 50/50, `demand_of` чинит запись
+    без ёмкости. `SAVE_VERSION` 15 → 16.
+  - **Сброс города.** `reset_for_cycle` больше не сохраняет
+    `state.city`: лавка, наёмные, кузнецы, приказчик, дом странников
+    и путешественники покупаются заново каждый цикл, а сюжет
+    начинается с Мартина (`city::ensure_intro_quest` в конце сброса).
+    Вкладки «Наёмные»/«Кузнец» в «Труде» появляются только после
+    покупок в городе (грамота / постройка кузницы); путешественники
+    не поднимаются без `city.unlocked`.
+  - **UI.** `MarketRow`/`SlotView` со статусом и классом, пара
+    `demand.pair` вместо одной полоски, CSS `.market-short`,
+    `.market-status`, `.market-arrow`; ключ `hire.charter_hint`.
+  - Тесты: `town_market_lives_on_its_own` (город сам меняет статусы),
+    `town_status_thresholds_match_the_traders`,
+    `city_market_resets_with_rebirth`,
+    `old_demand_saves_migrate_to_the_pair_model`,
+    `demand_capacity_follows_the_price`,
+    `sales_drink_demand_and_dead_shelf_sends_buyers_away`,
+    `vip_takes_goods_nobody_else_wants`,
+    `trend_walks_smoothly_and_visits_both_sides`. 308 тестов.
+  - **Следующий шаг:** цены лута путешественников по текущему рынку
+    города, а не по базовой цене; затем строительство храма.
+
 - [x] v0.23 «Путешественники и Дом странников» — постоянные персонажи,
       квесты, расчёт за походы и снаряжение.
   - **Персонажи.** `CityState.travelers: Vec<Traveler>` (`serde(default)`),
@@ -505,6 +556,7 @@
     `gear_bonus_raises_loot_and_payout`. 297 тестов.
   - **Следующий шаг:** свести путешественников с рынком — цены лута
     для доплаты по текущему рынку города, а не по базовой цене.
+    *(Сброс города при перерождении — см. v0.24.)*
 
 - [x] v0.22: «Кузнецы в „Труде"». Дом кузнеца убран из гильдии, в «Труде»
       появилась подвкладка «Кузнец» (`src/ui/smith.rs`, вкладки `.work-tabs`

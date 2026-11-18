@@ -279,17 +279,26 @@ impl Default for Traveler {
 }
 
 /// Спрос города на один товар.
+///
+/// Устроен как товар у торговца: спрос и предложение (0..100), тренд
+/// настроения и шаг симуляции. Дефицит — спрос обгоняет предложение,
+/// избыток — наоборот; цифры сами гуляют, поэтому статус живёт часами.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DemandEntry {
-    /// Сколько спроса налито сейчас (в штуках).
+    /// Сколько спроса налито сейчас (в штуках): покупатели возьмут не больше.
     pub available: f64,
-    /// Текущая ёмкость спроса; плавно ползёт к `target`.
+    /// Полная ёмкость спроса при текущем предложении: сколько штук город
+    /// готов взять, пока не насытится.
     pub capacity: f64,
-    /// Целевая ёмкость после ближайшего дрейфа.
-    pub target: f64,
-    /// Момент следующего дрейфа цели.
-    pub next_drift_at: f64,
+    /// Спрос 0..100: желание города.
+    pub demand: u8,
+    /// Предложение 0..100: сколько похожего товара уже навезли.
+    pub supply: u8,
+    /// Настроение с памятью, `-TREND_LIMIT..=TREND_LIMIT`.
+    pub trend: i32,
+    /// Номер шага симуляции, который уже учтён в этой записи.
+    pub step: u64,
 }
 
 impl Default for DemandEntry {
@@ -297,8 +306,10 @@ impl Default for DemandEntry {
         Self {
             available: 0.0,
             capacity: 0.0,
-            target: 0.0,
-            next_drift_at: 0.0,
+            demand: balance::DEMAND_EQUILIBRIUM,
+            supply: balance::DEMAND_EQUILIBRIUM,
+            trend: 0,
+            step: 0,
         }
     }
 }
@@ -1010,14 +1021,14 @@ pub fn shop_price(state: &GameState, slot: &ShopSlot) -> f64 {
 
 /// Направление спроса: +1 растёт, −1 падает, 0 ровно.
 ///
-/// Сравниваем налитое с ёмкостью: запас ниже потолка — спрос ещё наливается,
-/// выше — город насытился. Порог отсекает мелкие колебания.
+/// Смотрим на настроение с памятью: тренд вниз — город насытился, вверх —
+/// товар расходится. Порог отсекает мелкие колебания.
 pub fn market_trend(state: &GameState, item_id: &str) -> i32 {
     let entry = demand_of(state, item_id);
-    let threshold = balance::MARKET_TREND_THRESHOLD as f64;
-    if entry.available + threshold < entry.capacity {
+    let threshold = (balance::MARKET_TREND_THRESHOLD / 2) as i32;
+    if entry.trend >= threshold {
         1
-    } else if entry.available > entry.capacity + threshold {
+    } else if entry.trend <= -threshold {
         -1
     } else {
         0
@@ -1076,70 +1087,114 @@ pub fn buyer_interval(state: &GameState) -> Option<f64> {
     Some(interval)
 }
 
-/// Базовая ёмкость спроса: чем дороже товар, тем меньше штук нужно городу.
+/// Полная ёмкость спроса при равновесии: чем дороже товар, тем меньше штук
+/// нужно городу. Город берёт цехами, поэтому ёмкость в `DEMAND_CITY_SCALE`
+/// раз больше торговой.
 pub fn demand_capacity(item_id: &str) -> f64 {
     let base = items::item(item_id)
         .map(|item| item.base_price as f64)
         .unwrap_or(1.0)
         .max(1.0);
-    (balance::DEMAND_BUDGET / base)
-        .clamp(balance::DEMAND_MIN_CAPACITY, balance::DEMAND_MAX_CAPACITY)
+    (balance::DEMAND_UNIT_BUDGET / base).max(1.0) * super::market::capacity_per_trend(item_id)
 }
 
-/// Текущий спрос на товар. Для товара без записи — полная ёмкость.
+/// Спрос города на полке, выведенный из пары «спрос / предложение»:
+/// дефицит поднимает ёмкость, избыток — опускает.
+fn capacity_of(item_id: &str, demand: u8, supply: u8) -> f64 {
+    let base = demand_capacity(item_id);
+    let diff = demand as f64 - supply as f64;
+    (base * (1.0 + diff / 100.0)).max(1.0)
+}
+
+/// Текущий спрос на товар. Для товара без записи — ровное равновесие.
 pub fn demand_of(state: &GameState, item_id: &str) -> DemandEntry {
     if let Some(entry) = state.city.demand.get(item_id) {
-        if entry.capacity > 0.0 {
+        // Старые сохранения писали только налитое, без ёмкости: заводим её
+        // заново, иначе доля спроса делила бы на ноль.
+        if entry.capacity > 0.0 && entry.capacity.is_finite() {
             return entry.clone();
         }
+        let mut repaired = entry.clone();
+        repaired.capacity = demand_capacity(item_id);
+        repaired.available = repaired.available.clamp(0.0, repaired.capacity);
+        return repaired;
     }
-    let base = demand_capacity(item_id);
+    let capacity = demand_capacity(item_id);
     DemandEntry {
-        available: base,
-        capacity: base,
-        target: base,
-        next_drift_at: 0.0,
+        available: capacity,
+        capacity,
+        demand: balance::DEMAND_EQUILIBRIUM,
+        supply: balance::DEMAND_EQUILIBRIUM,
+        trend: 0,
+        step: 0,
     }
 }
 
 /// Доля налитого спроса 0..1.
 pub fn demand_ratio(state: &GameState, item_id: &str) -> f64 {
     let entry = demand_of(state, item_id);
-    if entry.capacity <= 0.0 {
-        1.0
-    } else {
-        (entry.available / entry.capacity).clamp(0.0, 1.0)
-    }
+    super::market::ratio(entry.available, entry.capacity)
 }
 
-/// Создаёт запись спроса, если её ещё нет или она пустая.
+/// Статус рынка товара: дефицит, баланс или избыток.
+pub fn demand_status(state: &GameState, item_id: &str) -> super::trader::MarketStatus {
+    let entry = demand_of(state, item_id);
+    super::market::status(entry.demand, entry.supply)
+}
+
+/// Создаёт запись спроса, если её ещё нет: город встречает товар полным спросом.
 fn ensure_demand(state: &mut GameState, item_id: &str) {
-    let base = demand_capacity(item_id);
-    let now = state.total_play_seconds;
-    let entry = state
+    if state
         .city
         .demand
-        .entry(item_id.to_string())
-        .or_insert_with(|| DemandEntry {
-            available: base,
-            capacity: base,
-            target: base,
-            next_drift_at: now + balance::DEMAND_DRIFT_SECS,
-        });
-    if entry.capacity <= 0.0 {
-        entry.available = base;
-        entry.capacity = base;
-        entry.target = base;
-        entry.next_drift_at = now + balance::DEMAND_DRIFT_SECS;
+        .get(item_id)
+        .is_some_and(|entry| entry.capacity > 0.0)
+    {
+        return;
     }
+    let capacity = demand_capacity(item_id);
+    let step = city_step(state);
+    state.city.demand.insert(
+        item_id.to_string(),
+        DemandEntry {
+            available: capacity,
+            capacity,
+            demand: balance::DEMAND_EQUILIBRIUM,
+            supply: balance::DEMAND_EQUILIBRIUM,
+            trend: 0,
+            step,
+        },
+    );
 }
 
-/// Продвигает спрос на полке на `dt` секунд: налив и дрейф цели.
+/// Текущий шаг симуляции города: один шаг в `DEMAND_STEP_SECS`.
+pub fn city_step(state: &GameState) -> u64 {
+    (state.total_play_seconds / balance::DEMAND_STEP_SECS).max(0.0) as u64
+}
+
+/// Один шаг настроения: тренд гуляет, спрос и предложение тянутся к нему.
+///
+/// Дешёвый шум и несколько пунктов возврата к равновесию на каждом шаге
+/// дают живую кривую: дефицит набирается минутами и так же медленно спадает.
+fn step_entry(entry: &mut DemandEntry, seed: &mut u64) {
+    let trend = super::market::drift_trend(entry.trend, seed);
+    entry.trend = trend;
+    let target_demand = (balance::DEMAND_EQUILIBRIUM as i32 + trend).clamp(5, 95) as u8;
+    let target_supply = (balance::DEMAND_EQUILIBRIUM as i32 - trend).clamp(5, 95) as u8;
+    entry.demand = (entry.demand as i32 + super::market::noise(seed, 2)).clamp(5, 95) as u8;
+    entry.supply = (entry.supply as i32 + super::market::noise(seed, 2)).clamp(5, 95) as u8;
+    entry.demand = super::market::approach(entry.demand, target_demand, balance::DEMAND_RETURN_STEP);
+    entry.supply = super::market::approach(entry.supply, target_supply, balance::DEMAND_RETURN_STEP);
+}
+
+/// Продвигает спрос на `dt` секунд: цеховые шаги и налив полки.
 fn advance_demand(state: &mut GameState, dt: f64) {
     if dt <= 0.0 {
         return;
     }
-    let now = state.total_play_seconds;
+    // Сначала догоняем цеховые шаги за прошедшее время, потом наливаем полку.
+    // `demand_at` — время последнего расчёта, его двигает только тик.
+    let period = (state.total_play_seconds - state.city.demand_at).clamp(0.0, dt);
     let item_ids: Vec<String> = state
         .city
         .shop
@@ -1152,51 +1207,48 @@ fn advance_demand(state: &mut GameState, dt: f64) {
     let rumored = rumored_item(state).map(str::to_string);
     let dead = dead_item(state).map(str::to_string);
     let blocked: Vec<String> = competitor_items(state).to_vec();
+    let city_step = city_step(state);
     for item_id in item_ids {
         ensure_demand(state, &item_id);
-        let base = demand_capacity(&item_id);
         let is_dead = dead.as_deref() == Some(item_id.as_str());
-        let fill_mult = if is_dead || blocked.iter().any(|id| id == &item_id) {
-            0.0
-        } else if rumored.as_deref() == Some(item_id.as_str()) {
-            balance::DEMAND_RUMOR_FILL_MULT
-        } else {
-            1.0
-        };
-        let seed = &mut state.market_seed;
+        let is_blocked = blocked.iter().any(|id| id == &item_id);
+        let is_rumored = rumored.as_deref() == Some(item_id.as_str());
+        let mut seed = state.market_seed;
         let entry = state
             .city
             .demand
             .get_mut(&item_id)
             .expect("спрос создан выше");
-        // Первый запуск: цель — базовая ёмкость.
-        if entry.next_drift_at <= 0.0 {
-            entry.target = base;
-            entry.next_drift_at = now + balance::DEMAND_DRIFT_SECS;
+        // Догоняем пропущенные шаги: город жил, пока игра не считала.
+        let missed = city_step.saturating_sub(entry.step).min(240);
+        for _ in 0..missed {
+            step_entry(entry, &mut seed);
         }
-        // Дрейф цели каждые ~7 минут.
-        let mut guard = 0;
-        while now >= entry.next_drift_at && guard < 8 {
-            let roll = super::trader::random_below(seed, 1_000) as f64 / 1_000.0;
-            entry.target = base
-                * (balance::DEMAND_TARGET_MIN
-                    + (balance::DEMAND_TARGET_MAX - balance::DEMAND_TARGET_MIN) * roll);
-            entry.next_drift_at += balance::DEMAND_DRIFT_SECS;
-            guard += 1;
-        }
-        // Ёмкость плавно ползёт к цели.
-        let step = base * balance::DEMAND_CAPACITY_SWING / balance::DEMAND_DRIFT_SECS * dt;
-        entry.capacity = if entry.target > entry.capacity {
-            (entry.capacity + step).min(entry.target)
-        } else {
-            (entry.capacity - step).max(entry.target)
-        };
-        entry.available = (entry.available
-            + entry.capacity / balance::DEMAND_FILL_SECS * dt * fill_mult)
-            .min(entry.capacity);
+        entry.step = entry.step.saturating_add(missed).max(city_step);
+        // Слухи и конкуренты правят тренд своим весом.
         if is_dead {
-            entry.available = 0.0;
+            entry.trend = -super::market::TREND_LIMIT;
+            entry.demand = entry.demand.min(5);
+            entry.supply = entry.supply.max(95);
+        } else if is_blocked {
+            entry.trend = entry.trend.min(-super::market::TREND_LIMIT / 2);
+        } else if is_rumored {
+            entry.trend = entry.trend.max(super::market::TREND_LIMIT / 2);
         }
+        let capacity = capacity_of(&item_id, entry.demand, entry.supply);
+        let fill_mult = if is_dead || is_blocked {
+            0.0
+        } else if is_rumored {
+            balance::DEMAND_RUMOR_FILL_MULT
+        } else {
+            1.0
+        };
+        // Полная ёмкость наливается за `DEMAND_FILL_SECS`; сравнялую ёмкость
+        // подрезаем, чтобы полоска не показывала больше единицы.
+        let filled = entry.available + capacity / balance::DEMAND_FILL_SECS * period * fill_mult;
+        entry.capacity = capacity;
+        entry.available = if is_dead { 0.0 } else { filled.min(capacity) };
+        state.market_seed = seed;
     }
 }
 
@@ -1216,27 +1268,23 @@ pub fn catch_up_offline(state: &mut GameState, elapsed: f64) {
     state.city.demand_at = state.total_play_seconds;
 }
 
-/// Шанс, что покупатель уйдёт из-за наценки. Одна кривая для всех.
+/// Шанс, что покупатель уйдёт из-за наценки.
+///
+/// Кривая гладкая: до `SHOP_PRICE_LEAVE_FROM` берут все, дальше шанс растёт
+/// квадратично и на `SHOP_PRICE_LEAVE_FULL` доходит до полного отказа. Она
+/// действует на всех полках и на всех покупателей, включая VIP; ярмарка её
+/// отключает.
 pub fn price_leave_chance(price_mult: f32) -> f64 {
-    let curve = balance::SHOP_PRICE_LEAVE_CURVE;
-    let first = curve[0];
-    if price_mult <= first.0 {
-        return first.1;
+    let from = balance::SHOP_PRICE_LEAVE_FROM;
+    let full = balance::SHOP_PRICE_LEAVE_FULL;
+    if price_mult <= from {
+        return 0.0;
     }
-    for pair in curve.windows(2) {
-        let (low_mult, low_chance) = pair[0];
-        let (high_mult, high_chance) = pair[1];
-        if price_mult <= high_mult {
-            let span = (high_mult - low_mult) as f64;
-            let t = if span <= 0.0 {
-                1.0
-            } else {
-                (price_mult - low_mult) as f64 / span
-            };
-            return low_chance + (high_chance - low_chance) * t;
-        }
+    if price_mult >= full {
+        return 1.0;
     }
-    curve[curve.len() - 1].1
+    let t = ((price_mult - from) / (full - from)) as f64;
+    t * t
 }
 
 /// Можно ли выставить предмет в лавке.
@@ -1427,16 +1475,32 @@ pub fn buyer_decision(
     } else {
         price_leave_chance(slot.price_mult)
     };
-    // Частичное насыщение повышает шанс ухода.
-    let demand_chance = if fair || vip {
-        0.0
+    // Пустая полка спроса: обычный покупатель уже прошёл мимо выше, а VIP
+    // берёт остатки, но тоже не в восторге.
+    let empty_chance = if vip && demand_of(state, &slot.item_id).available <= 0.0 {
+        balance::DEMAND_LEAVE_MAX
     } else {
-        (1.0 - demand_ratio(state, &slot.item_id)) * balance::DEMAND_LEAVE_MAX
+        0.0
     };
-    if leave_roll < (price_chance + demand_chance).min(1.0) {
+    if leave_roll < (price_chance + empty_chance).min(1.0) {
         return BuyerDecision::Leave;
     }
     BuyerDecision::Buy { vip }
+}
+
+/// Проданный товар съедает спрос города: налитое уменьшается, спрос падает,
+/// предложение растёт — полка сама уходит в избыток.
+pub fn consume_demand(state: &mut GameState, item_id: &str, quantity: u32) {
+    ensure_demand(state, item_id);
+    let Some(entry) = state.city.demand.get_mut(item_id) else {
+        return;
+    };
+    entry.available = (entry.available - quantity as f64).max(0.0);
+    // Каждые 16 проданных штук — один пункт спроса (по образцу торговцев:
+    // продажа двигает рынок на `min(quantity * 4, 80)` из 100).
+    let drained = ((quantity as f64 * balance::DEMAND_SALE_DRAIN) / 16.0).round() as i32;
+    entry.demand = (entry.demand as i32 - drained).clamp(5, 95) as u8;
+    entry.supply = (entry.supply as i32 + (drained / 2)).clamp(5, 95) as u8;
 }
 
 /// Снимает пустые полки: товар распродан — позиции в лавке быть не должно.
@@ -1611,8 +1675,15 @@ pub fn try_buyer(state: &mut GameState) -> Option<SaleRecord> {
                 .unwrap_or((0, String::new()));
             let available = demand_of(state, &item_id).available;
             let max_amount = buyer_amount(quantity, available, vip);
-            let amount = (1 + (amount_roll * max_amount as f64) as u32).min(max_amount);
-            sell_slot_amount(state, index, vip, amount).ok()
+            // Город берёт партиями: не меньше двух штук за визит, если спрос есть.
+            let batch = balance::SHOP_VISIT_MULT.ceil() as u32;
+            let amount = (batch + (amount_roll * max_amount as f64) as u32).min(max_amount);
+            let sold = sell_slot_amount(state, index, vip, amount);
+            // Проданное съедает спрос: следующий покупатель придёт на меньшее.
+            if let Ok(record) = &sold {
+                consume_demand(state, &record.item_id, record.quantity);
+            }
+            sold.ok()
         }
         BuyerDecision::Leave => {
             if let Some(shop) = state.city.shop.as_mut() {
@@ -2584,7 +2655,12 @@ impl TravelerQuestStep {
 }
 
 /// Создаёт троих постоянных жителей таверны, если их ещё нет.
+///
+/// До открытия города путешественников нет: их приносит с собой город.
 pub fn ensure_travelers(state: &mut GameState) {
+    if !state.city.unlocked {
+        return;
+    }
     if state.city.travelers.len() >= balance::TRAVELER_COUNT {
         return;
     }
@@ -3193,9 +3269,31 @@ impl SmithLine {
     }
 }
 
+/// Переносит старое сохранение города на новую модель спроса.
+///
+/// Раньше у товара были только налитая ёмкость и цель дрейфа. Теперь спрос
+/// и предложение считаются по-торговому, поэтому старые записи получают
+/// пару 50/50 и полную полку — первое же действие расставит всё по местам.
+pub fn migrate_demand(state: &mut GameState) {
+    for (item_id, entry) in state.city.demand.iter_mut() {
+        if entry.demand != 0 || entry.supply != 0 {
+            continue;
+        }
+        entry.demand = balance::DEMAND_EQUILIBRIUM;
+        entry.supply = balance::DEMAND_EQUILIBRIUM;
+        let capacity = demand_capacity(item_id);
+        if entry.capacity <= 0.0 || !entry.capacity.is_finite() {
+            entry.capacity = capacity;
+        }
+        if entry.available < 0.0 || !entry.available.is_finite() {
+            entry.available = entry.capacity;
+        }
+        entry.available = entry.available.min(entry.capacity);
+    }
+}
+
 /// Переводит старое сохранение с домом кузнеца в гильдии на двух мастеров.
-pub fn migrate_smiths(state: &mut GameState) {
-    let level = state.city.legacy_smith_level;
+pub fn migrate_smiths(state: &mut GameState) {    let level = state.city.legacy_smith_level;
     if level == 0 || state.city.smiths[0].built {
         return;
     }
@@ -3734,9 +3832,17 @@ pub fn top_goods(shop: &Shop, limit: usize) -> Vec<(String, u32)> {
     totals
 }
 
+/// Пора ли начинать город заново: перерождение сбрасывает город целиком,
+/// поэтому квест Мартина появляется раз в цикл заново.
+///
+/// В первом цикле города нет: до двух перерождений сюжет ещё неоткрыт.
+pub fn city_cycle_pending(state: &GameState) -> bool {
+    state.cycles >= 2 && !state.city.unlocked
+}
+
 /// Добавляет сюжетный квест Мартина, если пора и его ещё нет.
 pub fn ensure_intro_quest(state: &mut GameState) {
-    if state.city.unlocked || state.cycles < 2 {
+    if !city_cycle_pending(state) {
         return;
     }
     if state
@@ -4050,6 +4156,7 @@ mod tests {
         Ok(())
     }
     use super::*;
+    use crate::game::trader::MarketStatus;
     use crate::game::{actions, quests};
 
     fn city_with_shop() -> GameState {
@@ -4299,12 +4406,25 @@ mod tests {
 
     #[test]
     fn price_curve_punishes_greed() {
+        // До 1.3 берут все, к 2.0 — никто. Между ними шанс растёт плавно.
+        assert!((price_leave_chance(1.0) - 0.0).abs() < 1e-6);
         assert!((price_leave_chance(1.3) - 0.0).abs() < 1e-6);
-        assert!((price_leave_chance(1.35) - 0.05).abs() < 1e-6);
-        assert!((price_leave_chance(1.4) - 0.10).abs() < 1e-6);
-        assert!((price_leave_chance(1.5) - 0.25).abs() < 1e-6);
-        assert!((price_leave_chance(1.8) - 0.70).abs() < 1e-6);
+        let gentle = price_leave_chance(1.4);
+        let mid = price_leave_chance(1.5);
+        let steep = price_leave_chance(1.8);
+        assert!(gentle > 0.0 && gentle < mid, "{gentle} {mid}");
+        assert!(mid < steep && steep < 1.0, "{mid} {steep}");
+        // Кривая гладкая: шаг 0.01 не даёт скачков вроде 25% → 70%.
+        let mut previous = 0.0;
+        let mut bump: f64 = 0.0;
+        for step in 0..=100 {
+            let value = price_leave_chance(1.0 + step as f32 / 100.0);
+            bump = bump.max(value - previous);
+            previous = value;
+        }
+        assert!(bump < 0.05, "ступенька {bump}");
         assert!((price_leave_chance(2.0) - 1.0).abs() < 1e-6);
+        assert!((price_leave_chance(2.5) - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -4324,10 +4444,10 @@ mod tests {
 
     #[test]
     fn demand_capacity_follows_the_price() {
-        // Дешёвая свеча: городу нужно много.
-        assert!((demand_capacity("candle") - balance::DEMAND_MAX_CAPACITY).abs() < 1e-6);
-        // Дорогая кольчуга: даже минимум — двести штук.
-        assert!((demand_capacity("chainmail") - balance::DEMAND_MIN_CAPACITY).abs() < 1e-6);
+        // Дешёвой свечи городу нужно больше, чем дорогой кольчуги.
+        assert!(demand_capacity("candle") > demand_capacity("chainmail"));
+        // И город берёт цехами: ёмкость больше десятка штук даже у дорогого.
+        assert!(demand_capacity("chainmail") >= 10.0);
     }
 
     #[test]
@@ -4335,26 +4455,62 @@ mod tests {
         let mut state = city_with_shop();
         state.add_item("robe", 10);
         add_slot(&mut state, "robe", 10, 1.0).unwrap();
-        let capacity = demand_capacity("robe");
+        let before = demand_of(&state, "robe").available;
         sell_slot_amount(&mut state, 0, false, 5).unwrap();
+        consume_demand(&mut state, "robe", 5);
         let entry = state.city.demand.get("robe").cloned().unwrap();
-        assert!((entry.available - (capacity - 5.0)).abs() < 1e-6);
-        assert!((entry.capacity - capacity).abs() < 1e-6);
+        let diff = entry.available - (before - 5.0);
+        assert!(
+            diff.abs() <= (before * 1e-6).max(1e-3),
+            "налито {} было {}",
+            entry.available,
+            before
+        );
 
         // Выпиваем спрос до нуля: обычный покупатель уходит.
         if let Some(entry) = state.city.demand.get_mut("robe") {
             entry.available = 0.0;
         }
         assert_eq!(buyer_decision(&state, 0, 0.0, 0.99), BuyerDecision::Skip);
-        // VIP — единственный, кто берёт насыщенный товар.
+
+        // Крупные партии съедают и сам спрос: товар стал городу нужнее.
+        consume_demand(&mut state, "robe", 20);
+        assert!(demand_of(&state, "robe").demand < balance::DEMAND_EQUILIBRIUM);
+        // А ходовой цех наоборот уходит в избыток.
+        let mut busy = city_with_shop();
+        busy.add_item("robe", 10);
+        add_slot(&mut busy, "robe", 10, 1.0).unwrap();
+        for _ in 0..40 {
+            consume_demand(&mut busy, "robe", 20);
+        }
+        assert_eq!(demand_status(&busy, "robe"), MarketStatus::Surplus);
+    }
+
+    #[test]
+    fn vip_takes_goods_nobody_else_wants() {
+        // Дорогая вещь в лавке: обычный покупатель её даже не рассматривает,
+        // берёт только VIP.
+        let mut state = city_with_shop();
+        state.add_item("chainmail", 1);
+        add_slot(&mut state, "chainmail", 1, 1.0).unwrap();
+        let price = shop_price(&state, &state.city.shop.as_ref().unwrap().slots[0]);
+        assert!(
+            price > balance::SHOP_VIP_ONLY_PRICE,
+            "кольчуга должна быть дороже порога VIP: {price}"
+        );
+        assert!(demand_of(&state, "chainmail").available > 0.0);
+        assert_eq!(buyer_decision(&state, 0, 0.0, 0.99), BuyerDecision::Skip);
         assert!(matches!(
             buyer_decision(&state, 0, 0.0, 0.0),
             BuyerDecision::Buy { vip: true }
         ));
+        // Наценка выше `SHOP_PRICE_LEAVE_FULL` отпугивает и VIP.
+        set_price(&mut state, 0, balance::SHOP_PRICE_LEAVE_FULL).unwrap();
+        assert_eq!(buyer_decision(&state, 0, 0.0, 0.0), BuyerDecision::Leave);
     }
 
     #[test]
-    fn saturated_demand_makes_buyers_leave() {
+    fn half_drained_shelf_still_sells() {
         let mut state = city_with_shop();
         state.add_item("robe", 10);
         add_slot(&mut state, "robe", 10, 1.0).unwrap();
@@ -4363,10 +4519,9 @@ mod tests {
         if let Some(entry) = state.city.demand.get_mut("robe") {
             entry.available = capacity * 0.2;
         }
-        // Наценки нет, но спрос почти исчерпан: 0.8 × 0.6 = 48% уйти.
-        assert_eq!(buyer_decision(&state, 0, 0.0, 0.99), BuyerDecision::Leave);
+        // Наценки нет — обычный покупатель берёт, даже если спрос поредел.
         assert!(matches!(
-            buyer_decision(&state, 0, 0.9, 0.99),
+            buyer_decision(&state, 0, 0.0, 0.99),
             BuyerDecision::Buy { .. }
         ));
     }
@@ -4405,13 +4560,13 @@ mod tests {
 
     #[test]
     fn buyer_takes_no_more_than_the_demand() {
-        // Обычный покупатель не берёт больше налитого спроса, чем лежит,
-        // и вообще не больше одной штуки за визит.
-        assert_eq!(buyer_amount(50, 2.0, false), 1);
+        // Обычный покупатель не берёт больше налитого спроса и чем лежит,
+        // и не больше трёх штук за визит: город берёт партиями.
+        assert_eq!(buyer_amount(50, 2.0, false), 2);
         assert_eq!(buyer_amount(50, 0.0, false), 1);
-        assert_eq!(buyer_amount(7, 900.0, false), 1);
-        // VIP берёт до двух штук — включая мёртвую полку.
-        assert_eq!(buyer_amount(50, 0.0, true), 2);
+        assert_eq!(buyer_amount(7, 900.0, false), 3);
+        // VIP берёт до пяти штук — включая мёртвую полку.
+        assert_eq!(buyer_amount(50, 0.0, true), 5);
         assert_eq!(buyer_amount(1, 900.0, true), 1);
     }
 
@@ -4437,8 +4592,7 @@ mod tests {
             DemandEntry {
                 available: 100.0,
                 capacity: 500.0,
-                target: 1.0,
-                next_drift_at: 0.0,
+                ..DemandEntry::default()
             },
         );
         assert_eq!(
@@ -4465,7 +4619,7 @@ mod tests {
                 }
             }
         }
-        assert!(bought <= 2, "спрос выпит дважды: {bought}");
+        assert!(bought <= 4, "спрос выпит дважды: {bought}");
     }
 
     #[test]
@@ -4817,6 +4971,97 @@ mod tests {
         let items = roll_competitor_items(&mut state);
         assert!(!items.is_empty());
         assert!(items.iter().all(|id| is_shop_sellable(&state, id)));
+    }
+
+    #[test]
+    fn town_market_lives_on_its_own() {
+        // Город сам, без единой продажи, уводит товары из баланса: тренд
+        // копится и держит дефицит или избыток часами.
+        let mut state = city_with_shop();
+        state.add_item("robe", 10);
+        add_slot(&mut state, "robe", 10, 1.0).unwrap();
+        state.city.demand.insert(
+            "robe".to_string(),
+            DemandEntry {
+                available: demand_capacity("robe"),
+                capacity: demand_capacity("robe"),
+                ..DemandEntry::default()
+            },
+        );
+        let mut statuses: Vec<MarketStatus> = Vec::new();        let mut trends = Vec::new();
+        // Час города: по 20 секунд на шаг.
+        for step in 1..=180u32 {
+            state.total_play_seconds = step as f64 * balance::DEMAND_STEP_SECS;
+            advance_demand(&mut state, balance::DEMAND_STEP_SECS);
+            let entry = demand_of(&state, "robe");
+            let state_status = demand_status(&state, "robe");
+            if !statuses.contains(&state_status) {
+                statuses.push(state_status);
+            }
+            trends.push(entry.trend);
+        }
+        assert!(statuses.len() >= 2, "город застыл в одном статусе");
+        // Тренд не залипает на нуле и не бросается каждый шаг заново.
+        assert!(trends.iter().any(|value| value.abs() >= 8));
+        // И спрос с предложением живут: пара не держится ровно 50/50.
+        let entry = demand_of(&state, "robe");
+        assert!(entry.demand != 50 || entry.supply != 50 || entry.trend != 0);
+    }
+
+    #[test]
+    fn town_status_thresholds_match_the_traders() {
+        let mut state = city_with_shop();
+        let status_of = |state: &mut GameState, demand: u8, supply: u8| {
+            state.city.demand.insert(
+                "robe".to_string(),
+                DemandEntry {
+                    demand,
+                    supply,
+                    ..DemandEntry::default()
+                },
+            );
+            demand_status(state, "robe")
+        };
+        assert_eq!(status_of(&mut state, 80, 50), MarketStatus::Deficit);
+        assert_eq!(status_of(&mut state, 50, 80), MarketStatus::Surplus);
+        assert_eq!(status_of(&mut state, 55, 50), MarketStatus::Balance);
+    }
+
+    #[test]
+    fn city_market_resets_with_rebirth() {
+        let mut state = city_with_shop();
+        state.city.shop.as_mut().unwrap().rating = 4.0;
+        state.city.travelers.push(Traveler::default());
+        state.city.hire_charter = true;
+        state.cycles = 3;
+        state.reset_for_cycle();
+        assert!(!state.city.unlocked);
+        assert!(state.city.shop.is_none());
+        assert!(state.city.travelers.is_empty());
+        assert!(!state.city.hire_charter);
+        // И сюжет начинается заново: на доске снова квест Мартина.
+        assert!(state
+            .quests
+            .iter()
+            .any(|quest| quest.template_id == INTRO_TEMPLATE_ID));
+    }
+
+    #[test]
+    fn old_demand_saves_migrate_to_the_pair_model() {
+        let mut state = city_with_shop();
+        state.city.demand.insert(
+            "robe".to_string(),
+            DemandEntry {
+                available: 400.0,
+                capacity: 500.0,
+                ..DemandEntry::default()
+            },
+        );
+        migrate_demand(&mut state);
+        let entry = demand_of(&state, "robe");
+        assert_eq!(entry.demand, balance::DEMAND_EQUILIBRIUM);
+        assert_eq!(entry.supply, balance::DEMAND_EQUILIBRIUM);
+        assert!(entry.available <= entry.capacity);
     }
 
     #[test]

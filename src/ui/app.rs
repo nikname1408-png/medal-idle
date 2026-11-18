@@ -927,17 +927,27 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         })
         .collect();
 
+    // Вкладки «Наёмные» и «Кузнец» появляются только после того, как их
+    // пустили из города: грамота в Ратуше и сама постройка кузницы.
+    // Вкладки «Наёмные» и «Кузнец» появляются по мере покупок в городе:
+    // грамота в Ратуше пускает наёмных, постройка кузницы — «Кузнеца».
+    let hired_tab = snapshot.city.hire_charter || !snapshot.city.unlocked;
+    let show_hired = !smith_tab() || !hired_tab;
     rsx! {
         div { class: "work-tabs",
-            button {
-                class: if smith_tab() { "work-tab" } else { "work-tab active" },
-                onclick: move |_| smith_tab.set(false),
-                "{i18n::t(\"tab.work\")}"
+            if show_hired {
+                button {
+                    class: if smith_tab() { "work-tab" } else { "work-tab active" },
+                    onclick: move |_| smith_tab.set(false),
+                    "{i18n::t(\"hire.title\")}"
+                }
             }
-            button {
-                class: if smith_tab() { "work-tab active" } else { "work-tab" },
-                onclick: move |_| smith_tab.set(true),
-                "{i18n::t(\"work.smith_tab\")}"
+            if hired_tab {
+                button {
+                    class: if smith_tab() { "work-tab active" } else { "work-tab" },
+                    onclick: move |_| smith_tab.set(true),
+                    "{i18n::t(\"work.smith_tab\")}"
+                }
             }
         }
         if smith_tab() {
@@ -1087,7 +1097,9 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                         }
                     }
                 } else {
-                    div { class: "locked-note", "{i18n::t(\"hire.locked\")}" }
+                    // Вкладка наёмных — деньги города: без грамоты она не
+                    // появляется, а тут объясняется, где её взять.
+                    div { class: "locked-note", "{i18n::t(\"hire.charter_hint\")}" }
                 }
             }
         }

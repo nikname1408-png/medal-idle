@@ -626,6 +626,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("shop.per_unit", "{} за штуку"),
     ("demand.shelf", "Спрос: {}%"),
     ("demand.dead", "Спрос исчерпан"),
+    ("demand.pair", "Спрос {} · предложение {}"),
     ("shop.remove", "×"),
     ("shop.closed", "Лавка закрыта."),
     ("shop.reopen", "Переоткрыть за {}"),
@@ -1476,6 +1477,10 @@ pub static WORLD: &[(&str, &str)] = &[
     ("hire.total_salary", "Всего жалованья: {}"),
     ("hire.next_pay", "Выплата через {}"),
     ("hire.left", "Наёмные ушли: нечем платить."),
+    (
+        "hire.charter_hint",
+        "Наёмные появятся в «Труде», когда в Ратуше купят жалованную грамоту.",
+    ),
     ("charter.name", "Жалованная грамота на наём"),
     (
         "charter.desc",
