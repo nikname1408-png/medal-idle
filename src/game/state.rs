@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::balance;
+use super::city::{self, CityState};
 use super::events::{self, ActionTrigger, BuffInstance, PendingEvent};
 use super::i18n;
 use super::items::{self, EquipSlot};
@@ -260,14 +261,20 @@ pub struct Letter {
 }
 
 impl Letter {
+    /// Часть id до двоеточия: у писем путешественников id
+    /// вида `traveler_back:0`, а текст лежит под `letter.traveler_back.0.*`.
+    fn key(&self) -> String {
+        self.id.replace(':', ".")
+    }
+
     /// Заголовок письма на текущем языке.
     pub fn title(&self) -> &'static str {
-        i18n::t_or(&format!("letter.{}.title", self.id), "")
+        i18n::t_or(&format!("letter.{}.title", self.key()), "")
     }
 
     /// Текст письма на текущем языке.
     pub fn body(&self) -> &'static str {
-        i18n::t_or(&format!("letter.{}.body", self.id), "")
+        i18n::t_or(&format!("letter.{}.body", self.key()), "")
     }
 }
 
@@ -496,6 +503,12 @@ pub struct GameState {
     /// Игрок вступил в Эпоху Пара.
     #[serde(default)]
     pub steam_era: bool,
+    /// Чертёж компаса изучен — в кузнице открыт рецепт компаса.
+    #[serde(default)]
+    pub compass_blueprint_studied: bool,
+    /// Город: лавка, банк, гильдия, события и налоги.
+    #[serde(default)]
+    pub city: CityState,
     /// Письма в колокольчике.
     #[serde(default)]
     pub letters: Vec<Letter>,
@@ -523,6 +536,24 @@ pub struct GameState {
 
     /// Сколько циклов (перерождений) пройдено.
     pub cycles: u32,
+    /// Накопленный множитель дохода: растёт от перерождения к перерождению.
+    #[serde(default = "default_earned_income")]
+    pub earned_income: f64,
+    /// Максимальный уровень кузнеца за всю игру (рекорд, не сбрасывается).
+    #[serde(default)]
+    pub max_smith_level_ever: u32,
+    /// Максимальное превышение порога за всю игру: (gathered - threshold) / threshold.
+    #[serde(default)]
+    pub max_overgather_ever: f64,
+    /// Максимальное время в цикле за всю игру (часы).
+    #[serde(default)]
+    pub max_hours_ever: f64,
+    /// Момент старта текущего цикла (в total_play_seconds).
+    #[serde(default)]
+    pub cycle_started_at: f64,
+    /// Сколько секунд длился прошлый цикл.
+    #[serde(default)]
+    pub last_cycle_time: f64,
     /// Дерево, добытое за текущий цикл (для порога перерождения).
     #[serde(default)]
     pub cycle_wood: f64,
@@ -575,6 +606,10 @@ fn default_smith_level() -> u32 {
 }
 
 fn default_smith_xp_bonus() -> f32 {
+    1.0
+}
+
+fn default_earned_income() -> f64 {
     1.0
 }
 
@@ -660,6 +695,8 @@ impl Default for GameState {
             steam_prototype_built: false,
             steam_prototype_event: false,
             steam_era: false,
+            compass_blueprint_studied: false,
+            city: CityState::default(),
             letters: Vec::new(),
             bank_seen: false,
             pending_event: None,
@@ -670,6 +707,12 @@ impl Default for GameState {
             action_queue: Vec::new(),
             buffs: Vec::new(),
             cycles: 0,
+            earned_income: 1.0,
+            max_smith_level_ever: 1,
+            max_overgather_ever: 0.0,
+            max_hours_ever: 0.0,
+            cycle_started_at: 0.0,
+            last_cycle_time: 0.0,
             cycle_wood: 0.0,
             cycle_stone: 0.0,
             time: 0.0,
@@ -731,7 +774,9 @@ impl GameState {
 
     /// Лимит золота с учётом банка.
     pub fn gold_cap(&self) -> f64 {
-        balance::BASE_GOLD_CAP + self.bank_level as f64 * balance::GOLD_CAP_PER_LEVEL
+        balance::BASE_GOLD_CAP
+            + self.bank_level as f64 * balance::GOLD_CAP_PER_LEVEL
+            + self.city.bank_cells as f64 * balance::BANK_CELL_BONUS
     }
 
     /// Регенерация энергии в секунду. Без дома — ноль, если нет баффа.
@@ -837,6 +882,31 @@ impl GameState {
     pub fn coal_pit_wood_per_sec(&self) -> f64 {
         self.coal_pit_workers as f64 * balance::COAL_PIT_WOOD_PER_BATCH
             / balance::COAL_PIT_BATCH_SECONDS
+    }
+
+    /// Дерево в секунду с наёмных на лесопилке (в разы больше общинных).
+    pub fn hired_sawmill_wood_per_sec(&self) -> f64 {
+        let base = self.city.hired_sawmill as f64
+            * balance::HIRE_YIELD_MULT
+            * balance::SAWMILL_WOOD_PER_WORKER_PER_SEC
+            * (1.0 + self.gather_bonus as f64);
+        let buff = 1.0 + events::active_buff_sum(self, events::BuffStat::SawmillMult) / 100.0;
+        (base * buff).max(0.0)
+    }
+
+    /// Камень в секунду с наёмных на шахте.
+    pub fn hired_mine_stone_per_sec(&self) -> f64 {
+        let base = self.city.hired_mine as f64
+            * balance::HIRE_YIELD_MULT
+            * balance::MINE_STONE_PER_WORKER_PER_SEC
+            * (1.0 + self.gather_bonus as f64);
+        let buff = 1.0 + events::active_buff_sum(self, events::BuffStat::MineMult) / 100.0;
+        (base * buff).max(0.0)
+    }
+
+    /// Сколько «общинных» рабочих заменяют наёмные на угольной яме.
+    pub fn hired_coal_workers(&self) -> f64 {
+        self.city.hired_coal as f64 * balance::HIRE_YIELD_MULT
     }
 
     /// Доступно ли направление изучения.
@@ -977,28 +1047,24 @@ impl GameState {
         if xp <= 0.0 {
             return None;
         }
-        // Уровень 0 возможен только в повреждённом сохранении: без этой
-        // строки `smith_xp_for_level(0)` вернул бы 0 и цикл скакнул бы сразу
-        // на максимальный уровень.
         self.smith_level = self.smith_level.max(1);
         self.smith_xp += xp;
         let mut new_level = None;
 
-        // Проверяем, хватает ли опыта для повышения (может быть скачок через уровень).
-        while self.smith_level < balance::SMITH_MAX_LEVEL {
+        // Потолка нет: качаемся, пока хватает XP. `smith_xp_for_level` растёт
+        // с уровнем, поэтому цикл конечен.
+        loop {
             let needed = balance::smith_xp_for_level(self.smith_level);
+            if !needed.is_finite() || needed <= 0.0 {
+                break;
+            }
             if self.smith_xp + 1e-9 >= needed {
-                self.smith_xp -= needed; // Вычитаем потраченный опыт
+                self.smith_xp -= needed;
                 self.smith_level += 1;
                 new_level = Some(self.smith_level);
             } else {
                 break;
             }
-        }
-
-        // Если достигли максимального уровня, обнуляем опыт.
-        if self.smith_level >= balance::SMITH_MAX_LEVEL {
-            self.smith_xp = 0.0;
         }
         new_level
     }
@@ -1168,23 +1234,59 @@ impl GameState {
         true
     }
 
-    /// Единственный множитель дохода за пройденные циклы: X = 1 + 0.6 × R.
-    ///
-    /// После вступления в Эпоху Пара паровая машина добавляет к множителю
-    /// ещё [`balance::STEAM_ERA_INCOME_BONUS`].
+    /// Множитель дохода: накопленная прибавка от перерождений плюс бонус
+    /// Эпохи Пара. Между перерождениями не меняется.
     pub fn income_multiplier(&self) -> f64 {
         let era = if self.steam_era {
             balance::STEAM_ERA_INCOME_BONUS
         } else {
             0.0
         };
-        1.0 + self.cycles as f64 * balance::CYCLE_INCOME_PER_LEVEL + era
+        self.earned_income + era
     }
 
-    /// Порог перерождения для текущего цикла: П0 × (1 + 0.5R).
+    /// Составляющие прибавки к X от текущего цикла: база, кузнец,
+    /// добыча сверх порога и время в цикле.
+    pub fn cycle_delta_parts(&self) -> (f64, f64, f64, f64) {
+        // Уровень 1 — базовый, поэтому бонус считается с уровня выше первого.
+        let smith = 0.03 * self.smith_level().saturating_sub(1) as f64;
+        let overgather = 0.15 * self.current_overgather().max(0.0).sqrt();
+        let hours = 0.03 * self.current_cycle_hours();
+        (0.08, smith, overgather, hours)
+    }
+
+    /// Прибавка к X, которую даст текущий цикл при перерождении.
+    pub fn cycle_delta(&self) -> f64 {
+        let (base, smith, overgather, hours) = self.cycle_delta_parts();
+        base + smith + overgather + hours
+    }
+
+    /// Сколько будет X, если переродиться прямо сейчас.
+    pub fn preview_income_multiplier(&self) -> f64 {
+        self.income_multiplier() + self.cycle_delta()
+    }
+
+    /// Текущее превышение порога: (добыто - порог) / порог. Может быть
+    /// отрицательным (не добрал); X берёт корень только из положительной части.
+    pub fn current_overgather(&self) -> f64 {
+        let threshold = self.cycle_threshold();
+        if threshold <= 0.0 {
+            0.0
+        } else {
+            (self.cycle_gathered() - threshold) / threshold
+        }
+    }
+
+    /// Сколько часов длится текущий цикл.
+    pub fn current_cycle_hours(&self) -> f64 {
+        (self.total_play_seconds - self.cycle_started_at).max(0.0) / 3600.0
+    }
+
+    /// Порог перерождения: база × (1 + 0.5 × √cycles).
+    /// Сначала крутой рост (первые циклы тяжёлые), потом пологий —
+    /// X успевает обогнать порог к ~40-му циклу.
     pub fn cycle_threshold(&self) -> f64 {
-        balance::CYCLE_THRESHOLD_BASE
-            * (1.0 + self.cycles as f64 * balance::CYCLE_THRESHOLD_PER_LEVEL)
+        balance::CYCLE_THRESHOLD_BASE * (1.0 + 0.5 * (self.cycles as f64).sqrt())
     }
 
     /// Сколько дерева и камня добыто за текущий цикл.
@@ -1551,9 +1653,13 @@ impl GameState {
         let mut smith_xp_bonus = 0.0;
         let mut haggle_bonus = 0.0;
         let mut ingredient_discount = 0.0;
+        let mut beggar_pieces = 0;
         for slot in EquipSlot::ALL {
             if let Some(item) = self.equipped_item(slot) {
                 let stats = &item.stats;
+                if stats.set_id.as_deref() == Some("beggar") {
+                    beggar_pieces += 1;
+                }
                 trade_bonus += stats.trade_bonus.unwrap_or(0.0) / 100.0;
                 trade_bonus += stats.gold_bonus.unwrap_or(0.0) / 100.0;
                 expedition_bonus += stats.expedition_bonus.unwrap_or(0.0) / 100.0;
@@ -1568,6 +1674,10 @@ impl GameState {
         }
         self.trade_bonus = trade_bonus.clamp(0.0, 5.0);
         self.expedition_bonus = expedition_bonus.clamp(0.0, 5.0);
+        // Сет «Бродяга»: 4 и более предметов дают +100% к ручной добыче.
+        if beggar_pieces >= 4 {
+            gather_bonus += 1.0;
+        }
         self.gather_bonus = gather_bonus.clamp(0.0, 5.0);
         self.fire_discount = fire_discount.clamp(0.0, 0.9);
         self.expedition_energy_discount = expedition_energy_discount.clamp(0.0, 0.9);
@@ -1664,9 +1774,24 @@ impl GameState {
     /// `expires_at`) живут в базе `total_play_seconds`, поэтому его нельзя
     /// сбрасывать: иначе все отложенные события окажутся «в прошлом».
     pub fn reset_for_cycle(&mut self) {
+        // 1. Считаем прибавку к X по текущему циклу (до сброса!) и обновляем рекорды.
+        let delta = self.cycle_delta();
+        let earned_income = self.earned_income + delta;
+        self.max_smith_level_ever = self.max_smith_level_ever.max(self.smith_level());
+        let overgather = self.current_overgather().max(0.0);
+        self.max_overgather_ever = self.max_overgather_ever.max(overgather);
+        let hours = self.current_cycle_hours();
+        self.max_hours_ever = self.max_hours_ever.max(hours);
+        self.last_cycle_time = (self.total_play_seconds - self.cycle_started_at).max(0.0);
+
+        // 2. Сохраняем то, что не сбрасывается.
         let theme = self.theme;
         let stats = self.stats.clone();
         let cycles = self.cycles + 1;
+        let max_smith = self.max_smith_level_ever;
+        let max_overgather = self.max_overgather_ever;
+        let max_hours = self.max_hours_ever;
+        let last_cycle_time = self.last_cycle_time;
         let time = self.time;
         let last_seen = self.last_seen;
         let total_play_seconds = self.total_play_seconds;
@@ -1675,8 +1800,9 @@ impl GameState {
         let rest_clicks = self.rest_clicks;
         let wood_seen = self.wood_seen;
         let stone_seen = self.stone_seen;
+        // Город — долгосрочная постройка: перерождение его не сносит.
+        let city = self.city.clone();
         let dev = std::mem::take(&mut self.dev);
-        // Время сейчас: пригодится, чтобы выкинуть протухшие глобальные баффы.
         let now = self.event_clock;
         let global_buffs: Vec<BuffInstance> = self
             .buffs
@@ -1685,21 +1811,23 @@ impl GameState {
             .cloned()
             .collect();
 
+        // 3. Полный сброс.
         *self = GameState::default();
         self.gold = 0.0;
         self.inventory.clear();
         self.equipment = EquippedItems::default();
         self.recalculate_stats();
+
+        // 4. Возвращаем сохранённое.
         self.theme = theme;
         self.stats = stats;
         self.cycles = cycles;
-        // 5 опыта за каждый пройденный цикл (кроме первого). Опыт проводим
-        // через `add_smith_xp`, чтобы он сразу превратился в уровни, а не
-        // висел на полоске как «45 / 5».
-        self.smith_level = 1;
-        self.smith_xp = 0.0;
-        let bonus = balance::SMITH_XP_PER_CYCLE * (cycles.saturating_sub(1)) as f64;
-        self.add_smith_xp(bonus);
+        self.earned_income = earned_income;
+        self.max_smith_level_ever = max_smith;
+        self.max_overgather_ever = max_overgather;
+        self.max_hours_ever = max_hours;
+        self.last_cycle_time = last_cycle_time;
+        self.cycle_started_at = total_play_seconds;
         self.time = time;
         self.last_seen = last_seen;
         self.total_play_seconds = total_play_seconds;
@@ -1708,12 +1836,17 @@ impl GameState {
         self.rest_clicks = rest_clicks;
         self.wood_seen = wood_seen;
         self.stone_seen = stone_seen;
+        self.city = city;
         self.dev = dev;
-        // Глобальные баффы возвращаем после сброса — таймер у них уже
-        // в базе `event_clock`, которая теперь сохранена.
         self.buffs = global_buffs;
-        // Таймер фонового события в новой игре стартует заново,
-        // а очередь оффлайн-событий и action-triggers исчезает вместе со всем.
+
+        // 5. Кузнец: сбрасывается в 1 + бонус за цикл.
+        self.smith_level = 1;
+        self.smith_xp = 0.0;
+        let bonus = balance::SMITH_XP_PER_CYCLE * (cycles.saturating_sub(1)) as f64;
+        self.add_smith_xp(bonus);
+
+        // 6. Таймеры событий/квестов.
         self.next_baseline_at = self.event_clock + balance::EVENTS_BASELINE_FIRST_SECS;
         self.quest_board_refresh_at = self.quest_clock + 10.0;
     }
@@ -1955,7 +2088,44 @@ impl GameState {
         if self.next_baseline_at <= now {
             self.next_baseline_at = now + balance::EVENTS_BASELINE_FIRST_SECS;
         }
+        if self.city.unlocked {
+            if self.city.next_tax_at <= 0.0 {
+                self.city.next_tax_at = self.total_play_seconds + balance::CITY_TAX_INTERVAL;
+            }
+            if self.city.next_event_at <= 0.0 {
+                self.city.next_event_at = self.total_play_seconds + balance::CITY_TAX_INTERVAL;
+            }
+            if self.city.shop.is_none() {
+                self.city.shop = Some(city::Shop::default());
+            }
+        }
+        // Дом кузнеца из гильдии стал первым кузнецом в «Труде».
+        city::migrate_smiths(self);
+        // Старые сохранения могли держать на полках распроданные позиции.
+        city::drop_empty_slots(self);
         self.recalculate_stats();
+
+        // Рекорды появились в новой версии. У старых сохранений их нет —
+        // инициализируем разумными значениями. Это надо сделать ДО мягкой
+        // миграции: она считает новый X и должна видеть настоящий уровень.
+        if self.max_smith_level_ever == 0 {
+            self.max_smith_level_ever = self.smith_level();
+        }
+        if self.cycle_started_at <= 0.0 {
+            self.cycle_started_at = self.total_play_seconds;
+        }
+        // max_overgather_ever и max_hours_ever — serde default = 0.0, это ок.
+
+        // Старые сохранения: X раньше считался из рекордов, теперь копится
+        // в `earned_income`. Если поле пустое (serde default = 1.0), а
+        // перерождения уже были — пересчитываем старую формулу один раз.
+        if self.earned_income <= 1.0 && self.cycles > 0 {
+            self.earned_income = 1.0
+                + 0.05 * self.cycles as f64
+                + 0.03 * self.max_smith_level_ever.saturating_sub(1) as f64
+                + 0.10 * self.max_overgather_ever.min(3.0)
+                + 0.05 * self.max_hours_ever.min(3.0);
+        }
     }
 
     /// Приводит рынки в соответствие с каталогом торговцев.
@@ -2097,6 +2267,27 @@ mod tests {
 
         // Кольцо +10%, амулет +10%, сет +15% → 1.2 × 1.15 = 1.38.
         assert!((state.smith_xp_bonus - 1.38).abs() < 1e-6);
+    }
+
+    #[test]
+    fn beggar_set_boosts_gather_from_four_pieces() {
+        let mut state = GameState::default();
+        for item_id in ["robe", "beggars_cloak", "wretched_hat"] {
+            state.add_item(item_id, 1);
+            assert_eq!(state.equip_item(item_id), Ok(()), "не надеть {item_id}");
+        }
+        // Три предмета — бонус ещё не активен.
+        assert!((state.gather_bonus).abs() < 1e-6);
+
+        state.add_item("poor_boots", 1);
+        assert_eq!(state.equip_item("poor_boots"), Ok(()));
+        // Четвёртый предмет включает сет: +100% к ручной добыче.
+        assert!((state.gather_bonus - 1.0).abs() < 1e-6);
+
+        // Пятый предмет добавляет и свой личный бонус (+8%).
+        state.add_item("beggars_gloves", 1);
+        assert_eq!(state.equip_item("beggars_gloves"), Ok(()));
+        assert!((state.gather_bonus - 1.08).abs() < 1e-6);
     }
 
     #[test]
@@ -2243,6 +2434,98 @@ mod tests {
     }
 
     #[test]
+    fn soft_migration_applies_only_to_old_saves() {
+        // Новая игра без перерождений миграцию не запускает.
+        let mut fresh = GameState::default();
+        fresh.migrate();
+        assert!((fresh.earned_income - 1.0).abs() < 1e-9);
+        assert!((fresh.income_multiplier() - 1.0).abs() < 1e-9);
+
+        // Если X уже накоплен, миграция его не пересчитывает.
+        let mut progressed = GameState {
+            cycles: 10,
+            earned_income: 1.5,
+            ..GameState::default()
+        };
+        progressed.migrate();
+        assert!((progressed.earned_income - 1.5).abs() < 1e-9);
+
+        // Старое сохранение (без поля earned_income): пересчёт старой формулы.
+        let mut old = GameState {
+            cycles: 10,
+            max_smith_level_ever: 5,
+            ..GameState::default()
+        };
+        old.migrate();
+        let expected = 1.0 + 0.05 * 10.0 + 0.03 * 4.0;
+        assert!((old.earned_income - expected).abs() < 1e-9);
+        assert!((old.income_multiplier() - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn new_game_starts_with_earned_income_one() {
+        let state = GameState::default();
+        assert!((state.earned_income - 1.0).abs() < 1e-9);
+        assert!((state.income_multiplier() - 1.0).abs() < 1e-9);
+        assert!((state.preview_income_multiplier() - (1.0 + state.cycle_delta())).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cycle_delta_grows_with_overgather() {
+        let base = GameState::default();
+        let mut over = GameState::default();
+        over.cycle_wood = over.cycle_threshold() * 1.5; // overgather = 0.5
+
+        assert!(over.cycle_delta() > base.cycle_delta());
+        let (_, _, overgather_part, _) = over.cycle_delta_parts();
+        assert!((overgather_part - 0.15 * 0.5_f64.sqrt()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cycle_delta_uses_sqrt() {
+        let mut one = GameState::default();
+        let mut four = GameState::default();
+        let threshold = one.cycle_threshold();
+        one.cycle_wood = threshold * 2.0; // overgather = 1
+        four.cycle_wood = threshold * 5.0; // overgather = 4
+
+        // √4 − √1 = 1, значит прибавка 0.15, а не 0.45 при линейном росте.
+        assert!((four.cycle_delta() - one.cycle_delta() - 0.15).abs() < 1e-9);
+    }
+
+    #[test]
+    fn earned_income_accumulates_across_cycles() {
+        let mut state = GameState::default();
+        state.cycle_wood = state.cycle_threshold();
+        let first = state.cycle_delta();
+        state.reset_for_cycle();
+        assert!((state.earned_income - (1.0 + first)).abs() < 1e-9);
+
+        state.cycle_wood = state.cycle_threshold();
+        let second = state.cycle_delta();
+        state.reset_for_cycle();
+        assert!((state.earned_income - (1.0 + first + second)).abs() < 1e-9);
+        assert!(state.earned_income > 1.0 + first);
+    }
+
+    #[test]
+    fn old_save_migration_preserves_income() {
+        // Старое сохранение: поля earned_income нет, serde подставил бы 1.0.
+        let mut old = GameState {
+            cycles: 3,
+            max_smith_level_ever: 7,
+            max_overgather_ever: 2.0,
+            max_hours_ever: 1.5,
+            ..GameState::default()
+        };
+        old.migrate();
+
+        let expected = 1.0 + 0.05 * 3.0 + 0.03 * 6.0 + 0.10 * 2.0 + 0.05 * 1.5;
+        assert!((old.earned_income - expected).abs() < 1e-9);
+        assert!((old.income_multiplier() - expected).abs() < 1e-9);
+    }
+
+    #[test]
     fn location_chain_unlocks_by_map() {
         let state = GameState::default();
         assert!(state.location_unlocked("field"));
@@ -2282,23 +2565,25 @@ mod tests {
     #[test]
     fn smith_xp_can_jump_several_levels() {
         let mut state = GameState::default();
-        // 10 опыта — 1 → 2, ещё 40 — 2 → 3. Ровно 50 закрывает оба порога.
-        state.add_smith_xp(50.0);
+        // Новый порог: 100 × level^1.6. 1 → 2 стоит 100, 2 → 3 — около 303.
+        let first = balance::smith_xp_for_level(1);
+        let second = balance::smith_xp_for_level(2);
+        state.add_smith_xp(first + second + 0.5);
         assert_eq!(state.smith_level, 3);
-        assert_eq!(state.smith_xp, 0.0);
+        assert!((state.smith_xp - 0.5).abs() < 1e-6);
     }
 
     #[test]
-    fn smith_level_stops_at_max() {
-        let mut state = GameState {
-            smith_level: 19,
-            ..GameState::default()
-        };
+    fn smith_level_is_not_capped() {
+        let mut state = GameState::default();
         state.add_smith_xp(1_000_000.0);
-        assert_eq!(state.smith_level, balance::SMITH_MAX_LEVEL);
-        assert_eq!(state.smith_xp, 0.0);
-        // Полоска на максимуме полная, а не NaN.
-        assert_eq!(state.smith_xp_ratio(), 1.0);
+        assert!(
+            state.smith_level > balance::SMITH_MAX_LEVEL,
+            "уровень больше не упирается в потолок"
+        );
+        // Полоска остаётся в допустимых пределах, а не NaN.
+        let ratio = state.smith_xp_ratio();
+        assert!((0.0..=1.0).contains(&ratio));
     }
 
     #[test]

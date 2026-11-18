@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::city;
 use super::i18n;
 use super::items;
 use super::state::GameState;
@@ -419,18 +420,9 @@ pub const DECLINE_WINDOW: f64 = 60.0;
 pub fn take_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestError> {
     let now = state.quest_clock;
 
-    let active_count = state
-        .quests
-        .iter()
-        .filter(|q| q.status == QuestStatus::Active)
-        .count();
-    if active_count >= MAX_ACTIVE_QUESTS {
-        return Err(QuestError::TooManyActive);
-    }
-
     // Сначала читаем квест неизменяемо: проверка награды принимает
     // `&GameState` и не даст заём, пока квест взят мутабельно.
-    let (request, reward) = {
+    let (request, reward, is_intro) = {
         let quest = state
             .quests
             .iter()
@@ -442,8 +434,24 @@ pub fn take_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestErro
         if quest.declined {
             return Err(QuestError::AlreadyDeclined);
         }
-        (quest.request.clone(), quest.reward.clone())
+        (
+            quest.request.clone(),
+            quest.reward.clone(),
+            quest.template_id == city::INTRO_TEMPLATE_ID,
+        )
     };
+
+    // Сюжетный квест Мартина можно брать сверх лимита активных.
+    if !is_intro {
+        let active_count = state
+            .quests
+            .iter()
+            .filter(|q| q.status == QuestStatus::Active)
+            .count();
+        if active_count >= MAX_ACTIVE_QUESTS {
+            return Err(QuestError::TooManyActive);
+        }
+    }
 
     // Проверка награды: если рецепт награды не открыт, разрешаем только
     // если запрос по базовой цене >= награды (игрок «переплачивает»).
@@ -467,7 +475,11 @@ pub fn take_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestErro
         .find(|q| q.id == quest_id)
         .ok_or(QuestError::NotFound)?;
     quest.status = QuestStatus::Active;
-    quest.expires_at = now + QUEST_DURATION;
+    // Сюжетный квест не истекает, у него нет таймера.
+    quest.expires_at = if is_intro { 0.0 } else { now + QUEST_DURATION };
+    if is_intro {
+        state.city.martin = city::MartinStage::AskCraft;
+    }
 
     // Письмо в колокольчик: детали заказа и кнопки «Сдать» / «Отклонить».
     state.add_quest_letter(quest_id);
@@ -479,7 +491,7 @@ pub fn take_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestErro
 pub fn complete_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestError> {
     // Клонируем запрос и награду: дальше меняем `state`, а заём на квест
     // из `state.quests` этого не позволит.
-    let (request, reward) = {
+    let (request, reward, is_intro) = {
         let quest = state
             .quests
             .iter()
@@ -488,8 +500,17 @@ pub fn complete_quest(state: &mut GameState, quest_id: &str) -> Result<(), Quest
         if quest.status != QuestStatus::Active {
             return Err(QuestError::NotAvailable);
         }
-        (quest.request.clone(), quest.reward.clone())
+        (
+            quest.request.clone(),
+            quest.reward.clone(),
+            quest.template_id == city::INTRO_TEMPLATE_ID,
+        )
     };
+
+    // Сюжетный квест нельзя сдать, пока Мартин не попросил компас.
+    if is_intro && state.city.martin != city::MartinStage::WaitCompass {
+        return Err(QuestError::NotEnoughItems);
+    }
 
     // Проверяем наличие всех предметов.
     for (id, qty) in &request {
@@ -525,6 +546,11 @@ pub fn complete_quest(state: &mut GameState, quest_id: &str) -> Result<(), Quest
     state.quests.retain(|q| q.id != quest_id);
     state.remove_quest_letter(quest_id);
 
+    if is_intro {
+        // Мартин доволен: город открыт, лавка создана.
+        city::unlock_city(state);
+    }
+
     Ok(())
 }
 
@@ -540,6 +566,11 @@ pub fn decline_quest(state: &mut GameState, quest_id: &str) -> Result<(), QuestE
 
     if quest.status != QuestStatus::Active {
         return Err(QuestError::NotAvailable);
+    }
+
+    // Сюжетный заказ Мартина не отклоняется.
+    if quest.template_id == city::INTRO_TEMPLATE_ID {
+        return Err(QuestError::TooLateToDecline);
     }
 
     // Таймер: `expires_at - QUEST_DURATION` — момент взятия.

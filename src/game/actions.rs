@@ -1,4 +1,5 @@
 ﻿use super::balance::{self, Cost};
+use super::city;
 use super::events;
 use super::expedition;
 use super::i18n;
@@ -238,7 +239,7 @@ pub fn can_afford(state: &GameState, cost: Cost) -> bool {
 }
 
 /// Списывает стоимость постройки. Возвращает `false`, если не хватает.
-fn spend_cost(state: &mut GameState, cost: Cost) -> bool {
+pub(crate) fn spend_cost(state: &mut GameState, cost: Cost) -> bool {
     if !can_afford(state, cost) {
         return false;
     }
@@ -313,19 +314,30 @@ pub fn study_map(state: &mut GameState, item_id: &str) -> Result<&'static str, S
     Ok(location_id)
 }
 
-/// Изучает чертёж паровой машины: тратит одну штуку и открывает рецепт
-/// прототипа в кузнице.
+/// Изучает чертёж (паровой машины или компаса): тратит одну штуку и
+/// открывает соответствующий рецепт в кузнице.
 pub fn study_blueprint(state: &mut GameState, item_id: &str) -> Result<(), StudyBlueprintError> {
-    if item_id != items::STEAM_BLUEPRINT_ID {
-        return Err(StudyBlueprintError::NotBlueprint);
+    match item_id {
+        items::STEAM_BLUEPRINT_ID => {
+            if state.steam_blueprint_studied {
+                return Err(StudyBlueprintError::AlreadyStudied);
+            }
+            if !state.remove_item(items::STEAM_BLUEPRINT_ID, 1) {
+                return Err(StudyBlueprintError::Missing);
+            }
+            state.steam_blueprint_studied = true;
+        }
+        items::COMPASS_BLUEPRINT_ID => {
+            if state.compass_blueprint_studied {
+                return Err(StudyBlueprintError::AlreadyStudied);
+            }
+            if !state.remove_item(items::COMPASS_BLUEPRINT_ID, 1) {
+                return Err(StudyBlueprintError::Missing);
+            }
+            state.compass_blueprint_studied = true;
+        }
+        _ => return Err(StudyBlueprintError::NotBlueprint),
     }
-    if state.steam_blueprint_studied {
-        return Err(StudyBlueprintError::AlreadyStudied);
-    }
-    if !state.remove_item(items::STEAM_BLUEPRINT_ID, 1) {
-        return Err(StudyBlueprintError::Missing);
-    }
-    state.steam_blueprint_studied = true;
     Ok(())
 }
 
@@ -336,6 +348,8 @@ pub fn study_blueprint(state: &mut GameState, item_id: &str) -> Result<(), Study
 pub fn recipe_visible(state: &GameState, recipe: &items::Recipe) -> bool {
     if recipe.id == items::STEAM_PROTOTYPE_RECIPE {
         state.steam_blueprint_studied && !state.steam_prototype_built
+    } else if recipe.id == items::COMPASS_RECIPE {
+        state.compass_blueprint_studied
     } else {
         true
     }
@@ -407,12 +421,26 @@ fn tick_inner(state: &mut GameState, dt_seconds: f64, advance_quests: bool) {
 
     let sawmill = state.sawmill_wood_per_sec() * income * dt;
     if sawmill > 0.0 {
-        state.add_produced(ResourceKind::Wood, sawmill);
+        let added = state.add_produced(ResourceKind::Wood, sawmill);
+        city::record_production(state, "wood", added);
     }
 
     let mine = state.mine_stone_per_sec() * income * dt;
     if mine > 0.0 {
-        state.add_produced(ResourceKind::Stone, mine);
+        let added = state.add_produced(ResourceKind::Stone, mine);
+        city::record_production(state, "stone", added);
+    }
+
+    let hired_wood = state.hired_sawmill_wood_per_sec() * income * dt;
+    if hired_wood > 0.0 {
+        let added = state.add_produced(ResourceKind::Wood, hired_wood);
+        city::record_production(state, "wood", added);
+    }
+
+    let hired_stone = state.hired_mine_stone_per_sec() * income * dt;
+    if hired_stone > 0.0 {
+        let added = state.add_produced(ResourceKind::Stone, hired_stone);
+        city::record_production(state, "stone", added);
     }
 
     tick_research(state, dt);
@@ -422,6 +450,7 @@ fn tick_inner(state: &mut GameState, dt_seconds: f64, advance_quests: bool) {
     if advance_quests {
         crate::game::quests::tick_quests(state);
         crate::game::quests::tick_collectors(state);
+        city::tick_city(state);
     }
     check_offers(state);
 }
@@ -450,7 +479,8 @@ fn tick_research(state: &mut GameState, dt: f64) {
 
 /// Продвигает партии угольной ямы: тратит дерево, добавляет уголь.
 fn tick_coal_pit(state: &mut GameState, dt: f64) {
-    if !state.coal_pit_researched || state.coal_pit_workers == 0 {
+    let workers = state.coal_pit_workers as f64 + state.hired_coal_workers();
+    if !state.coal_pit_researched || workers <= 0.0 {
         return;
     }
 
@@ -464,7 +494,7 @@ fn tick_coal_pit(state: &mut GameState, dt: f64) {
         return;
     }
 
-    state.coal_pit_progress += state.coal_pit_workers as f64 * dt / balance::COAL_PIT_BATCH_SECONDS;
+    state.coal_pit_progress += workers * dt / balance::COAL_PIT_BATCH_SECONDS;
 
     while state.coal_pit_progress >= 1.0 {
         state.coal_pit_progress -= 1.0;
@@ -480,6 +510,7 @@ fn tick_coal_pit(state: &mut GameState, dt: f64) {
         let output = balance::COAL_PIT_COAL_PER_BATCH * state.income_multiplier();
         let added = state.add_active("coal", output.round().max(0.0) as u32);
         state.stats.coal_produced += added as f64;
+        city::record_production(state, "coal", added as f64);
         state.coal_seen = true;
     }
 }
@@ -1519,6 +1550,17 @@ mod tests {
     }
 
     #[test]
+    fn barn_level_20_fits_storage() {
+        let cost = balance::barn_cost(20);
+        assert!(
+            cost.wood <= 9999.0,
+            "дерево на 20-м уровне не влезает в склад: {}",
+            cost.wood
+        );
+        assert!(cost.boards <= crate::game::items::ITEM_STACK_LIMIT);
+    }
+
+    #[test]
     fn forge_upgrades_fit_into_storage_you_can_build() {
         // Игрок жаловался: при росте ×1.8 кузница 8-го уровня стоила 5102
         // дерева, а склад 10-го давал 3600 — улучшение было не купить.
@@ -1636,7 +1678,7 @@ mod tests {
         assert_eq!(state.item_count("iron"), 3);
         // Уголь в рецепте слитка больше не нужен: только руда и огонь.
         assert_eq!(state.active_amount("coal"), 1);
-        assert_eq!(spent_fire, 15);
+        assert_eq!(spent_fire, 10);
         assert_eq!(state.item_count("iron_ingot"), 1);
     }
 
@@ -1836,17 +1878,20 @@ mod tests {
     fn prestige_resets_progress_and_keeps_cycles() {
         let mut state = GameState {
             cycles: 4,
+            earned_income: 1.2,
             ..GameState::default()
         };
         state.cycle_wood = state.cycle_threshold();
         state.time = 5.0;
+        let delta = state.cycle_delta();
 
         assert_eq!(prestige(&mut state), PrestigeResult::Done(5));
         assert_eq!(state.cycles, 5);
         assert_eq!(state.cycle_wood, 0.0);
         assert_eq!(state.cycle_stone, 0.0);
         assert_eq!(state.time, 5.0);
-        assert!((state.income_multiplier() - 3.0).abs() < 1e-9);
+        // X копится: прежние 1.2 плюс прибавка прошедшего цикла (0.08).
+        assert!((state.income_multiplier() - (1.2 + delta)).abs() < 1e-9);
     }
 
     #[test]
@@ -1860,24 +1905,28 @@ mod tests {
         state.cycle_wood = state.cycle_threshold();
 
         assert_eq!(prestige(&mut state), PrestigeResult::Done(5));
-        // Бонус за 4 цикла — 20 опыта: 10 закрывает 1 → 2, остаток 10 из 40.
-        assert_eq!(state.smith_level, 2);
-        assert!((state.smith_xp - 10.0).abs() < 1e-9);
+        // Бонус за 4 цикла — 5 × 4 = 20 опыта. Порог 1-го уровня теперь 100,
+        // поэтому уровень остаётся первым, а опыт копится.
+        assert_eq!(state.smith_level, 1);
+        assert!((state.smith_xp - 20.0).abs() < 1e-9);
     }
 
     #[test]
-    fn income_multiplier_is_five_on_tenth_cycle() {
-        let state = GameState {
-            cycles: 10,
-            ..GameState::default()
-        };
-        assert!((state.income_multiplier() - 5.0).abs() < 1e-9);
+    fn income_multiplier_grows_with_cycles() {
+        let mut state = GameState::default();
+        assert!((state.income_multiplier() - 1.0).abs() < 1e-9);
+
+        // Перерождение накапливает прибавку цикла в X.
+        state.cycle_wood = state.cycle_threshold();
+        let delta = state.cycle_delta();
+        assert_eq!(prestige(&mut state), PrestigeResult::Done(1));
+        assert!((state.income_multiplier() - (1.0 + delta)).abs() < 1e-9);
     }
 
     #[test]
     fn tick_applies_income_multiplier_once() {
         let mut state = GameState {
-            cycles: 10,
+            earned_income: 1.5,
             worker_house_level: 1,
             sawmill_level: 1,
             sawmill_workers: 2,
@@ -1886,56 +1935,58 @@ mod tests {
             ..GameState::default()
         };
 
-        // 2 работника × 0.5/с × X(10)=5 → 5 дерева в секунду, за 2 с — 10.
-        // Камень: 1 работник × 0.5/с × 5 → 5 за 2 с.
+        // 2 работника × 0.5/с × X=1.5 → 3 дерева за 2 с; камень — 1.5.
         tick(&mut state, 2.0);
 
-        assert!((state.active_amount("wood") as f64 - 10.0).abs() < 1e-9);
-        assert!((state.active_amount("stone") as f64 - 5.0).abs() < 1e-9);
-        assert!((state.cycle_wood - 10.0).abs() < 1e-9);
-        assert!((state.cycle_stone - 5.0).abs() < 1e-9);
+        assert!((state.active_amount("wood") as f64 - 3.0).abs() < 1e-9);
+        // Камень добавился на 1.5, в складе целая единица, остаток — в дроби.
+        assert_eq!(state.active_amount("stone"), 1);
+        assert!((state.cycle_wood - 3.0).abs() < 1e-9);
+        // В счётчик цикла попадает целая часть добычи.
+        assert!((state.cycle_stone - 1.0).abs() < 1e-9);
     }
 
     #[test]
     fn gather_scales_with_cycles() {
         let mut state = GameState {
-            cycles: 10,
+            earned_income: 1.5,
             ..rested_state()
         };
 
+        // Клик × X: 1.0 × 1.5 = 1.5, в склад попадает целая единица.
         assert_eq!(
             gather(&mut state, ResourceKind::Wood),
-            GatherResult::Gathered(5.0)
+            GatherResult::Gathered(1.0)
         );
-        assert_eq!(state.active_amount("wood"), 5);
+        assert_eq!(state.active_amount("wood"), 1);
     }
 
     #[test]
     fn rest_scales_with_cycles_but_energy_cap_does_not() {
         let mut state = GameState {
-            cycles: 10,
+            earned_income: 1.5,
             ..GameState::default()
         };
 
-        // «Отдых» × X: 1.0 × 5 = 5.
-        assert!((state.rest_energy() - 5.0).abs() < 1e-9);
+        // «Отдых» × X: 1.0 × 1.5 = 1.5.
+        assert!((state.rest_energy() - 1.5).abs() < 1e-9);
         // Максимум энергии без X: 100.
         assert!((state.max_energy() - 100.0).abs() < 1e-9);
 
         let gained = rest(&mut state);
-        assert!((gained - 5.0).abs() < 1e-9);
+        assert!((gained - 1.5).abs() < 1e-9);
     }
 
     #[test]
     fn passive_energy_regen_scales_with_cycles() {
         let state = GameState {
-            cycles: 10,
+            earned_income: 1.5,
             house_level: 1,
             ..GameState::default()
         };
 
-        // Дом даёт 0.5/с, X на R = 10 равен 5 → 2.5/с.
-        assert!((state.energy_regen() - 2.5).abs() < 1e-9);
+        // Дом даёт 0.5/с, X = 1.5 → 0.75/с.
+        assert!((state.energy_regen() - 0.75).abs() < 1e-9);
     }
 
     #[test]
@@ -2437,5 +2488,29 @@ mod tests {
         assert_eq!(refund.len(), 2, "огонь не должен возвращаться");
         assert_eq!(refund[0], ("iron_ingot".to_string(), 7));
         assert_eq!(refund[1], ("leather".to_string(), 2));
+    }
+
+    #[test]
+    fn jewelry_with_recipe_can_be_dismantled() {
+        for item_id in [
+            "silver_ring",
+            "trader_ring",
+            "miner_amulet",
+            "wanderer_pendant",
+            "gold_ring",
+            "gold_pendant",
+            "smith_ring",
+            "smith_amulet",
+        ] {
+            assert!(
+                items::is_dismantlable(item_id),
+                "украшение не разбирается: {item_id}"
+            );
+        }
+
+        let mut state = GameState::default();
+        state.add_item("miner_amulet", 1);
+        assert!(dismantle_item(&mut state, "miner_amulet").is_ok());
+        assert_eq!(state.item_count("miner_amulet"), 0);
     }
 }

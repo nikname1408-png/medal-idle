@@ -46,9 +46,15 @@ pub fn TradeScreen(
     let mut handled_back = use_signal(|| *back.peek());
     let mut offer_open = use_signal(|| false);
     let mut offer_item = use_signal(|| None::<String>);
-    let offer_qty = use_signal(|| 1u32);
-    let offer_price = use_signal(|| 0.0f64);
+    // Выбранная партия: количество и цена, согласованные в первом окне.
+    let mut offer_qty = use_signal(|| 1u32);
+    let mut offer_price = use_signal(|| 0.0f64);
     let mut offer_msg = use_signal(String::new);
+    let mut haggle_open = use_signal(|| false);
+    let mut target_price = use_signal(|| 0.0f64);
+    let mut rounds_left = use_signal(|| 3u32);
+    let mut haggle_locked = use_signal(|| false);
+    let mut haggle_junk = use_signal(|| false);
 
     use_effect(move || {
         let count = back();
@@ -56,7 +62,13 @@ pub fn TradeScreen(
             return;
         }
         handled_back.set(count);
-        if selected.peek().is_some() {
+        // Системная кнопка «Назад» закрывает верхнее окно: сначала торг,
+        // потом выбор товара, потом карточку, и только затем сам экран.
+        if *haggle_open.peek() {
+            haggle_open.set(false);
+        } else if *offer_open.peek() {
+            offer_open.set(false);
+        } else if selected.peek().is_some() {
             selected.set(None);
         } else {
             on_close.call(());
@@ -93,165 +105,177 @@ pub fn TradeScreen(
     } else {
         i18n::t("trade.col_owned")
     };
+    let wallet_text = i18n::tf(
+        "trade.wallet",
+        &[
+            &format_money(trader::wallet_preview(&view, trader_now)),
+            &format_money(trader::TRADER_WALLET),
+        ],
+    );
 
     rsx! {
         div { class: "trader-overlay full",
             div { class: "trader-window",
-                div { class: "trade-book",
-                    div { class: "trade-head",
-                        span { class: "trade-title", "{title_text}" }
-                        button {
-                            class: "trade-close",
-                            onclick: move |_| on_close.call(()),
-                            "{i18n::t(\"trade.leave\")}"
-                        }
-                    }
-                    div { class: "trade-subhead",
-                        span { "{i18n::t(\"trade.subhead\")}" }
-                        span { class: "trade-subhead-gold", "{gold_text}" }
-                    }
-
-                    div { class: "trade-trader-picker",
-                        for (index , trader_def) in trader::TRADERS.iter().enumerate() {
+                // Пока открыт оффер или торг — таблица и карточка товара
+                // скрыты: модалка занимает всё окно, как отдельная вкладка.
+                if !offer_open() && !haggle_open() {
+                    div { class: "trade-book",
+                        div { class: "trade-head",
+                            span { class: "trade-title", "{title_text}" }
                             button {
-                                key: "{trader_def.id}",
-                                class: if index == trader_now { "trade-trader active" } else { "trade-trader" },
-                                onclick: move |_| {
-                                    trader_index.set(index);
-                                    selected.set(None);
-                                    qty.set(1);
-                                    message.set(String::new());
-                                },
-                                "{trader_def.name()}"
+                                class: "trade-close",
+                                onclick: move |_| on_close.call(()),
+                                "{i18n::t(\"trade.leave\")}"
                             }
                         }
-                    }
+                        div { class: "trade-subhead",
+                            span { "{i18n::t(\"trade.subhead\")}" }
+                            span { class: "trade-subhead-gold", "{gold_text}" }
+                        }
 
-                    div { class: "trade-controls",
-                        div { class: "trade-tabs",
-                            button {
-                                class: if !show_quests() && mode_now.is_buy() { "trade-tab active" } else { "trade-tab" },
-                                onclick: move |_| {
-                                    show_quests.set(false);
-                                    mode.set(Mode::Buy);
-                                    selected.set(None);
-                                    qty.set(1);
-                                    message.set(String::new());
-                                },
-                                "{i18n::t(\"trade.buy_tab\")}"
+                        div { class: "trade-trader-picker",
+                            for (index , trader_def) in trader::TRADERS.iter().enumerate() {
+                                button {
+                                    key: "{trader_def.id}",
+                                    class: if index == trader_now { "trade-trader active" } else { "trade-trader" },
+                                    onclick: move |_| {
+                                        trader_index.set(index);
+                                        selected.set(None);
+                                        qty.set(1);
+                                        message.set(String::new());
+                                    },
+                                    "{trader_def.name()}"
+                                }
                             }
-                            button {
-                                class: if !show_quests() && !mode_now.is_buy() { "trade-tab active" } else { "trade-tab" },
-                                onclick: move |_| {
-                                    show_quests.set(false);
-                                    mode.set(Mode::Sell);
-                                    selected.set(None);
-                                    qty.set(1);
-                                    message.set(String::new());
-                                },
-                                "{i18n::t(\"trade.sell_tab\")}"
+                        }
+
+                        div { class: "trade-controls",
+                            div { class: "trade-tabs",
+                                button {
+                                    class: if !show_quests() && mode_now.is_buy() { "trade-tab active" } else { "trade-tab" },
+                                    onclick: move |_| {
+                                        show_quests.set(false);
+                                        mode.set(Mode::Buy);
+                                        selected.set(None);
+                                        qty.set(1);
+                                        message.set(String::new());
+                                    },
+                                    "{i18n::t(\"trade.buy_tab\")}"
+                                }
+                                button {
+                                    class: if !show_quests() && !mode_now.is_buy() { "trade-tab active" } else { "trade-tab" },
+                                    onclick: move |_| {
+                                        show_quests.set(false);
+                                        mode.set(Mode::Sell);
+                                        selected.set(None);
+                                        qty.set(1);
+                                        message.set(String::new());
+                                    },
+                                    "{i18n::t(\"trade.sell_tab\")}"
+                                }
+                                button {
+                                    class: if show_quests() { "trade-tab active" } else { "trade-tab" },
+                                    onclick: move |_| {
+                                        show_quests.set(true);
+                                        selected.set(None);
+                                        qty.set(1);
+                                        message.set(String::new());
+                                    },
+                                    "{i18n::t(\"quest.tab\")}"
+                                }
                             }
-                            button {
-                                class: if show_quests() { "trade-tab active" } else { "trade-tab" },
-                                onclick: move |_| {
-                                    show_quests.set(true);
-                                    selected.set(None);
-                                    qty.set(1);
-                                    message.set(String::new());
-                                },
-                                "{i18n::t(\"quest.tab\")}"
+                            if !show_quests() {
+                                label { class: "trade-field",
+                                    span { "{i18n::t(\"trade.filter\")}" }
+                                    select {
+                                        class: "trade-select",
+                                        value: match filter_now {
+                                            Filter::All => "all",
+                                            Filter::Available => "available",
+                                        },
+                                        onchange: move |event| {
+                                            filter
+                                                .set(
+                                                    if event.value() == "available" {
+                                                        Filter::Available
+                                                    } else {
+                                                        Filter::All
+                                                    },
+                                                );
+                                        },
+                                        option { value: "all", "{i18n::t(\"trade.all\")}" }
+                                        option { value: "available", "{i18n::t(\"trade.available\")}" }
+                                    }
+                                }
+                                button {
+                                    class: "trade-tab",
+                                    onclick: move |_| {
+                                        offer_open.set(true);
+                                        offer_item.set(None);
+                                        offer_msg.set(String::new());
+                                    },
+                                    "{i18n::t(\"trade.offer_btn\")}"
+                                }
                             }
                         }
                         if !show_quests() {
-                            label { class: "trade-field",
-                                span { "{i18n::t(\"trade.filter\")}" }
-                                select {
-                                    class: "trade-select",
-                                    value: match filter_now {
-                                        Filter::All => "all",
-                                        Filter::Available => "available",
-                                    },
-                                    onchange: move |event| {
-                                        filter
-                                            .set(
-                                                if event.value() == "available" {
-                                                    Filter::Available
-                                                } else {
-                                                    Filter::All
-                                                },
-                                            );
-                                    },
-                                    option { value: "all", "{i18n::t(\"trade.all\")}" }
-                                    option { value: "available", "{i18n::t(\"trade.available\")}" }
+                            div { class: "trade-table",
+                                div { class: "trade-row trade-head-row",
+                                    span { "{i18n::t(\"trade.col_good\")}" }
+                                    span { class: "num", "{column_owned}" }
+                                    span { class: "num", "{i18n::t(\"trade.col_buy\")}" }
+                                    span { class: "num", "{i18n::t(\"trade.col_sell\")}" }
+                                    span { class: "num", "{i18n::t(\"trade.col_demand\")}" }
+                                    span { class: "num", "{i18n::t(\"trade.col_market\")}" }
                                 }
-                            }
-                            button {
-                                class: "trade-tab",
-                                onclick: move |_| {
-                                    offer_open.set(true);
-                                    offer_item.set(None);
-                                    offer_msg.set(String::new());
-                                },
-                                "{i18n::t(\"trade.offer_btn\")}"
-                            }
-                        }
-                    }
-                    if !show_quests() {
-                        div { class: "trade-table",
-                            div { class: "trade-row trade-head-row",
-                                span { "{i18n::t(\"trade.col_good\")}" }
-                                span { class: "num", "{column_owned}" }
-                                span { class: "num", "{i18n::t(\"trade.col_buy\")}" }
-                                span { class: "num", "{i18n::t(\"trade.col_sell\")}" }
-                                span { class: "num", "{i18n::t(\"trade.col_demand\")}" }
-                                span { class: "num", "{i18n::t(\"trade.col_market\")}" }
-                            }
-                            if visible.is_empty() {
-                                div { class: "trade-empty", "{i18n::t(\"trade.empty\")}" }
-                            }
-                            for good in visible.iter().copied() {
-                                if let Some(item) = items::item(&good.item_id) {
-                                    TradeRow {
-                                        key: "{good.item_id}",
-                                        item: item.clone(),
-                                        good: good.clone(),
-                                        mode: mode_now,
-                                        view: view.clone(),
-                                        selected: selected_now.as_deref() == Some(good.item_id.as_str()),
-                                        on_select: move |item_id: String| {
-                                            selected.set(Some(item_id));
-                                            qty.set(1);
-                                            message.set(String::new());
-                                        },
+                                if visible.is_empty() {
+                                    div { class: "trade-empty", "{i18n::t(\"trade.empty\")}" }
+                                }
+                                for good in visible.iter().copied() {
+                                    if let Some(item) = items::item(&good.item_id) {
+                                        TradeRow {
+                                            key: "{good.item_id}",
+                                            item: item.clone(),
+                                            good: good.clone(),
+                                            mode: mode_now,
+                                            view: view.clone(),
+                                            selected: selected_now.as_deref() == Some(good.item_id.as_str()),
+                                            on_select: move |item_id: String| {
+                                                selected.set(Some(item_id));
+                                                qty.set(1);
+                                                message.set(String::new());
+                                            },
+                                        }
                                     }
                                 }
                             }
+                        } else {
+                            QuestBoard { state, view: view.clone() }
                         }
-                    } else {
-                        QuestBoard { state, view: view.clone() }
-                    }
-                    if !show_quests() {
-                        div { class: "trade-foot",
-                            div { "{MarketStatus::Balance.legend()}" }
-                            div { class: "trade-hint", "{hint}" }
-                            if !message_now.is_empty() {
-                                div { class: "trade-error", "{message_now}" }
+                        if !show_quests() {
+                            div { class: "trade-foot",
+                                div { class: "trade-wallet", "{wallet_text}" }
+                                div { "{MarketStatus::Balance.legend()}" }
+                                div { class: "trade-hint", "{hint}" }
+                                if !message_now.is_empty() {
+                                    div { class: "trade-error", "{message_now}" }
+                                }
                             }
                         }
                     }
-                }
 
-                if let Some(item_id) = selected_now {
-                    if let Some(item) = items::item(&item_id) {
-                        ItemCard {
-                            state,
-                            view: view.clone(),
-                            trader_index: trader_now,
-                            item: item.clone(),
-                            mode: mode_now,
-                            qty,
-                            message,
-                            on_close: move |_| selected.set(None),
+                    if let Some(item_id) = selected_now {
+                        if let Some(item) = items::item(&item_id) {
+                            ItemCard {
+                                state,
+                                view: view.clone(),
+                                trader_index: trader_now,
+                                item: item.clone(),
+                                mode: mode_now,
+                                qty,
+                                message,
+                                on_close: move |_| selected.set(None),
+                            }
                         }
                     }
                 }
@@ -260,11 +284,369 @@ pub fn TradeScreen(
                         state,
                         view: view.clone(),
                         trader_index: trader_now,
+                        on_select: move |(id, q, price, is_junk, max_rounds)| {
+                            offer_item.set(Some(id));
+                            offer_qty.set(q);
+                            offer_price.set(price);
+                            target_price.set(price);
+                            rounds_left.set(max_rounds);
+                            haggle_locked.set(false);
+                            haggle_junk.set(is_junk);
+                            offer_open.set(false); // Закрываем выбор
+                            haggle_open.set(true); // Открываем торг
+                        },
+                        on_close: move |_| offer_open.set(false),
+                    }
+                }
+                if haggle_open() {
+                    HaggleModal {
+                        state,
+                        view: view.clone(),
+                        trader_index: trader_now,
                         offer_item,
                         offer_qty,
                         offer_price,
-                        offer_msg,
-                        on_close: move |_| offer_open.set(false),
+                        target_price,
+                        rounds_left,
+                        haggle_locked,
+                        haggle_junk,
+                        on_back: move |_| {
+                            haggle_open.set(false);
+                            offer_open.set(true); // Вернуться к выбору
+                        },
+                        on_close: move |_| haggle_open.set(false),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn HaggleModal(
+    state: Signal<GameState>,
+    view: GameState,
+    trader_index: usize,
+    offer_item: Signal<Option<String>>,
+    offer_qty: Signal<u32>,
+    offer_price: Signal<f64>,
+    target_price: Signal<f64>,
+    rounds_left: Signal<u32>,
+    haggle_locked: Signal<bool>,
+    haggle_junk: Signal<bool>,
+    on_back: EventHandler<()>,
+    on_close: EventHandler<()>,
+) -> Element {
+    let mut state = state;
+    let mut offer_qty = offer_qty;
+    let mut offer_price = offer_price;
+    let mut target_price = target_price;
+    let mut rounds_left = rounds_left;
+    let mut haggle_locked = haggle_locked;
+    let mut haggle_junk = haggle_junk;
+    let mut offer_msg = use_signal(String::new);
+
+    let selected_id = offer_item();
+    let qty = offer_qty();
+    let current_price = offer_price();
+    let target = target_price();
+    let rounds = rounds_left();
+    let is_locked = haggle_locked();
+
+    // Ручной ввод цены. Значение живёт в локальном сигнале и обновляется
+    // только вместе с ценой (кнопки количества, ползунок, итог торга), поэтому
+    // набранное игроком не перетирается на каждом рендере.
+    let mut price_text = use_signal(|| format!("{:.0}", target));
+
+    let Some(id) = selected_id else {
+        return rsx! {};
+    };
+
+    let selected_name = items::item(&id)
+        .map(|item| item.name().to_string())
+        .unwrap_or_default();
+    let selected_max = crate::game::trader::max_offer(&view, trader_index, &id);
+
+    let (min_price, max_price) = if current_price > 0.0 {
+        crate::game::trader::haggle_range(current_price)
+    } else {
+        (0.0, 0.0)
+    };
+
+    let chance = if current_price > 0.0 {
+        crate::game::trader::haggle_chance(
+            &view,
+            current_price,
+            target,
+            min_price,
+            max_price,
+            haggle_junk(),
+        )
+    } else {
+        0
+    };
+
+    rsx! {
+        div { class: "offer-overlay",
+            div { class: "trade-card",
+                div { class: "trade-card-head",
+                    span { class: "trade-card-title", "{selected_name}" }
+                    span { class: "trade-rarity", "x {qty}" }
+                }
+
+                div { class: "trade-qty", style: "margin-top: 8px;",
+                    span { class: "trade-qty-label", "{i18n::t(\"trade.qty\")}" }
+                    button {
+                        class: "trade-step",
+                        disabled: is_locked || qty <= 1,
+                        onclick: {
+                            let id = id.clone();
+                            move |_| {
+                                let new_q = qty - 1;
+                                if let Ok(quote) = crate::game::trader::evaluate_offer(
+                                    &mut state.write(),
+                                    trader_index,
+                                    &id,
+                                    new_q,
+                                ) {
+                                    offer_qty.set(new_q);
+                                    offer_price.set(quote.total);
+                                    target_price.set(quote.total);
+                                    price_text.set(format!("{:.0}", quote.total));
+                                    haggle_locked.set(false);
+                                    // Партия изменилась — пересчитываем «junk»-флаг:
+                                    // от него зависит шанс торга.
+                                    haggle_junk.set(quote.parts.iter().all(|p| p.is_junk));
+                                    offer_msg.set(String::new());
+                                }
+                            }
+                        },
+                        "−"
+                    }
+                    span { class: "trade-qty-value", "{qty}" }
+                    button {
+                        class: "trade-step",
+                        disabled: is_locked || qty >= selected_max,
+                        onclick: {
+                            let id = id.clone();
+                            move |_| {
+                                let new_q = (qty + 1).min(selected_max);
+                                if let Ok(quote) = crate::game::trader::evaluate_offer(
+                                    &mut state.write(),
+                                    trader_index,
+                                    &id,
+                                    new_q,
+                                ) {
+                                    offer_qty.set(new_q);
+                                    offer_price.set(quote.total);
+                                    target_price.set(quote.total);
+                                    price_text.set(format!("{:.0}", quote.total));
+                                    haggle_locked.set(false);
+                                    // Партия изменилась — пересчитываем «junk»-флаг:
+                                    // от него зависит шанс торга.
+                                    haggle_junk.set(quote.parts.iter().all(|p| p.is_junk));
+                                    offer_msg.set(String::new());
+                                }
+                            }
+                        },
+                        "+"
+                    }
+                    button {
+                        class: "trade-step",
+                        disabled: is_locked || qty >= selected_max,
+                        onclick: {
+                            let id = id.clone();
+                            move |_| {
+                                let new_q = (qty + 10).min(selected_max);
+                                if let Ok(quote) = crate::game::trader::evaluate_offer(
+                                    &mut state.write(),
+                                    trader_index,
+                                    &id,
+                                    new_q,
+                                ) {
+                                    offer_qty.set(new_q);
+                                    offer_price.set(quote.total);
+                                    target_price.set(quote.total);
+                                    price_text.set(format!("{:.0}", quote.total));
+                                    haggle_locked.set(false);
+                                    // Партия изменилась — пересчитываем «junk»-флаг:
+                                    // от него зависит шанс торга.
+                                    haggle_junk.set(quote.parts.iter().all(|p| p.is_junk));
+                                    offer_msg.set(String::new());
+                                }
+                            }
+                        },
+                        "+10"
+                    }
+                    button {
+                        class: "trade-max",
+                        disabled: is_locked || qty >= selected_max,
+                        onclick: {
+                            let id = id.clone();
+                            move |_| {
+                                let new_q = selected_max;
+                                if let Ok(quote) = crate::game::trader::evaluate_offer(
+                                    &mut state.write(),
+                                    trader_index,
+                                    &id,
+                                    new_q,
+                                ) {
+                                    offer_qty.set(new_q);
+                                    offer_price.set(quote.total);
+                                    target_price.set(quote.total);
+                                    price_text.set(format!("{:.0}", quote.total));
+                                    haggle_locked.set(false);
+                                    // Партия изменилась — пересчитываем «junk»-флаг:
+                                    // от него зависит шанс торга.
+                                    haggle_junk.set(quote.parts.iter().all(|p| p.is_junk));
+                                    offer_msg.set(String::new());
+                                }
+                            }
+                        },
+                        "{i18n::tf(\"btn.max\", &[&selected_max.to_string()])}"
+                    }
+                }
+
+                div { class: "trade-line",
+                    span { "{i18n::t(\"trade.current_offer\")}" }
+                    span { class: "trade-line-value", "{format_money(current_price)}" }
+                }
+
+                div { class: "haggle-row",
+                    div { class: "haggle-info",
+                        div { class: "trade-line-muted",
+                            "{i18n::tf(\"trade.min_price\", &[&format_money(min_price)])}"
+                        }
+                        div { class: "trade-line-muted",
+                            "{i18n::tf(\"trade.max_price\", &[&format_money(max_price)])}"
+                        }
+                        div { class: "haggle-chance", "{i18n::t(\"trade.chance\")}: {chance}%" }
+                        div { class: "trade-line-muted", "{i18n::t(\"trade.rounds_left\")}: {rounds}" }
+                    }
+                    div { class: "haggle-slider-wrap",
+                        input {
+                            class: "haggle-slider",
+                            r#type: "range",
+                            min: "{min_price}",
+                            max: "{max_price}",
+                            step: "1",
+                            value: "{target}",
+                            disabled: is_locked || rounds == 0,
+                            oninput: move |evt| {
+                                if let Ok(val) = evt.value().parse::<f64>() {
+                                    target_price.set(val);
+                                    price_text.set(format!("{:.0}", val));
+                                }
+                            },
+                        }
+                    }
+                }
+
+                div { class: "haggle-manual",
+                    span { "{i18n::t(\"trade.your_price\")}" }
+                    input {
+                        class: "haggle-input",
+                        r#type: "number",
+                        min: "{min_price}",
+                        max: "{max_price}",
+                        step: "1",
+                        value: "{price_text}",
+                        disabled: is_locked,
+                        oninput: move |evt| {
+                            price_text.set(evt.value());
+                            if let Ok(val) = evt.value().parse::<f64>() {
+                                target_price.set(val.clamp(min_price, max_price));
+                            }
+                        },
+                    }
+                }
+
+                if !offer_msg().is_empty() {
+                    div { class: if is_locked { "trade-error ok" } else { "trade-error" }, "{offer_msg()}" }
+                }
+
+                div { class: "trade-actions",
+                    if !is_locked {
+                        button {
+                            class: "trade-btn",
+                            disabled: rounds == 0 || (target - current_price).abs() < 0.5 || !view.can_haggle(),
+                            onclick: move |_| {
+                                let target_now = target_price();
+                                let current_now = offer_price();
+                                let outcome = {
+                                    let mut guard = state.write();
+                                    crate::game::trader::resolve_haggle(
+                                        &mut guard,
+                                        current_now,
+                                        target_now,
+                                        min_price,
+                                        max_price,
+                                        haggle_junk(),
+                                    )
+                                };
+                                match outcome {
+                                    crate::game::trader::HaggleOutcome::Accepted(p) => {
+                                        offer_price.set(p);
+                                        target_price.set(p);
+                                        price_text.set(format!("{:.0}", p));
+                                        haggle_locked.set(true);
+                                        offer_msg.set(i18n::t("trade.haggle_accepted").to_string());
+                                    }
+                                    crate::game::trader::HaggleOutcome::Rejected(p) => {
+                                        offer_price.set(p);
+                                        target_price.set(p);
+                                        price_text.set(format!("{:.0}", p));
+                                        rounds_left.set(rounds.saturating_sub(1));
+                                        offer_msg.set(i18n::t("trade.haggle_rejected").to_string());
+                                    }
+                                }
+                            },
+                            "{i18n::t(\"trade.haggle_btn\")}"
+                        }
+                        if !view.can_haggle() {
+                            div { class: "trade-error", "{i18n::t(\"trade.debt_no_haggle\")}" }
+                        }
+                    }
+
+                    button {
+                        class: "trade-btn primary",
+                        onclick: {
+                            let id = id.clone();
+                            move |_| {
+                                let current_qty = offer_qty();
+                                let current_price = offer_price();
+                                let result = {
+                                    let mut guard = state.write();
+                                    crate::game::trader::execute_offer(
+                                        &mut guard,
+                                        trader_index,
+                                        &id,
+                                        current_qty,
+                                        current_price,
+                                    )
+                                };
+                                if result.is_ok() {
+                                    on_close.call(());
+                                } else if let Err(e) = result {
+                                    offer_msg.set(e.text().to_string());
+                                }
+                                super::app::refresh_view(state);
+                            }
+                        },
+                        "{i18n::t(\"trade.sell_btn\")}"
+                    }
+                }
+
+                div { class: "trade-actions", style: "margin-top: 10px;",
+                    button {
+                        class: "trade-btn cancel",
+                        onclick: move |_| on_back.call(()),
+                        "{i18n::t(\"btn.back\")}"
+                    }
+                    button {
+                        class: "trade-btn cancel",
+                        onclick: move |_| on_close.call(()),
+                        "{i18n::t(\"btn.close\")}"
                     }
                 }
             }
@@ -378,9 +760,19 @@ fn ItemCard(
     } else {
         0
     };
+    let wallet = trader::wallet_preview(&view, trader_index);
+    let bulk = trader::is_bulk(&item.id);
     let max_qty = match mode {
         Mode::Buy => trader::max_buy(view.gold, good.stock, buy).min(room),
-        Mode::Sell => trader::max_sell(owned, good.buy_limit, view.gold, view.gold_cap(), sell),
+        Mode::Sell => trader::max_sell(
+            owned,
+            good.buy_limit,
+            view.gold,
+            view.gold_cap(),
+            sell,
+            wallet,
+            bulk,
+        ),
     };
 
     let quantity = if max_qty == 0 {
@@ -730,46 +1122,14 @@ fn OfferModal(
     state: Signal<GameState>,
     view: GameState,
     trader_index: usize,
-    offer_item: Signal<Option<String>>,
-    offer_qty: Signal<u32>,
-    offer_price: Signal<f64>,
-    offer_msg: Signal<String>,
+    on_select: EventHandler<(String, u32, f64, bool, u32)>,
     on_close: EventHandler<()>,
 ) -> Element {
     let mut state = state;
-    let mut offer_item = offer_item;
-    let mut offer_qty = offer_qty;
-    let mut offer_price = offer_price;
-    let mut offer_msg = offer_msg;
+    let mut offer_msg = use_signal(String::new);
+    let mut selected_id = use_signal(|| None::<String>);
+    let mut qty = use_signal(|| 1u32);
 
-    // Локальные сигналы торга.
-    let max_rounds = view.haggle_rounds();
-    let mut rounds_left = use_signal(|| max_rounds);
-    let mut target_price = use_signal(|| 0.0f64);
-    let mut locked = use_signal(|| false); // торговец уже согласился на target
-    let mut chance_now = use_signal(|| 0u64);
-    let mut is_junk_now = use_signal(|| false);
-
-    // Пересчитываем шанс, когда меняется target_price.
-    use_effect(move || {
-        let current = offer_price();
-        let target = target_price();
-        if current <= 0.0 || target <= 0.0 {
-            return;
-        }
-        let (min, max) = crate::game::trader::haggle_range(current);
-        let chance = crate::game::trader::haggle_chance(
-            &state.peek(),
-            current,
-            target,
-            min,
-            max,
-            *is_junk_now.peek(),
-        );
-        chance_now.set(chance);
-    });
-
-    // Собираем список предметов для предложения.
     let mut sellable = Vec::new();
     for (id, count) in &view.inventory {
         if *count > 0
@@ -781,360 +1141,130 @@ fn OfferModal(
     }
     sellable.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let selected_id = offer_item();
-    let qty = offer_qty();
-    let current_price = offer_price();
-    let target = target_price();
-    let rounds = rounds_left();
-    let is_locked = locked();
+    let selected_now = selected_id();
+    let qty_val = qty();
 
-    // Название выбранного предмета.
-    let selected_name = selected_id
+    let selected_max = selected_now
+        .as_ref()
+        .map(|id| crate::game::trader::max_offer(&view, trader_index, id))
+        .unwrap_or(0);
+    let selected_name = selected_now
         .as_ref()
         .and_then(|id| items::item(id))
         .map(|item| item.name().to_string())
         .unwrap_or_default();
-    let selected_max = selected_id
-        .as_ref()
-        .map(|id| crate::game::trader::max_offer(&view, trader_index, id))
-        .unwrap_or(0);
-
-    // Разбивка партии: сколько штук пойдёт по нормальной цене, а сколько — как
-    // неходовой товар. Игрок должен видеть это до сделки.
-    let breakdown = selected_id
-        .as_ref()
-        .map(|id| crate::game::trader::offer_breakdown(&view, trader_index, id, qty));
-    let base_unit = selected_id
-        .as_ref()
-        .and_then(|id| items::item(id))
-        .map(|item| item.base_price as f64)
-        .unwrap_or(0.0);
-    let unit_now = if qty > 0 {
-        current_price / qty as f64
-    } else {
-        0.0
-    };
-
-    // Диапазон и шанс (пересчитываем на каждый рендер — дёшево).
-    let (min_price, max_price) = if current_price > 0.0 {
-        crate::game::trader::haggle_range(current_price)
-    } else {
-        (0.0, 0.0)
-    };
-    let chance_text = if current_price > 0.0 {
-        format!("{}%", chance_now())
-    } else {
-        "—".to_string()
-    };
-
-    // Лучшее предложение другого торговца.
-    let best_offer_text = view
-        .best_offer
-        .as_ref()
-        .filter(|b| Some(&b.item_id) == selected_id.as_ref() && b.trader_index != trader_index)
-        .map(|b| {
-            let trader_name = crate::game::trader::trader_name(b.trader_index);
-            i18n::tf(
-                "trade.best_offer_hint",
-                &[trader_name, &format_money(b.price)],
-            )
-        })
-        .unwrap_or_default();
+    let selected_id_value = selected_now.clone().unwrap_or_default();
 
     rsx! {
         div { class: "offer-overlay",
-            div { class: "offer-card trade-offer-card",
-                div { class: "offer-title", "{i18n::t(\"trade.offer_title\")}" }
+            div { class: "trade-card",
+                div { class: "trade-card-head",
+                    span { class: "trade-card-title", "{i18n::t(\"trade.offer_title\")}" }
+                    button {
+                        class: "trade-close",
+                        onclick: move |_| on_close.call(()),
+                        "[ X ]"
+                    }
+                }
 
                 if sellable.is_empty() {
-                    div { class: "offer-body", "{i18n::t(\"trade.offer_empty\")}" }
-                    button {
-                        class: "offer-later",
-                        onclick: move |_| on_close.call(()),
-                        "{i18n::t(\"btn.close\")}"
-                    }
+                    div { class: "trade-empty", "{i18n::t(\"trade.offer_empty\")}" }
                 } else {
-                    div { class: "offer-body", "{i18n::t(\"trade.offer_hint\")}" }
+                    div { class: "trade-table", style: "margin-top: 8px;",
+                        div { class: "trade-offer-grid",
+                            for (id , count) in sellable {
+                                button {
+                                    key: "{id}",
+                                    class: if selected_now.as_deref() == Some(id.as_str()) { "inv-item selected" } else { "inv-item" },
+                                    onclick: move |_| {
+                                        selected_id.set(Some(id.clone()));
+                                        qty.set(1);
+                                        offer_msg.set(String::new());
+                                    },
+                                    if let Some(item) = items::item(&id) {
+                                        ItemIcon {
+                                            item: item.clone(),
+                                            class: "inv-item-icon".to_string(),
+                                        }
+                                    }
+                                    if count > 1 {
+                                        span { class: "inv-badge", "{count}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
-                    // Сетка предметов.
-                    div { class: "trade-offer-grid",
-                        for (id , count) in sellable {
+                    if selected_now.is_some() {
+                        div { class: "trade-line", style: "margin-top: 8px;",
+                            span { "{selected_name}" }
+                            span { class: "trade-line-value", "x {qty_val}" }
+                        }
+
+                        div { class: "trade-qty",
+                            span { class: "trade-qty-label", "{i18n::t(\"trade.qty\")}" }
                             button {
-                                key: "{id}",
-                                class: if selected_id.as_deref() == Some(id.as_str()) { "inv-item selected" } else { "inv-item" },
+                                class: "trade-step",
+                                disabled: qty_val <= 1,
+                                onclick: move |_| qty.set(qty().saturating_sub(1).max(1)),
+                                "−"
+                            }
+                            button {
+                                class: "trade-step",
+                                onclick: move |_| qty.set(1),
+                                "0"
+                            }
+                            button {
+                                class: "trade-step",
+                                disabled: selected_max == 0 || qty_val >= selected_max,
+                                onclick: move |_| qty.set((qty() + 1).min(selected_max)),
+                                "+"
+                            }
+                            button {
+                                class: "trade-step",
+                                disabled: selected_max <= 1 || qty_val >= selected_max,
+                                onclick: move |_| qty.set((qty() + 10).min(selected_max)),
+                                "+10"
+                            }
+                            button {
+                                class: "trade-max",
+                                disabled: selected_max == 0,
+                                onclick: move |_| qty.set(selected_max),
+                                "{i18n::tf(\"btn.max\", &[&selected_max.to_string()])}"
+                            }
+                        }
+
+                        div { class: "trade-actions",
+                            button {
+                                class: "trade-btn primary",
                                 onclick: move |_| {
+                                    let q = qty().clamp(1, selected_max);
                                     let result = {
                                         let mut guard = state.write();
-                                        crate::game::trader::evaluate_offer(&mut guard, trader_index, &id, 1)
+                                        crate::game::trader::evaluate_offer(
+                                            &mut guard,
+                                            trader_index,
+                                            &selected_id_value,
+                                            q,
+                                        )
                                     };
                                     match result {
                                         Ok(quote) => {
-                                            offer_item.set(Some(id.clone()));
-                                            offer_qty.set(1);
-                                            offer_price.set(quote.total);
-                                            // Сбрасываем состояние торга.
-                                            target_price.set(quote.total);
-                                            rounds_left.set(max_rounds);
-                                            locked.set(false);
-                                            is_junk_now.set(quote.parts.iter().all(|p| p.is_junk));
-                                            offer_msg.set(String::new());
+                                            let junk = quote.parts.iter().all(|p| p.is_junk);
+                                            let rounds = view.haggle_rounds();
+                                            on_select
+                                                .call((selected_id_value.clone(), q, quote.total, junk, rounds));
                                         }
                                         Err(e) => offer_msg.set(e.text().to_string()),
                                     }
                                 },
-                                if let Some(item) = items::item(&id) {
-                                    ItemIcon {
-                                        item: item.clone(),
-                                        class: "inv-item-icon".to_string(),
-                                    }
-                                }
-                                if count > 1 {
-                                    span { class: "inv-badge", "{count}" }
-                                }
+                                "{i18n::t(\"btn.next\")}"
                             }
                         }
                     }
 
-                    if selected_id.is_none() && !offer_msg().is_empty() {
+                    if !offer_msg().is_empty() {
                         div { class: "trade-error", "{offer_msg()}" }
-                    }
-
-                    // Блок торга.
-                    if selected_id.is_some() {
-                        div { class: "trade-offer-details",
-                            div { class: "trade-offer-line",
-                                span { "{selected_name}" }
-                                span { "x{qty}" }
-                            }
-
-                            // Подробности: за штуку, рынок и цена в сумке.
-                            div { class: "trade-line-muted",
-                                "{i18n::tf(\"trade.offer_unit_line\", &[&format_money(unit_now), &format_money(breakdown.map(|b| b.market_unit).unwrap_or(0.0)), &format_money(base_unit)])}"
-                            }
-                            if let Some(parts) = breakdown {
-                                if parts.junk_qty > 0 && parts.normal_qty > 0 {
-                                    div { class: "trade-warning",
-                                        "{i18n::tf(\"trade.offer_junk_line\", &[&parts.junk_qty.to_string(), &qty.to_string(), &format_money(parts.junk_unit), &format_money(parts.normal_unit)])}"
-                                    }
-                                } else if parts.junk_qty > 0 {
-                                    div { class: "trade-warning",
-                                        "{i18n::tf(\"trade.offer_junk_all\", &[&format_money(parts.junk_unit)])}"
-                                    }
-                                }
-                            }
-
-                            if !best_offer_text.is_empty() {
-                                div { class: "trade-line-muted", "{best_offer_text}" }
-                            }
-
-                            // Количество.
-                            div { class: "trade-qty",
-                                button {
-                                    class: "trade-step",
-                                    disabled: is_locked,
-                                    onclick: move |_| {
-                                        let Some(id) = offer_item() else {
-                                            return;
-                                        };
-                                        let current = offer_qty();
-                                        if current > 1 {
-                                            let new_q = current - 1;
-                                            if let Ok(quote) = crate::game::trader::evaluate_offer(
-                                                &mut state.write(),
-                                                trader_index,
-                                                &id,
-                                                new_q,
-                                            ) {
-                                                offer_qty.set(new_q);
-                                                offer_price.set(quote.total);
-                                                target_price.set(quote.total);
-                                                locked.set(false);
-                                                is_junk_now.set(quote.parts.iter().all(|p| p.is_junk));
-                                            }
-                                        }
-                                    },
-                                    "−"
-                                }
-                                span { class: "trade-qty-value", "{qty}" }
-                                button {
-                                    class: "trade-step",
-                                    disabled: is_locked,
-                                    onclick: move |_| {
-                                        let Some(id) = offer_item() else {
-                                            return;
-                                        };
-                                        let current = offer_qty();
-                                        if current < selected_max {
-                                            let new_q = current + 1;
-                                            if let Ok(quote) = crate::game::trader::evaluate_offer(
-                                                &mut state.write(),
-                                                trader_index,
-                                                &id,
-                                                new_q,
-                                            ) {
-                                                offer_qty.set(new_q);
-                                                offer_price.set(quote.total);
-                                                target_price.set(quote.total);
-                                                locked.set(false);
-                                                is_junk_now.set(quote.parts.iter().all(|p| p.is_junk));
-                                            }
-                                        }
-                                    },
-                                    "+"
-                                }
-                            }
-
-                            // Текущее предложение торговца.
-                            div { class: "trade-line",
-                                span { "{i18n::t(\"trade.current_offer\")}" }
-                                span { class: "trade-line-value", "{format_money(current_price)}" }
-                            }
-
-                            // Ползунок + инфа.
-                            div { class: "haggle-row",
-                                div { class: "haggle-info",
-                                    div { class: "trade-line-muted",
-                                        "{i18n::tf(\"trade.min_price\", &[&format_money(min_price)])}"
-                                    }
-                                    div { class: "trade-line-muted",
-                                        "{i18n::tf(\"trade.max_price\", &[&format_money(max_price)])}"
-                                    }
-                                    div { class: "haggle-chance",
-                                        "{i18n::t(\"trade.chance\")}: {chance_text}"
-                                    }
-                                    div { class: "trade-line-muted",
-                                        "{i18n::t(\"trade.rounds_left\")}: {rounds}"
-                                    }
-                                }
-                                div { class: "haggle-slider-wrap",
-                                    input {
-                                        class: "haggle-slider",
-                                        r#type: "range",
-                                        min: "{min_price}",
-                                        max: "{max_price}",
-                                        step: "1",
-                                        value: "{target}",
-                                        disabled: is_locked || rounds == 0,
-                                        oninput: move |evt| {
-                                            if let Ok(val) = evt.value().parse::<f64>() {
-                                                target_price.set(val);
-                                            }
-                                        },
-                                    }
-                                }
-                            }
-
-                            // Ручной ввод.
-                            div { class: "haggle-manual",
-                                span { "{i18n::t(\"trade.your_price\")}" }
-                                input {
-                                    class: "haggle-input",
-                                    r#type: "number",
-                                    min: "{min_price}",
-                                    max: "{max_price}",
-                                    step: "1",
-                                    value: "{target}",
-                                    disabled: is_locked,
-                                    onchange: move |evt| {
-                                        if let Ok(val) = evt.value().parse::<f64>() {
-                                            target_price.set(val.clamp(min_price, max_price));
-                                        }
-                                    },
-                                }
-                            }
-
-                            if !offer_msg().is_empty() {
-                                div { class: "trade-error ok", "{offer_msg()}" }
-                            }
-
-                            // Кнопки: предложить / продать.
-                            // Если у игрока долг — торг заблокирован, но продажа
-                            // по текущей цене разрешена (иначе игрок не сможет
-                            // заработать на оплату долга).
-                            div { class: "trade-actions",
-                                if !is_locked {
-                                    button {
-                                        class: "trade-btn",
-                                        disabled: rounds == 0
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    || (target - current_price).abs() < 0.5
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    || !view.can_haggle(),
-                                        onclick: move |_| {
-                                            if offer_item().is_none() {
-                                                return;
-                                            }
-                                            let target_now = target_price();
-                                            let current_now = offer_price();
-                                            let outcome = {
-                                                let mut guard = state.write();
-                                                crate::game::trader::resolve_haggle(
-                                                    &mut guard,
-                                                    current_now,
-                                                    target_now,
-                                                    min_price,
-                                                    max_price,
-                                                    *is_junk_now.peek(),
-                                                )
-                                            };
-                                            match outcome {
-                                                crate::game::trader::HaggleOutcome::Accepted(p) => {
-                                                    offer_price.set(p);
-                                                    target_price.set(p);
-                                                    locked.set(true);
-                                                    offer_msg.set(i18n::t("trade.haggle_accepted").to_string());
-                                                }
-                                                crate::game::trader::HaggleOutcome::Rejected(p) => {
-                                                    offer_price.set(p);
-                                                    target_price.set(p);
-                                                    rounds_left.set(rounds.saturating_sub(1));
-                                                    offer_msg.set(i18n::t("trade.haggle_rejected").to_string());
-                                                }
-                                            }
-                                        },
-                                        "{i18n::t(\"trade.haggle_btn\")}"
-                                    }
-                                    if !view.can_haggle() {
-                                        div { class: "trade-error",
-                                            "{i18n::t(\"trade.debt_no_haggle\")}"
-                                        }
-                                    }
-                                }
-                                button {
-                                    class: "trade-btn primary",
-                                    // Продажу разрешаем всегда — даже при долге,
-                                    // но только по текущей цене (без торга).
-                                    onclick: move |_| {
-                                        let Some(id) = offer_item() else {
-                                            return;
-                                        };
-                                        let current_qty = offer_qty();
-                                        let current_price = offer_price();
-                                        let result = {
-                                            let mut guard = state.write();
-                                            crate::game::trader::execute_offer(
-                                                &mut guard,
-                                                trader_index,
-                                                &id,
-                                                current_qty,
-                                                current_price,
-                                            )
-                                        };
-                                        if result.is_ok() {
-                                            on_close.call(());
-                                        } else if let Err(e) = result {
-                                            offer_msg.set(e.text().to_string());
-                                        }
-                                        refresh_view(state);
-                                    },
-                                    "{i18n::t(\"trade.sell_btn\")}"
-                                }
-                            }
-                        }
-                    }
-
-                    button {
-                        class: "offer-later",
-                        onclick: move |_| on_close.call(()),
-                        "{i18n::t(\"btn.close\")}"
                     }
                 }
             }

@@ -15,6 +15,13 @@ use super::state::GameState;
 /// Как часто рынок делает шаг симуляции.
 pub const MARKET_TICK_SECONDS: f64 = 5.0;
 
+/// Кошелёк торговца: сколько золота он готов отдать за товар за цикл.
+/// Деньги ограничивают оборот торговца, поэтому оптом сбыть горы дерева
+/// больше не выйдет — крупные партии упираются в кошелёк.
+pub const TRADER_WALLET: f64 = 3_000.0;
+/// Раз в сколько секунд кошелёк торговца пополняется.
+pub const TRADER_WALLET_INTERVAL: f64 = 30.0 * 60.0;
+
 /// Доля базовой цены, которую торговец платит игроку в равновесии.
 pub const SELL_RATE: f64 = 0.60;
 
@@ -300,6 +307,10 @@ impl GoodState {
 #[serde(default)]
 pub struct TraderMarket {
     pub goods: Vec<GoodState>,
+    /// Кошелёк на скупку товара за цикл; `0` — ещё не инициализирован.
+    pub wallet: f64,
+    /// Момент следующего пополнения кошелька в `total_play_seconds`.
+    pub wallet_at: f64,
 }
 
 impl TraderMarket {
@@ -309,6 +320,32 @@ impl TraderMarket {
 
     pub fn good_mut(&mut self, item_id: &str) -> Option<&mut GoodState> {
         self.goods.iter_mut().find(|good| good.item_id == item_id)
+    }
+}
+
+/// Кошелёк торговца с ленивой инициализацией и пополнением раз в цикл.
+pub fn wallet_of(state: &mut GameState, trader_index: usize) -> f64 {
+    let now = state.total_play_seconds;
+    let Some(market) = state.traders.get_mut(trader_index) else {
+        return 0.0;
+    };
+    if market.wallet_at <= 0.0 || now >= market.wallet_at {
+        market.wallet = TRADER_WALLET;
+        market.wallet_at = now + TRADER_WALLET_INTERVAL;
+    }
+    market.wallet
+}
+
+/// Кошелёк торговца без изменений состояния (для отрисовки).
+pub fn wallet_preview(state: &GameState, trader_index: usize) -> f64 {
+    let market = match state.traders.get(trader_index) {
+        Some(market) => market,
+        None => return 0.0,
+    };
+    if market.wallet_at <= 0.0 || state.total_play_seconds >= market.wallet_at {
+        TRADER_WALLET
+    } else {
+        market.wallet
     }
 }
 
@@ -406,7 +443,7 @@ impl Tier {
 
 /// Явная классификация предметов по тирам. По id, а не по цене —
 /// потому что «дешёвая» куртка крафтится дольше, чем «дорогой» слиток.
-fn tier_of(item_id: &str) -> Tier {
+pub fn tier_of(item_id: &str) -> Tier {
     match item_id {
         // Tier 1: базовые материалы и деревянные инструменты.
         "board" | "cloth" | "whetstone" | "brick" | "stone_block" | "jug" | "candle"
@@ -539,7 +576,11 @@ pub fn default_market(index: usize) -> TraderMarket {
         ],
     };
 
-    TraderMarket { goods }
+    TraderMarket {
+        goods,
+        wallet: TRADER_WALLET,
+        wallet_at: 0.0,
+    }
 }
 
 /// Все рынки по умолчанию.
@@ -562,6 +603,8 @@ pub enum TradeError {
     ItemNotSellable,
     NothingToOffer,
     NoTransitSpace,
+    /// У торговца кончился кошелёк на этот цикл.
+    TraderBroke,
 }
 
 impl TradeError {
@@ -579,6 +622,7 @@ impl TradeError {
             Self::ItemNotSellable => i18n::t("err.item_not_sellable"),
             Self::NothingToOffer => i18n::t("err.nothing_to_offer"),
             Self::NoTransitSpace => i18n::t("err.no_transit_space"),
+            Self::TraderBroke => i18n::t("err.trader_broke"),
         }
     }
 }
@@ -649,7 +693,9 @@ pub fn sell(
     if state.item_count(item_id) < quantity {
         return Err(TradeError::NothingToSell);
     }
-    if quantity > good.buy_limit {
+    // Крупные партии ограничены не штучным лимитом, а кошельком торговца.
+    let bulk = tier_of(item_id) == Tier::Bulk;
+    if !bulk && quantity > good.buy_limit {
         return Err(TradeError::LimitReached);
     }
 
@@ -660,6 +706,10 @@ pub fn sell(
     if state.gold + total > cap + 1e-9 {
         return Err(TradeError::GoldCapReached);
     }
+    let wallet = wallet_of(state, trader_index);
+    if total > wallet + 1e-9 {
+        return Err(TradeError::TraderBroke);
+    }
 
     if !state.remove_item(item_id, quantity) {
         return Err(TradeError::NothingToSell);
@@ -668,6 +718,9 @@ pub fn sell(
     let before = state.gold;
     state.gold = (state.gold + total).min(cap);
     state.stats.gold_earned += state.gold - before;
+    if let Some(market) = state.traders.get_mut(trader_index) {
+        market.wallet = (market.wallet - total).max(0.0);
+    }
 
     if let Some(good) = state
         .traders
@@ -675,7 +728,9 @@ pub fn sell(
         .and_then(|market| market.good_mut(item_id))
     {
         good.stock = good.stock.saturating_add(quantity);
-        good.buy_limit = good.buy_limit.saturating_sub(quantity);
+        if !bulk {
+            good.buy_limit = good.buy_limit.saturating_sub(quantity);
+        }
         // Продажа игрока сильно роняет цену: предложение растёт, спрос падает.
         let impact = (quantity * 4).min(80) as u8;
         good.supply = good.supply.saturating_add(impact).min(100);
@@ -694,14 +749,25 @@ pub fn max_buy(gold: f64, stock: u32, price: f64) -> u32 {
     stock.min(by_gold)
 }
 
-/// Сколько единиц можно продать с учётом остатка лимита скупки и места под золото.
-pub fn max_sell(owned: u32, buy_limit: u32, gold: f64, gold_cap: f64, price: f64) -> u32 {
+/// Сколько единиц можно продать с учётом лимита, кошелька торговца и места
+/// под золото. `bulk` — крупный товар, у которого штучного лимита нет.
+pub fn max_sell(
+    owned: u32,
+    buy_limit: u32,
+    gold: f64,
+    gold_cap: f64,
+    price: f64,
+    wallet: f64,
+    bulk: bool,
+) -> u32 {
     if price <= 0.0 {
         return 0;
     }
     let room = (gold_cap - gold).max(0.0);
     let by_gold = (room / price).floor() as u32;
-    owned.min(buy_limit).min(by_gold)
+    let by_wallet = (wallet.max(0.0) / price).floor() as u32;
+    let by_limit = if bulk { u32::MAX } else { buy_limit };
+    owned.min(by_limit).min(by_gold).min(by_wallet)
 }
 
 /// Продвигает рынок на `dt` секунд.
@@ -710,6 +776,21 @@ pub fn tick_markets(state: &mut GameState, dt: f64) {
     while state.market_timer + 1e-9 >= MARKET_TICK_SECONDS {
         state.market_timer -= MARKET_TICK_SECONDS;
         market_step(state);
+    }
+    // Кошельки торговцев пополняются раз в полчаса, как и налог.
+    let now = state.total_play_seconds;
+    for index in 0..state.traders.len() {
+        let refresh = state
+            .traders
+            .get(index)
+            .map(|market| market.wallet_at <= 0.0 || now >= market.wallet_at)
+            .unwrap_or(false);
+        if refresh {
+            if let Some(market) = state.traders.get_mut(index) {
+                market.wallet = TRADER_WALLET;
+                market.wallet_at = now + TRADER_WALLET_INTERVAL;
+            }
+        }
     }
 }
 
@@ -1234,6 +1315,10 @@ pub fn execute_offer(
     if state.gold + final_price > cap + 1e-9 {
         return Err(TradeError::GoldCapReached);
     }
+    let wallet = wallet_of(state, trader_idx);
+    if final_price > wallet + 1e-9 {
+        return Err(TradeError::TraderBroke);
+    }
 
     if !state.remove_item(item_id, quantity) {
         return Err(TradeError::NothingToSell);
@@ -1250,6 +1335,7 @@ pub fn execute_offer(
         .traders
         .get_mut(trader_idx)
         .ok_or(TradeError::UnknownTrader)?;
+    market.wallet = (market.wallet - final_price).max(0.0);
 
     if let Some(good) = market.good_mut(item_id) {
         // Товар уже есть на витрине (родной или транзитный) — обновляем его.
@@ -1291,6 +1377,11 @@ pub fn execute_offer(
     });
 
     Ok(())
+}
+
+/// Крупный ли товар: у него нет штучного лимита скупки, ограничивает кошелёк.
+pub fn is_bulk(item_id: &str) -> bool {
+    tier_of(item_id) == Tier::Bulk
 }
 
 /// Базовая рыночная цена товара (без учёта avg_cost).
@@ -1537,6 +1628,7 @@ mod tests {
     fn sell_moves_inventory_to_trader_and_respects_limit() {
         let mut state = GameState {
             gold: 0.0,
+            bank_level: 10,
             ..GameState::default()
         };
         state.add_item("iron_ingot", 3);
@@ -1584,6 +1676,54 @@ mod tests {
     }
 
     #[test]
+    fn wallet_limits_bulk_sales_and_refills_each_cycle() {
+        let mut state = GameState {
+            bank_level: 10,
+            ..GameState::default()
+        };
+        state.add_item("stone_block", 160);
+
+        // 120 блоков по 23 золота — 2760 из 3000, кошелёк почти пуст.
+        assert_eq!(sell(&mut state, 0, "stone_block", 120), Ok(()));
+        assert!(state.traders[0].wallet < TRADER_WALLET);
+        // После обвала цены 30 блоков стоят 360 — кошелька не хватает.
+        assert_eq!(
+            sell(&mut state, 0, "stone_block", 30),
+            Err(TradeError::TraderBroke)
+        );
+
+        state.total_play_seconds = TRADER_WALLET_INTERVAL + 1.0;
+        assert_eq!(sell(&mut state, 0, "stone_block", 1), Ok(()));
+        assert!(state.traders[0].wallet < TRADER_WALLET);
+    }
+
+    #[test]
+    fn bulk_sale_is_limited_by_the_wallet_not_by_pieces() {
+        let mut state = GameState {
+            bank_level: 10,
+            ..GameState::default()
+        };
+        state.add_item("board", 40);
+        if let Some(good) = state
+            .traders
+            .get_mut(0)
+            .and_then(|market| market.good_mut("board"))
+        {
+            good.buy_limit = 1;
+        }
+
+        assert_eq!(sell(&mut state, 0, "board", 20), Ok(()));
+        assert_eq!(
+            state
+                .traders
+                .get(0)
+                .and_then(|market| market.good("board"))
+                .map(|good| good.buy_limit),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn market_tick_keeps_values_in_bounds_and_changes_them() {
         let mut state = GameState::default();
         let before: Vec<(u8, u8)> = state
@@ -1618,11 +1758,15 @@ mod tests {
         assert_eq!(max_buy(100.0, 12, 45.0), 2);
         assert_eq!(max_buy(100.0, 1, 45.0), 1);
         assert_eq!(max_buy(10.0, 12, 45.0), 0);
-        assert_eq!(max_sell(8, 3, 0.0, 1000.0, 45.0), 3);
-        assert_eq!(max_sell(2, 3, 0.0, 1000.0, 45.0), 2);
+        assert_eq!(max_sell(8, 3, 0.0, 1000.0, 45.0, 3000.0, false), 3);
+        assert_eq!(max_sell(2, 3, 0.0, 1000.0, 45.0, 3000.0, false), 2);
         // Место под золото ограничивает продажу.
-        assert_eq!(max_sell(8, 8, 970.0, 1000.0, 45.0), 0);
-        assert_eq!(max_sell(8, 8, 920.0, 1000.0, 45.0), 1);
+        assert_eq!(max_sell(8, 8, 970.0, 1000.0, 45.0, 3000.0, false), 0);
+        assert_eq!(max_sell(8, 8, 920.0, 1000.0, 45.0, 3000.0, false), 1);
+        // Кошелёк торговца ограничивает крупные партии.
+        assert_eq!(max_sell(100, 0, 0.0, 1000.0, 10.0, 55.0, true), 5);
+        // У bulk-товара штучный лимит не мешает.
+        assert_eq!(max_sell(100, 0, 0.0, 1000.0, 10.0, 3000.0, true), 100);
     }
 
     #[test]
@@ -1698,7 +1842,10 @@ mod tests {
     fn market_recovers_gradually_after_flood() {
         let mut state = GameState::default();
         // Все товары Марты уже на витрине — ротация не сможет ничего заменить.
-        let mut market = TraderMarket { goods: Vec::new() };
+        let mut market = TraderMarket {
+            goods: Vec::new(),
+            ..TraderMarket::default()
+        };
         let mut seed = 7;
         for item_id in TRADERS[0].goods {
             market.goods.push(fresh_good(&mut seed, item_id));
@@ -1912,7 +2059,10 @@ mod tests {
 
     #[test]
     fn smart_rotation_weights_goods_the_player_can_sell() {
-        let market = TraderMarket { goods: Vec::new() };
+        let market = TraderMarket {
+            goods: Vec::new(),
+            ..TraderMarket::default()
+        };
         let empty = HashSet::new();
         let mut owned = HashSet::new();
         owned.insert("jug".to_string());

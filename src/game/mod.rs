@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod balance;
+pub mod city;
 pub mod events;
 pub mod expedition;
 pub mod i18n;

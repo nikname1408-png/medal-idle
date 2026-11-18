@@ -52,18 +52,6 @@ pub enum BuffStat {
     MineMult,
 }
 
-impl BuffStat {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::EnergyRegenFlat => i18n::t("buff.stat.energy_regen"),
-            Self::ExpeditionSpeed => i18n::t("buff.stat.expedition_speed"),
-            Self::SawmillMult => i18n::t("buff.stat.sawmill_mult"),
-            Self::EnergyCostMult => i18n::t("buff.stat.energy_cost"),
-            Self::MineMult => i18n::t("buff.stat.mine_mult"),
-        }
-    }
-}
-
 /// Активный бафф или дебафф.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BuffInstance {
@@ -104,7 +92,6 @@ pub struct BuffDef {
     pub value_max: f64,
     pub secs_min: f64,
     pub secs_max: f64,
-    pub debuff: bool,
     pub global: bool,
 }
 
@@ -117,7 +104,6 @@ pub const BUFFS: [BuffDef; 6] = [
         value_max: 3.0,
         secs_min: 180.0,
         secs_max: 300.0,
-        debuff: false,
         global: false,
     },
     BuffDef {
@@ -127,7 +113,6 @@ pub const BUFFS: [BuffDef; 6] = [
         value_max: 15.0,
         secs_min: 120.0,
         secs_max: 240.0,
-        debuff: false,
         global: false,
     },
     BuffDef {
@@ -137,7 +122,6 @@ pub const BUFFS: [BuffDef; 6] = [
         value_max: -10.0,
         secs_min: 180.0,
         secs_max: 300.0,
-        debuff: true,
         global: false,
     },
     BuffDef {
@@ -147,7 +131,6 @@ pub const BUFFS: [BuffDef; 6] = [
         value_max: 30.0,
         secs_min: 120.0,
         secs_max: 180.0,
-        debuff: true,
         global: false,
     },
     BuffDef {
@@ -157,7 +140,6 @@ pub const BUFFS: [BuffDef; 6] = [
         value_max: -1.0,
         secs_min: 180.0,
         secs_max: 240.0,
-        debuff: true,
         global: false,
     },
     BuffDef {
@@ -167,7 +149,6 @@ pub const BUFFS: [BuffDef; 6] = [
         value_max: -20.0,
         secs_min: 120.0,
         secs_max: 180.0,
-        debuff: true,
         global: false,
     },
 ];
@@ -243,17 +224,6 @@ pub enum TriggerKind {
 pub enum EventError {
     NoPending,
     CannotAfford,
-    NoRoom,
-}
-
-impl EventError {
-    pub fn text(self) -> &'static str {
-        match self {
-            Self::NoPending => i18n::t("err.no_pending_event"),
-            Self::CannotAfford => i18n::t("err.event_cannot_afford"),
-            Self::NoRoom => i18n::t("err.event_no_room"),
-        }
-    }
 }
 
 // ---------- Работа с баффами ----------
@@ -665,6 +635,14 @@ pub fn resolve_choice(state: &mut GameState, choice: usize) -> Result<(), EventE
                 );
                 state.market_seed = seed;
                 apply_buff(state, "after_fire", -1.0, secs, false);
+                // Показываем игроку, что он получил дебафф
+                state.pending_event = Some(PendingEvent {
+                    payload: EventPayload::BuffApplied {
+                        buff_id: "after_fire".to_string(),
+                        value: -1.0,
+                        duration_secs: secs as u32,
+                    },
+                });
                 Ok(())
             }
             _ => Ok(()),
@@ -714,6 +692,14 @@ pub fn resolve_choice(state: &mut GameState, choice: usize) -> Result<(), EventE
                 );
                 state.market_seed = seed;
                 apply_buff(state, "broken_tool", -20.0, secs, false);
+                // Показываем игроку, что он получил дебафф
+                state.pending_event = Some(PendingEvent {
+                    payload: EventPayload::BuffApplied {
+                        buff_id: "broken_tool".to_string(),
+                        value: -20.0,
+                        duration_secs: secs as u32,
+                    },
+                });
                 Ok(())
             }
             _ => Ok(()),

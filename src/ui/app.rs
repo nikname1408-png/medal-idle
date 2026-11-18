@@ -7,11 +7,13 @@ use crate::game::expedition;
 use crate::game::i18n;
 use crate::game::i18n::Lang;
 use crate::game::state::{AchievementStatus, ResourceKind, Theme};
-use crate::game::{balance, GameState};
+use crate::game::{balance, city, GameState};
 
+use super::city::{CityScreen, MartinDialog};
 use super::expedition::ExpeditionScreen;
 use super::inventory::InventoryScreen;
 use super::save;
+use super::smith::SmithSection;
 use super::trader::TradeScreen;
 
 /// Снимок состояния для UI: обновляется после каждого действия и раз в тик.
@@ -40,16 +42,18 @@ const ICON_WOOD: Asset = asset!("/assets/icons/wood.png");
 const TAB_FIELD: usize = 0;
 const TAB_WORK: usize = 1;
 const TAB_BAG: usize = 2;
-const TAB_EXPEDITION: usize = 3;
-const TAB_CYCLE: usize = 4;
-const TAB_STATS: usize = 5;
-const TAB_SETTINGS: usize = 6;
+pub const TAB_CITY: usize = 3;
+const TAB_EXPEDITION: usize = 4;
+const TAB_CYCLE: usize = 5;
+const TAB_STATS: usize = 6;
+const TAB_SETTINGS: usize = 7;
 
 /// Иконка вкладки и ключ её подписи в словаре.
-const TABS: [(&str, &str); 7] = [
+const TABS: [(&str, &str); 8] = [
     ("🔨", "tab.forge"),
     ("👷", "tab.work"),
     ("🎒", "tab.bag"),
+    ("🏙️", "tab.city"),
     ("🧭", "tab.expeditions"),
     ("♻️", "tab.rebirth"),
     ("📊", "tab.stats"),
@@ -80,6 +84,13 @@ pub fn App() -> Element {
     let mut dev_open = use_signal(|| false);
     let mut back = use_signal(|| 0u32);
     let mut menu_back = use_signal(|| *back.peek());
+    // Подэкран города живёт в `App`: письмо или окно дома может сразу
+    // открыть таверну, а не только карту.
+    let mut city_view = use_signal(|| crate::ui::city::CityView::Map);
+    // Письмо о возвращении путешественника раскрывает его карточку в списке.
+    let mut traveler_focus = use_signal(|| Option::<usize>::None);
+    use_context_provider(move || traveler_focus);
+    use_context_provider(move || active_tab);
     // Язык живёт в словаре, но сигналом сверху: чтение в `App` перерисовывает
     // всё дерево экранов, а не только «Настройки».
     let mut lang = use_signal(i18n::lang);
@@ -98,13 +109,15 @@ pub fn App() -> Element {
             Ok(Some(mut saved)) => {
                 let now = actions::unix_now();
                 if saved.last_seen > 0 && now > saved.last_seen {
-                    let hours_away = (now - saved.last_seen) as f64 / 3600.0;
-                    let gained = actions::offline_time((now - saved.last_seen) as f64);
+                    let away = (now - saved.last_seen) as f64;
+                    let hours_away = away / 3600.0;
+                    let gained = actions::offline_time(away);
                     if gained > 0.0 {
                         saved.time = (saved.time + gained).min(balance::TIME_CAP);
                     }
                     // «Пока вас не было»: не больше одного события в очередь.
                     crate::game::events::check_offline(&mut saved, hours_away);
+                    crate::game::city::catch_up_offline(&mut saved, away);
                 }
                 saved.last_seen = now;
                 saved.refresh_unlocks();
@@ -230,6 +243,7 @@ pub fn App() -> Element {
         TAB_EXPEDITION => i18n::t("tab.expeditions"),
         TAB_CYCLE => i18n::t("tab.rebirth"),
         TAB_STATS => i18n::t("tab.stats"),
+        TAB_CITY => i18n::t("tab.city"),
         _ => i18n::t("tab.forge"),
     };
 
@@ -263,6 +277,9 @@ pub fn App() -> Element {
             TAB_SETTINGS => rsx! {
                 SettingsScreen { state, view: snapshot.clone(), lang }
             },
+            TAB_CITY => rsx! {
+                CityScreen { state, view: snapshot.clone(), back, subview: city_view }
+            },
             index => rsx! {
                 PlaceholderScreen { title: i18n::t(TABS[index].1).to_string() }
             },
@@ -286,7 +303,7 @@ pub fn App() -> Element {
             }
             div { class: "bottom",
                 ResourceBar { view: snapshot.clone() }
-                TabBar { active: active_tab }
+                TabBar { active: active_tab, city_unlocked: snapshot.city.unlocked }
                 EnergyBar { view: snapshot.clone() }
             }
             if bell_open() {
@@ -298,6 +315,38 @@ pub fn App() -> Element {
                         state.write().open_letter(&letter_id);
                         refresh_view(state);
                         bell_open.set(false);
+                        // Письма путешественников ведут к самим путешественникам:
+                        // до постройки дома — в таверну, после — в Дом странников.
+                        if letter_id.starts_with("traveler_back:")
+                            || letter_id.starts_with("traveler_empty:")
+                        {
+                            let profile = letter_id
+                                .split_once(':')
+                                .and_then(|(_, rest)| rest.parse::<usize>().ok());
+                            let mut guard = state.write();
+                            crate::game::city::ensure_travelers(&mut guard);
+                            if let Some(profile) = profile {
+                                if let Some(index) = guard
+                                    .city
+                                    .travelers
+                                    .iter()
+                                    .position(|traveler| traveler.profile_id == profile)
+                                {
+                                    traveler_focus.set(Some(index));
+                                }
+                            }
+                            let house = crate::game::city::traveler_house_built(&guard);
+                            drop(guard);
+                            active_tab.set(TAB_CITY);
+                            city_view.set(if house {
+                                crate::ui::city::CityView::TravelersHouse
+                            } else {
+                                crate::ui::city::CityView::Tavern
+                            });
+                        } else if letter_id.starts_with("traveler") {
+                            active_tab.set(TAB_CITY);
+                            city_view.set(crate::ui::city::CityView::Tavern);
+                        }
                     },
                 }
             }
@@ -334,11 +383,25 @@ pub fn App() -> Element {
                     OfferModal { state, view: snapshot.clone(), offer_id }
                 }
             }
+            // Согласие друга на Дом снято в таверне, а подэкран города уже
+            // переключён на Ратушу: здесь остаётся только убрать флаг.
+            // state.write() прямо в разметке не проходит, поэтому через
+            // компонент-пустышку с эффектом.
+            if snapshot.city.traveler_house_offered
+                && snapshot.city.traveler_house_answer == Some(true)
+            {
+                HouseOfferCleanup { state }
+            }
             if snapshot.steam_prototype_event && !trader_open() && !menu_open() {
                 SteamEventModal { state }
             }
             if snapshot.pending_event.is_some() && !trader_open() && !menu_open() {
                 EventModal { state, view: snapshot.clone() }
+            }
+            if snapshot.city.martin == crate::game::city::MartinStage::AskCraft
+                && !menu_open()
+            {
+                MartinDialog { state }
             }
             if dev_open() {
                 DevPanel { state, on_close: move |_| dev_open.set(false) }
@@ -794,6 +857,7 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
 #[component]
 fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut state = state;
+    let mut smith_tab = use_signal(|| false);
     let snapshot = view;
     let slots = snapshot.worker_slots();
     let free = snapshot.workers_free();
@@ -821,8 +885,64 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         &[&format_num(coal_rate), &format_num(coal_wood)],
     );
     let workers_label = i18n::t("sec.workers");
+    let charter = snapshot.city.hire_charter;
+    let salary_total = city::salary_total(&snapshot);
+    let salary_text = i18n::tf("hire.total_salary", &[&format_num(salary_total)]);
+    let pay_left = (snapshot.city.next_salary_at - snapshot.total_play_seconds).max(0.0);
+    let pay_text = i18n::tf("hire.next_pay", &[&format_duration(pay_left)]);
+    let hired_rows: Vec<HiredRowView> = city::HireLine::ALL
+        .iter()
+        .filter(|line| city::hired_cap(&snapshot, **line) > 0)
+        .map(|line| {
+            let line = *line;
+            let hired = city::hired_count(&snapshot, line);
+            let rate = match line {
+                city::HireLine::Sawmill => snapshot.hired_sawmill_wood_per_sec() * income,
+                city::HireLine::Mine => snapshot.hired_mine_stone_per_sec() * income,
+                city::HireLine::Coal => {
+                    snapshot.hired_coal_workers() * balance::COAL_PIT_COAL_PER_BATCH
+                        / balance::COAL_PIT_BATCH_SECONDS
+                        * income
+                }
+            };
+            let coal_wood = snapshot.hired_coal_workers() * balance::COAL_PIT_WOOD_PER_BATCH
+                / balance::COAL_PIT_BATCH_SECONDS;
+            let detail = match line {
+                city::HireLine::Sawmill => i18n::tf("workers.sawmill.detail", &[&format_num(rate)]),
+                city::HireLine::Mine => i18n::tf("workers.mine.detail", &[&format_num(rate)]),
+                city::HireLine::Coal => i18n::tf(
+                    "workers.coal.detail",
+                    &[&format_num(rate), &format_num(coal_wood)],
+                ),
+            };
+            let salary = hired as f64 * balance::HIRE_SALARY;
+            HiredRowView {
+                line,
+                title: line.title().to_string(),
+                detail,
+                hired,
+                cap: city::hired_cap(&snapshot, line),
+                salary_text: i18n::tf("hire.salary", &[&format_num(salary)]),
+            }
+        })
+        .collect();
 
     rsx! {
+        div { class: "work-tabs",
+            button {
+                class: if smith_tab() { "work-tab" } else { "work-tab active" },
+                onclick: move |_| smith_tab.set(false),
+                "{i18n::t(\"tab.work\")}"
+            }
+            button {
+                class: if smith_tab() { "work-tab active" } else { "work-tab" },
+                onclick: move |_| smith_tab.set(true),
+                "{i18n::t(\"work.smith_tab\")}"
+            }
+        }
+        if smith_tab() {
+            SmithSection { state, view: snapshot.clone() }
+        } else {
         section { class: "section",
             div { class: "section-head static",
                 span { class: "section-title", "{i18n::t(\"sec.work\")}" }
@@ -909,8 +1029,81 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         div { class: "count-note", "{workers_label}: {free} / {slots}" }
+
+        section { class: "section",
+            div { class: "section-head static",
+                span { class: "section-title", "{i18n::t(\"hire.title\")}" }
+            }
+            div { class: "section-body",
+                if charter {
+                    div { class: "city-row muted",
+                        span { "{salary_text}" }
+                        span { "{pay_text}" }
+                    }
+                    for (index , row) in hired_rows.into_iter().enumerate() {
+                        {
+                            let line = row.line;
+                            let title = row.title;
+                            let detail = row.detail;
+                            let salary = row.salary_text;
+                            let hired = row.hired;
+                            let cap = row.cap;
+                            rsx! {
+                                div { class: "worker", key: "{index}",
+                                    div { class: "worker-main",
+                                        span { class: "worker-name", "{title}" }
+                                        span { class: "worker-detail", "{detail}" }
+                                        span { class: "worker-detail", "{salary}" }
+                                    }
+                                    div { class: "stepper",
+                                        button {
+                                            class: "step-btn",
+                                            disabled: hired == 0,
+                                            onclick: move |_| {
+                                                {
+                                                    let mut guard = state.write();
+                                                    let _ = city::adjust_hired(&mut guard, line, -1);
+                                                }
+                                                refresh_view(state);
+                                            },
+                                            "−"
+                                        }
+                                        span { class: "step-value", "{hired} / {cap}" }
+                                        button {
+                                            class: "step-btn",
+                                            disabled: hired >= cap,
+                                            onclick: move |_| {
+                                                {
+                                                    let mut guard = state.write();
+                                                    let _ = city::adjust_hired(&mut guard, line, 1);
+                                                }
+                                                refresh_view(state);
+                                            },
+                                            "+"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    div { class: "locked-note", "{i18n::t(\"hire.locked\")}" }
+                }
+            }
+        }
         SteamEraSection { state, view: snapshot.clone() }
+        }
     }
+}
+
+/// Строка наёмной линии в «Труде».
+struct HiredRowView {
+    line: city::HireLine,
+    title: String,
+    detail: String,
+    hired: u32,
+    cap: u32,
+    salary_text: String,
 }
 
 #[component]
@@ -957,7 +1150,15 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut armed = use_signal(|| false);
     let cycles = snapshot.cycles;
     let multiplier = snapshot.income_multiplier();
-    let next_multiplier = 1.0 + (cycles + 1) as f64 * balance::CYCLE_INCOME_PER_LEVEL;
+    let next_multiplier = snapshot.preview_income_multiplier();
+    let will_grow = next_multiplier > multiplier + 1e-9;
+
+    // Разбивка прибавки к X по текущему циклу: база, кузнец, сверх порога, время.
+    let (base_delta, smith_delta, overgather_delta, hours_delta) = snapshot.cycle_delta_parts();
+    let smith_for_calc = snapshot.smith_level();
+    let overgather_for_calc = snapshot.current_overgather().max(0.0);
+    let hours_for_calc = snapshot.current_cycle_hours();
+
     let threshold = snapshot.cycle_threshold();
     let gathered = snapshot.cycle_gathered();
     let progress = snapshot.cycle_progress();
@@ -1019,11 +1220,55 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
     };
     let multiplier_text = i18n::tf("cycle.multiplier", &[&format!("{multiplier:.2}")]);
 
+    // Превью X после перерождения.
+    let next_x_text = if will_grow {
+        i18n::tf("cycle.next_x", &[&format!("{next_multiplier:.2}")])
+    } else {
+        i18n::tf("cycle.next_x_same", &[&format!("{multiplier:.2}")])
+    };
+    // Разбивка прибавки. Всё считается до `rsx!`: вложенный `format!`
+    // внутри строки разметки ломает парсер шаблонов.
+    let now_x_text = i18n::tf("cycle.now_x", &[&format!("{multiplier:.2}")]);
+    let delta_title = i18n::t("cycle.delta_title");
+    let delta_base_text = i18n::tf("cycle.delta.base", &[&format!("{base_delta:+.2}")]);
+    let delta_smith_text = i18n::tf(
+        "cycle.delta.smith",
+        &[&smith_for_calc.to_string(), &format!("{smith_delta:+.2}")],
+    );
+    let delta_overgather_text = i18n::tf(
+        "cycle.delta.overgather",
+        &[
+            &format!("{overgather_for_calc:.2}"),
+            &format!("{overgather_delta:+.2}"),
+        ],
+    );
+    let delta_hours_text = i18n::tf(
+        "cycle.delta.hours",
+        &[
+            &format!("{hours_for_calc:.1}"),
+            &format!("{hours_delta:+.2}"),
+        ],
+    );
+
     rsx! {
         section { class: "cycle-hero",
             div { class: "cycle-count", "{cycles}" }
             div { class: "cycle-label", "{i18n::t(\"cycle.count\")}" }
             div { class: "cycle-bonus", "{multiplier_text}" }
+        }
+
+        // Превью X и разбивка прибавки.
+        section { class: "cycle-x-preview",
+            div { class: "cycle-x-row", "{now_x_text}" }
+            div { class: "cycle-x-row cycle-x-next", "{next_x_text}" }
+
+            div { class: "cycle-x-breakdown",
+                div { class: "cycle-x-breakdown-title", "{delta_title}" }
+                div { class: "cycle-x-line", "{delta_base_text}" }
+                div { class: "cycle-x-line", "{delta_smith_text}" }
+                div { class: "cycle-x-line", "{delta_overgather_text}" }
+                div { class: "cycle-x-line", "{delta_hours_text}" }
+            }
         }
 
         section { class: "settings",
@@ -1037,22 +1282,6 @@ fn CycleScreen(state: Signal<GameState>, view: GameState) -> Element {
             div { class: "cycle-progress-track",
                 div { class: "cycle-progress-fill", style: "{progress_fill}" }
             }
-
-            div { class: "cycle-forecast",
-                div { class: "cycle-forecast-item",
-                    span { class: "cycle-forecast-label", "{i18n::t(\"cycle.now\")}" }
-                    span { class: "cycle-forecast-value", "×{multiplier:.2}" }
-                }
-                div { class: "cycle-forecast-item",
-                    span { class: "cycle-forecast-label", "{i18n::t(\"cycle.after\")}" }
-                    span { class: "cycle-forecast-value", "×{next_multiplier:.2}" }
-                }
-                div { class: "cycle-forecast-item",
-                    span { class: "cycle-forecast-label", "{i18n::t(\"stats.two_threshold\")}" }
-                    span { class: "cycle-forecast-value", "×{next_multiplier:.2}" }
-                }
-            }
-            p { class: "settings-note", "{i18n::t(\"cycle.forecast_note\")}" }
 
             if wall_mine_active {
                 div { class: if wall_mine_met { "cycle-wall done" } else { "cycle-wall" },
@@ -1117,6 +1346,13 @@ fn StatsScreen(view: GameState) -> Element {
         .count();
     let total = achievements.len();
 
+    // Новые показатели цикла.
+    let this_cycle_time = (snapshot.total_play_seconds - snapshot.cycle_started_at).max(0.0);
+    let last_cycle_time = snapshot.last_cycle_time;
+    let max_smith = snapshot.max_smith_level_ever;
+    let max_overgather = snapshot.max_overgather_ever;
+    let max_hours = snapshot.max_hours_ever;
+
     rsx! {
         section { class: "settings",
             h2 { class: "settings-title", "{i18n::t(\"stats.title\")}" }
@@ -1155,6 +1391,27 @@ fn StatsScreen(view: GameState) -> Element {
             StatRow {
                 label: i18n::t("stats.rebirths").to_string(),
                 value: format_num(snapshot.cycles as f64),
+            }
+            // НОВЫЕ СТРОКИ
+            StatRow {
+                label: i18n::t("stats.this_cycle_time").to_string(),
+                value: format_duration(this_cycle_time),
+            }
+            StatRow {
+                label: i18n::t("stats.last_cycle_time").to_string(),
+                value: format_duration(last_cycle_time),
+            }
+            StatRow {
+                label: i18n::t("stats.max_smith_level").to_string(),
+                value: max_smith.to_string(),
+            }
+            StatRow {
+                label: i18n::t("stats.max_overgather").to_string(),
+                value: format!("{max_overgather:.2}x"),
+            }
+            StatRow {
+                label: i18n::t("stats.max_hours").to_string(),
+                value: format_duration(max_hours * 3600.0),
             }
         }
 
@@ -1452,6 +1709,13 @@ fn BellPanel(
                                     state,
                                     message,
                                 }
+                            } else if letter.id == "tax_due" {
+                                TaxLetterCard {
+                                    key: "{letter.id}",
+                                    view: view.clone(),
+                                    state,
+                                    message,
+                                }
                             } else if letter.id == "debt" {
                                 div {
                                     key: "{letter.id}",
@@ -1565,6 +1829,51 @@ fn QuestLetterCard(
                         refresh_view(state);
                     },
                     "{i18n::t(\"quest.btn.decline\")}"
+                }
+            }
+        }
+    }
+}
+
+/// Письмо о налоге: остаток к оплате и кнопка «Оплатить налог».
+#[component]
+fn TaxLetterCard(view: GameState, state: Signal<GameState>, message: Signal<String>) -> Element {
+    let mut state = state;
+    let mut message = message;
+    let due = view.city.tax_due;
+    let due_money = format!("{} {}", format_num(due), i18n::t("res.gold"));
+    let due_text = i18n::tf("tax.due", &[&due_money]);
+    let shop_cash = view.city.shop.as_ref().map(|shop| shop.cash).unwrap_or(0.0);
+    let can_pay = due > 1e-6 && (view.gold > 0.0 || shop_cash > 0.0);
+
+    rsx! {
+        div { class: "letter tax-letter",
+            span { class: "letter-title", "{i18n::t(\"letter.tax_due.title\")}" }
+            span { class: "letter-body", "{i18n::t(\"letter.tax_due.body\")}" }
+            div { class: "letter-quest-line", "{due_text}" }
+            div { class: "letter-quest-actions",
+                button {
+                    class: if can_pay { "trade-btn primary" } else { "trade-btn disabled" },
+                    disabled: !can_pay,
+                    onclick: move |_| {
+                        let outcome = {
+                            let mut guard = state.write();
+                            crate::game::city::pay_tax_due(&mut guard)
+                        };
+                        let left = state.read().city.tax_due;
+                        let left_money = format!("{} {}", format_num(left), i18n::t("res.gold"));
+                        match outcome {
+                            crate::game::city::TaxOutcome::Paid => {
+                                message.set(i18n::t("tax.paid").to_string())
+                            }
+                            crate::game::city::TaxOutcome::Short => {
+                                message.set(i18n::tf("tax.short", &[&left_money]))
+                            }
+                            _ => message.set(i18n::t("tax.nothing").to_string()),
+                        }
+                        refresh_view(state);
+                    },
+                    "{i18n::t(\"tax.pay\")}"
                 }
             }
         }
@@ -2304,6 +2613,37 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                     }
                 }
 
+                section { class: "dev-group",
+                    h3 { class: "dev-group-title", "Город" }
+                    button {
+                        class: "dev-btn dev-wide",
+                        onclick: move |_| {
+                            {
+                                let mut guard = state.write();
+                                if guard.cycles < 2 {
+                                    guard.cycles = 2;
+                                }
+                                crate::game::city::ensure_intro_quest(&mut guard);
+                            }
+                            refresh_view(state);
+                            on_close.call(());
+                        },
+                        "Квест Мартина (2-е перерождение)"
+                    }
+                    button {
+                        class: "dev-btn dev-wide",
+                        onclick: move |_| {
+                            {
+                                let mut guard = state.write();
+                                crate::game::city::unlock_city(&mut guard);
+                            }
+                            refresh_view(state);
+                            on_close.call(());
+                        },
+                        "Открыть город"
+                    }
+                }
+
                 button {
                     class: "dev-reset",
                     onclick: move |_| {
@@ -2550,8 +2890,19 @@ fn ActionRow(label: String, info: String, available: bool, on_press: EventHandle
     }
 }
 
+/// Друг согласился на Дом: флаг предложения снимается один раз в эффекте.
 #[component]
-fn CostLabel(view: GameState, cost: balance::Cost) -> Element {
+fn HouseOfferCleanup(state: Signal<GameState>) -> Element {
+    let mut state = state;
+    use_effect(move || {
+        let mut guard = state.write();
+        guard.city.traveler_house_offered = false;
+    });
+    rsx! {}
+}
+
+#[component]
+pub(super) fn CostLabel(view: GameState, cost: balance::Cost) -> Element {
     rsx! {
         span { class: "cost",
             if cost.wood > 0.0 {
@@ -2844,7 +3195,7 @@ fn ResourceBar(view: GameState) -> Element {
 }
 
 #[component]
-fn TabBar(active: Signal<usize>) -> Element {
+fn TabBar(active: Signal<usize>, city_unlocked: bool) -> Element {
     // На десктопе колесо мыши над вкладками крутит их по горизонтали.
     use_effect(move || {
         spawn(async move {
@@ -2878,20 +3229,22 @@ fn TabBar(active: Signal<usize>) -> Element {
             }
             nav { class: "tabs",
                 for (i , (_icon , label_key)) in TABS.iter().enumerate() {
-                    button {
-                        key: "{i}",
-                        class: if active() == i { "tab active" } else { "tab" },
-                        onclick: move |_| active.set(i),
-                        if let Some(icon) = tab_icon(i) {
-                            img {
-                                class: "tab-icon icon",
-                                src: "{icon}",
-                                alt: "",
+                    if i != TAB_CITY || city_unlocked {
+                        button {
+                            key: "{i}",
+                            class: if active() == i { "tab active" } else { "tab" },
+                            onclick: move |_| active.set(i),
+                            if let Some(icon) = tab_icon(i) {
+                                img {
+                                    class: "tab-icon icon",
+                                    src: "{icon}",
+                                    alt: "",
+                                }
+                            } else {
+                                span { class: "tab-icon", "{_icon}" }
                             }
-                        } else {
-                            span { class: "tab-icon", "{_icon}" }
+                            span { class: "tab-label", "{i18n::t(label_key)}" }
                         }
-                        span { class: "tab-label", "{i18n::t(label_key)}" }
                     }
                 }
             }
@@ -3064,7 +3417,7 @@ fn do_prestige(mut state: Signal<GameState>, mut armed: Signal<bool>) {
     refresh_view(state);
 }
 
-fn format_duration(seconds: f64) -> String {
+pub(crate) fn format_duration(seconds: f64) -> String {
     let total = seconds.max(0.0).floor() as u64;
     let hours = total / 3600;
     let minutes = (total % 3600) / 60;

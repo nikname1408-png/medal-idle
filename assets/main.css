@@ -943,9 +943,15 @@ button {
 }
 
 /* Письмо о взятом заказе: детали и кнопки прямо в колокольчике. */
-.letter.quest-letter {
+.letter.quest-letter,
+.letter.tax-letter {
     border-left: 3px solid var(--select);
     gap: 4px;
+}
+
+/* Налоговый счёт: заметная золотая полоса. */
+.letter.tax-letter {
+    border-left-color: var(--gold);
 }
 
 .letter-quest-author {
@@ -2123,6 +2129,12 @@ button {
     font-variant-numeric: tabular-nums;
 }
 
+.craft-panel-xp {
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--gold);
+}
+
 .craft-panel-icon {
     flex: 0 0 52px;
     width: 52px;
@@ -2954,6 +2966,50 @@ button {
     color: var(--gold);
 }
 
+/* Превью множителя X и разбивка прибавки. */
+.cycle-x-preview {
+    margin: 0 12px 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel-2);
+}
+
+.cycle-x-row {
+    font-size: 13px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.cycle-x-next {
+    margin-top: 4px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--gold);
+}
+
+.cycle-x-breakdown {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+}
+
+.cycle-x-line {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.cycle-x-records {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted);
+}
+
 .cycle-progress-head {
     display: flex;
     align-items: baseline;
@@ -3584,4 +3640,896 @@ button {
 
 .action-info {
     white-space: pre-line;
+}
+/* ---------- Город ---------- */
+
+.city-screen {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 8px;
+}
+
+.city-map {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin: 4px 6px;
+}
+
+.city-building {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 12px 6px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    text-align: center;
+    cursor: pointer;
+}
+
+.city-building:active {
+    background: var(--accent-soft);
+}
+
+.city-building.locked {
+    opacity: 0.45;
+    filter: grayscale(1);
+    cursor: default;
+}
+
+.city-building-icon {
+    font-size: 28px;
+    line-height: 1;
+}
+
+.city-building-name {
+    font-size: 12.5px;
+    font-weight: 700;
+}
+
+.city-building-hint {
+    font-size: 9.5px;
+    line-height: 1.3;
+    color: var(--muted);
+}
+
+.city-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 6px;
+}
+
+.city-back {
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.city-title {
+    margin: 0;
+    font-size: 15px;
+}
+
+.city-card {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin: 3px 6px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel);
+}
+
+.city-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.city-row.muted,
+.city-row-muted {
+    color: var(--muted);
+}
+
+/* Рынок города: четыре колонки — товар, цена, спрос, тренд. */
+.city-row.market-row {
+    display: grid;
+    grid-template-columns: 1fr 52px 58px 44px;
+    gap: 8px;
+    align-items: center;
+    text-align: right;
+}
+
+.city-row.market-row > span:first-child {
+    text-align: left;
+}
+
+.market-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.market-head {
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.market-trend.up {
+    color: var(--energy);
+}
+
+.market-trend.down {
+    color: var(--danger, #d05a5a);
+}
+
+.market-trend.flat {
+    color: var(--muted);
+}
+
+/* Кнопка рынка над картой города. */
+.city-topbar {
+    display: flex;
+    justify-content: flex-end;
+    margin: 0 6px 4px;
+}
+
+/* Строка «сколько на складе» в карточке предмета. */
+.inv-stock-line {
+    width: 100%;
+    font-size: 10.5px;
+    color: var(--muted);
+}
+
+/* Строка склада приказчика: тап выбирает товар. */
+.stock-row {
+    width: 100%;
+    padding: 3px 4px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.stock-row.active {
+    background: var(--accent-soft);
+    outline: 1px solid var(--select);
+}
+
+.stock-row .city-upgrade-name {
+    flex: 1;
+    text-align: left;
+}
+
+.city-hint {
+    margin: 2px 6px;
+    font-size: 10.5px;
+    line-height: 1.35;
+    color: var(--muted);
+}
+
+/* Вкладки таверны: «Слухи» и «Путешественники». */
+.tavern-tabs {
+    display: flex;
+    gap: 6px;
+    margin: 0 6px 6px;
+}
+
+.tavern-tabs .city-tab.active {
+    background: var(--select);
+    color: #1a1a1a;
+}
+
+/* Вкладки в карточке путешественника и ставки в костях. */
+.city-tab {
+    flex: 1;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: var(--btn);
+    color: #ffffff;
+    font-size: 10.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.city-tab.active {
+    background: var(--select);
+    color: #1a1a1a;
+}
+
+/* Строка путешественника: строка и раскрытая карточка под ней. */
+.traveler-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+}
+
+.traveler-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+}
+
+.traveler-name-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.traveler-face {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.traveler-names {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.traveler-chip {
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    font-size: 9.5px;
+    white-space: nowrap;
+}
+
+.traveler-chip.away {
+    background: var(--panel-2);
+    color: var(--muted);
+}
+
+.traveler-circles {
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: var(--gold);
+    white-space: nowrap;
+}
+
+.traveler-advance {
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+/* Карточка путешественника под строкой. */
+.traveler-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 2px 0 4px 10px;
+    padding: 5px 6px;
+    border-left: 2px solid var(--select);
+    background: var(--panel-2);
+    border-radius: 4px;
+}
+
+.traveler-quest {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 0;
+}
+
+.traveler-ask {
+    margin: 0;
+    font-size: 10.5px;
+    line-height: 1.4;
+}
+
+.traveler-result {
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--gold);
+}
+
+.traveler-loc {
+    gap: 6px;
+}
+
+.traveler-loc.closed {
+    opacity: 0.55;
+}
+
+/* Добыча, доплата и снаряжение в карточке путешественника. */
+.traveler-loot {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 5px 6px;
+    border-radius: 4px;
+    background: var(--accent-soft);
+}
+
+.traveler-gear {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 5px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.traveler-gear-row {
+    gap: 6px;
+    align-items: center;
+}
+
+.traveler-gear-picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 108px;
+    overflow-y: auto;
+}
+
+.city-msg {
+    font-size: 11px;
+    color: var(--gold);
+}
+
+.city-btn {
+    align-self: flex-start;
+    padding: 5px 10px;
+    border: 0;
+    border-radius: 4px;
+    background: var(--btn);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.city-btn.small {
+    padding: 3px 8px;
+    font-size: 10.5px;
+}
+
+.city-btn.wide {
+    align-self: stretch;
+    margin: 3px 6px;
+}
+
+.city-btn.ghost {
+    background: var(--panel-2);
+    color: var(--text);
+}
+
+.city-btn.active {
+    background: var(--select);
+    color: var(--accent-ink);
+}
+
+.city-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.city-event {
+    margin: 4px 6px;
+    padding: 6px;
+    border: 1px solid var(--select);
+    border-radius: 4px;
+    background: var(--accent-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.city-event.fire {
+    border-color: var(--danger);
+    background: rgba(200, 96, 78, 0.14);
+}
+
+.city-event-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.city-event-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--select);
+}
+
+.city-event.fire .city-event-name {
+    color: var(--danger);
+}
+
+.city-event-time {
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.city-event-body {
+    margin: 0;
+    font-size: 10.5px;
+    line-height: 1.35;
+    color: var(--muted);
+}
+
+.city-event-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.city-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 3px 6px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel);
+}
+
+.city-slot-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.city-item-icon {
+    width: 22px;
+    height: 22px;
+    object-fit: contain;
+    image-rendering: pixelated;
+}
+
+.city-slot-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.city-slot-qty {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.city-slot-remove {
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--panel-2);
+    color: var(--danger);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.city-slot-price {
+    font-size: 11px;
+    color: var(--gold);
+}
+
+.city-price-mult {
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.price-green {
+    color: #7bcf7b;
+}
+
+.price-yellow {
+    color: #d9c27a;
+}
+
+.price-orange {
+    color: #e0955a;
+}
+
+.price-red {
+    color: var(--danger);
+}
+
+.city-slider {
+    width: 100%;
+    accent-color: var(--select);
+}
+
+.city-slider.price-green {
+    accent-color: #7bcf7b;
+}
+
+.city-slider.price-yellow {
+    accent-color: #d9c27a;
+}
+
+.city-slider.price-orange {
+    accent-color: #e0955a;
+}
+
+.city-slider.price-red {
+    accent-color: var(--danger);
+}
+
+.demand-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.demand-label {
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.demand-label.dead {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.demand-bar {
+    flex: 1;
+    min-width: 0;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--panel-2);
+    overflow: hidden;
+}
+
+.demand-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--select);
+    transition: width 0.3s linear;
+}
+
+.demand-fill.dead {
+    background: transparent;
+}
+
+.shop-goods-grid {
+    margin: 4px 0 2px;
+}
+
+.city-goods-card {
+    display: flex;
+    gap: 8px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel-2);
+}
+
+.city-goods-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.city-goods-name {
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.city-goods-price {
+    font-size: 11px;
+    color: var(--gold);
+}
+
+.city-goods-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+
+.city-stepper {
+    min-width: 28px;
+    padding: 3px 7px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.city-stepper:active {
+    background: var(--accent-soft);
+}
+
+.city-stepper-value {
+    min-width: 30px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.city-goods-icon {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 54px;
+    height: 54px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.city-goods-icon .icon {
+    width: 72%;
+    height: 72%;
+}
+
+.city-goods-icon .inv-item-icon {
+    font-size: 26px;
+    line-height: 1;
+}
+
+.city-upgrade {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 5px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+}
+
+.city-upgrade-name {
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.city-bet-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.city-npc {
+    margin-left: auto;
+    font-size: 10.5px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.city-citizen {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 6px 6px 0;
+    padding: 6px;
+    border: 1px dashed var(--line);
+    border-radius: 4px;
+}
+
+.city-citizen-name {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.city-citizen-line {
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--gold);
+}
+
+/* ---------- Кузнец в «Труде» ---------- */
+
+.work-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.work-tab {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.18);
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.work-tab.active {
+    border-color: var(--select);
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 600;
+}
+
+.smith-card .section-head {
+    gap: 8px;
+}
+
+.smith-status {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.smith-hint {
+    margin: 0 0 6px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--muted);
+}
+
+.smith-warn {
+    margin: 0 0 6px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--gold);
+}
+
+.smith-now {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.smith-now-label {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.smith-now-icon {
+    width: 22px;
+    height: 22px;
+    object-fit: contain;
+}
+
+.smith-now-empty {
+    color: var(--muted);
+}
+
+.smith-timer {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.smith-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.smith-queue-label {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+    margin: 10px 0 5px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.smith-hint-inline {
+    font-size: 11px;
+    opacity: 0.75;
+}
+
+.smith-grid {
+    margin-bottom: 6px;
+}
+
+.smith-order {
+    position: absolute;
+    right: 2px;
+    bottom: 1px;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--gold);
+    font-variant-numeric: tabular-nums;
+}
+
+.smith-add {
+    font-size: 20px;
+    color: var(--muted);
+}
+
+.smith-picker {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 2px;
+    margin: 4px 0 8px;
+    padding: 6px;
+    border: 1px dashed var(--line);
+    border-radius: 4px;
+}
+
+.smith-recipe-card {
+    margin-top: 6px;
+}
+
+.smith-fire-cost {
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.smith-upgrade {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+    padding: 9px 10px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.smith-upgrade-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.smith-upgrade-buy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+
+.smith-max {
+    font-size: 12px;
+    color: var(--muted);
 }

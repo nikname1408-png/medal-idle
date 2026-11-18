@@ -3,12 +3,22 @@
 use dioxus::prelude::*;
 
 use crate::game::actions::{self, CraftError};
+use crate::game::balance;
 use crate::game::expedition;
 use crate::game::i18n;
 use crate::game::items::{self, Category, EquipSlot, Item};
 use crate::game::state::{EquipError, GameState};
 
 use super::app::{format_num, refresh_view};
+
+/// Сколько предметов сета нужно, чтобы его бонус стал активным.
+fn set_required_pieces(set_id: &str) -> u32 {
+    if set_id == "beggar" {
+        4
+    } else {
+        3
+    }
+}
 
 /// Смайлик предмета по смыслу. PNG-спрайтов предметов пока нет.
 pub(crate) fn item_icon(item: &Item) -> &'static str {
@@ -56,7 +66,10 @@ pub(crate) fn item_icon(item: &Item) -> &'static str {
         "map_quarry" => "🗺",
         "map_ruins" => "🗺",
         "steam_blueprint" => "📜",
+        "compass_blueprint" => "📜",
+        "compass" => "🧭",
         "steam_prototype" => "⚙️",
+        "smith_ring" | "smith_amulet" | "smith_belt" => "💍",
         _ => match item.category {
             Category::Gear => "🎽",
             Category::Jewelry => "💍",
@@ -137,10 +150,15 @@ pub(crate) fn item_icon_asset(item: &Item) -> Option<Asset> {
         "wooden_shovel" => asset!("/assets/icons/item_wooden_shovel.png"),
         "iron_shovel" => asset!("/assets/icons/item_iron_shovel.png"),
         "hammer" => asset!("/assets/icons/item_hammer.png"),
+        "compass" => asset!("/assets/icons/compass.png"),
+        "smith_ring" => asset!("/assets/icons/item_smith_ring.png"),
+        "smith_amulet" => asset!("/assets/icons/item_smith_pendant.png"),
+        "smith_belt" => asset!("/assets/icons/item_forge_belt.png"),
         "map_forest" | "map_mines" | "map_quarry" | "map_ruins" => {
             asset!("/assets/icons/item_map.png")
         }
         "steam_blueprint" => asset!("/assets/icons/scroll.png"),
+        "compass_blueprint" => asset!("/assets/icons/scroll.png"),
         _ => return None,
     })
 }
@@ -261,6 +279,7 @@ pub fn InventoryScreen(
                             };
                             selected_equip.set(next);
                         },
+                        on_double_click: move |_| { unequip_slot_and_close(state, selected_equip, EquipSlot::Head) },
                     }
                     // 2. Аксессуар 1
                     EquipmentSlot {
@@ -276,6 +295,7 @@ pub fn InventoryScreen(
                             };
                             selected_equip.set(next);
                         },
+                        on_double_click: move |_| { unequip_slot_and_close(state, selected_equip, EquipSlot::Accessory1) },
                     }
 
                     // 3. ТЕЛО + СПИНА (в одной ячейке)
@@ -293,6 +313,7 @@ pub fn InventoryScreen(
                                 };
                                 selected_equip.set(next);
                             },
+                            on_double_click: move |_| { unequip_slot_and_close(state, selected_equip, EquipSlot::Body) },
                         }
                         EquipmentSlot {
                             slot: EquipSlot::Back,
@@ -307,6 +328,7 @@ pub fn InventoryScreen(
                                 };
                                 selected_equip.set(next);
                             },
+                            on_double_click: move |_| { unequip_slot_and_close(state, selected_equip, EquipSlot::Back) },
                         }
                     }
 
@@ -324,6 +346,7 @@ pub fn InventoryScreen(
                             };
                             selected_equip.set(next);
                         },
+                        on_double_click: move |_| { unequip_slot_and_close(state, selected_equip, EquipSlot::Hand) },
                     }
                     // 5. Ноги
                     EquipmentSlot {
@@ -339,6 +362,7 @@ pub fn InventoryScreen(
                             };
                             selected_equip.set(next);
                         },
+                        on_double_click: move |_| { unequip_slot_and_close(state, selected_equip, EquipSlot::Feet) },
                     }
                     // 6. Аксессуар 2
                     EquipmentSlot {
@@ -354,6 +378,7 @@ pub fn InventoryScreen(
                             };
                             selected_equip.set(next);
                         },
+                        on_double_click: move |_| { unequip_slot_and_close(state, selected_equip, EquipSlot::Accessory2) },
                     }
                 }
                 if let Some(slot) = selected_equip() {
@@ -422,6 +447,26 @@ pub fn InventoryScreen(
                                 selected.set(Some(item_id));
                                 message.set(String::new());
                             },
+                            on_double_click: move |item_id: String| {
+                                // Двойной клик: если надет — снять, иначе — надеть.
+                                let mut guard = state.write();
+                                let equipped_slot = EquipSlot::ALL
+                                    .iter()
+                                    .copied()
+                                    .find(|slot| { guard.equipment.get(*slot) == Some(item_id.as_str()) });
+                                let result = if let Some(slot) = equipped_slot {
+                                    actions::unequip_slot(&mut guard, slot);
+                                    Ok(())
+                                } else {
+                                    actions::equip_item(&mut guard, &item_id)
+                                };
+                                drop(guard);
+                                match result {
+                                    Ok(()) => message.set(String::new()),
+                                    Err(error) => message.set(equip_error_text(error).to_string()),
+                                }
+                                refresh_view(state);
+                            },
                         }
                     }
                     for index in 0..empty_cells {
@@ -454,6 +499,7 @@ fn EquipmentSlot(
     view: GameState,
     selected: bool,
     on_select: EventHandler<()>,
+    on_double_click: EventHandler<()>,
 ) -> Element {
     let _ = state;
     let item = view.equipped_item(slot);
@@ -464,7 +510,11 @@ fn EquipmentSlot(
     };
 
     rsx! {
-        button { class: "{class}", onclick: move |_| on_select.call(()),
+        button {
+            class: "{class}",
+            onclick: move |_| on_select.call(()),
+            // Двойной клик по слоту — снять предмет.
+            ondoubleclick: move |_| on_double_click.call(()),
             div { class: "equip-cell-icon",
                 if let Some(item) = item {
                     ItemIcon {
@@ -507,7 +557,7 @@ fn EquipDetail(
                 }
             }
         }
-        if count >= 3 {
+        if count >= set_required_pieces(set_id) {
             i18n::t(&format!("set.{set_id}.active")).to_string()
         } else {
             let count_str = count.to_string();
@@ -552,8 +602,18 @@ fn EquipDetail(
 }
 
 #[component]
-fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<String>) -> Element {
-    let item_id = item.id.clone();
+fn ItemCell(
+    item: Item,
+    count: u32,
+    selected: bool,
+    on_select: EventHandler<String>,
+    on_double_click: EventHandler<String>,
+) -> Element {
+    // По одному клону на каждое `move`-замыкание: String не Copy.
+    let click_id = item.id.clone();
+    let double_click_id = item.id.clone();
+    // Двойной клик — только для экипировки.
+    let equippable = item.slot.is_some();
     let class = if selected {
         "inv-item selected"
     } else {
@@ -563,7 +623,12 @@ fn ItemCell(item: Item, count: u32, selected: bool, on_select: EventHandler<Stri
     rsx! {
         button {
             class: "{class}",
-            onclick: move |_| on_select.call(item_id.clone()),
+            onclick: move |_| on_select.call(click_id.clone()),
+            ondoubleclick: move |_| {
+                if equippable {
+                    on_double_click.call(double_click_id.clone());
+                }
+            },
             ItemIcon { item: item.clone(), class: "inv-item-icon".to_string() }
             if count > 1 {
                 span { class: if count >= items::ITEM_STACK_LIMIT { "inv-badge full" } else { "inv-badge" },
@@ -761,7 +826,13 @@ fn CraftPanel(
     let stats = result.stats.summary();
     let owned = view.item_count(result.id.as_str());
     let result_id = result.id.clone();
+    let xp_per_craft =
+        balance::smith_xp_per_craft(recipe.id, result.base_price, recipe.result_quantity)
+            * view.income_multiplier()
+            * view.smith_xp_bonus as f64;
+    let xp_per_craft_text = i18n::tf("bag.xp_per_craft", &[&format_num(xp_per_craft)]);
 
+    // Подсчёт, каких ингредиентов не хватает.
     let mut missing = false;
     let ingredients: Vec<(String, u32, u32, bool)> = recipe
         .ingredients
@@ -780,20 +851,33 @@ fn CraftPanel(
         })
         .collect();
 
-    // Проверяем, хватает ли уровня для этого конкретного рецепта
     let min_lvl = items::recipe_min_smith_level(recipe.id);
     let is_locked = view.smith_level() < min_lvl;
 
+    // Можно ли скрафтить хоть один раз.
     let can_one = crafts_now > 0 && blocked.is_none() && !missing && !is_locked;
+    // MAX имеет смысл только когда можно скрафтить больше одного раза.
+    let can_max = can_one && crafts_now > 1;
+    // «10» и «100» — только когда хватает ресурсов на столько.
     let can_ten = can_one && crafts_now >= 10;
     let can_hundred = can_one && crafts_now >= 100;
+
+    // Прототип паровой машины собирается строго по одному — для него
+    // оставляем единственную кнопку «Создать».
+    let is_prototype = recipe.id == items::STEAM_PROTOTYPE_RECIPE;
+
     let recipe_id = recipe.id.to_string();
+    // Копия для MAX-кнопки: `make_button` забирает `recipe_id` через `move`,
+    // второму замыканию нужен свой экземпляр.
+    let max_recipe_id = recipe_id.clone();
     let result_quantity = recipe.result_quantity;
-    let single_label = if recipe.id == items::STEAM_PROTOTYPE_RECIPE {
+    let single_label = if is_prototype {
         i18n::t("btn.make").to_string()
     } else {
         i18n::t("btn.craft").to_string()
     };
+
+    // --- Кнопки с фиксированным количеством (используется только прототипом) ---
     let make_button = move |times: u32| -> Element {
         let recipe_id = recipe_id.clone();
         let single_label = single_label.clone();
@@ -829,6 +913,37 @@ fn CraftPanel(
         }
     };
 
+    // --- Кнопка MAX ---
+    // Крафтит столько, сколько помещается сейчас (`crafts_now`).
+    // Label — «МАКС: N» (btn.max), переводы уже есть в ru/en/es.
+    let make_max_button = move |_| -> Element {
+        let recipe_id = max_recipe_id.clone();
+        let times = crafts_now; // Copy — можно и в label, и в onclick
+        let enabled = can_max;
+        let max_label = i18n::tf("btn.max", &[&times.to_string()]);
+        rsx! {
+            button {
+                class: if enabled { "craft-btn" } else { "craft-btn disabled" },
+                disabled: !enabled,
+                onclick: move |_| {
+                    let result = {
+                        let mut guard = state.write();
+                        actions::craft_times(&mut guard, &recipe_id, times)
+                    };
+                    message
+                        .set(
+                            match result {
+                                Ok(_) => String::new(),
+                                Err(error) => craft_error_text(error).to_string(),
+                            },
+                        );
+                    refresh_view(state);
+                },
+                "{max_label}"
+            }
+        }
+    };
+
     rsx! {
         section { class: "craft-panel",
             div { class: "craft-panel-top",
@@ -839,6 +954,7 @@ fn CraftPanel(
                     div { class: "craft-panel-owned",
                         "{i18n::tf(\"bag.owned\", &[&owned.to_string()])}"
                     }
+                    div { class: "craft-panel-xp", "{xp_per_craft_text}" }
                 }
                 div { class: "craft-panel-icon",
                     ItemIcon {
@@ -850,12 +966,23 @@ fn CraftPanel(
 
             div { class: "craft-panel-bottom",
                 div { class: "craft-panel-buttons",
-                    {make_button(1)}
-                    if can_ten {
-                        {make_button(10)}
-                    }
-                    if can_hundred {
-                        {make_button(100)}
+                    if is_prototype {
+                        // Прототип — одноразовый, кнопка одна.
+                        {make_button(1)}
+                    } else {
+                        // Обычный рецепт: «Крафт» есть всегда (может быть недоступна).
+                        {make_button(1)}
+                        // 10 / 100 — только когда ресурсов хватает.
+                        if can_ten {
+                            {make_button(10)}
+                        }
+                        if can_hundred {
+                            {make_button(100)}
+                        }
+                        // MAX — когда можно скрафтить больше одного раза.
+                        if can_max {
+                            {make_max_button(())}
+                        }
                     }
                 }
                 div { class: "craft-panel-cost",
@@ -927,7 +1054,7 @@ fn InventoryCard(
                 }
             }
         }
-        if count >= 3 {
+        if count >= set_required_pieces(set_id) {
             i18n::t(&format!("set.{set_id}.active")).to_string()
         } else {
             let count_str = count.to_string();
@@ -942,11 +1069,17 @@ fn InventoryCard(
         .map(|location_id| view.location_unlocked(location_id))
         .unwrap_or(false);
     let can_study_map = map_location.is_some() && count > 0 && !map_open;
-    let is_blueprint = item.id == items::STEAM_BLUEPRINT_ID;
+    let is_steam_blueprint = item.id == items::STEAM_BLUEPRINT_ID;
+    let is_compass_blueprint = item.id == items::COMPASS_BLUEPRINT_ID;
+    let is_blueprint = is_steam_blueprint || is_compass_blueprint;
     let blueprint_item_id = item_id.clone();
     let equip_item_id = item_id.clone();
     let dismantle_item_id = item_id.clone();
-    let blueprint_studied = view.steam_blueprint_studied;
+    let blueprint_studied = if is_compass_blueprint {
+        view.compass_blueprint_studied
+    } else {
+        view.steam_blueprint_studied
+    };
     let can_study_blueprint = is_blueprint && count > 0 && !blueprint_studied;
     let mut map_ok = use_signal(|| false);
 
@@ -1230,4 +1363,20 @@ fn craft_error_text(error: CraftError) -> &'static str {
 
 fn equip_error_text(error: EquipError) -> &'static str {
     error.text()
+}
+
+/// Двойной клик по слоту экипировки: снять предмет и закрыть карточку слота.
+fn unequip_slot_and_close(
+    state: Signal<GameState>,
+    selected_equip: Signal<Option<EquipSlot>>,
+    slot: EquipSlot,
+) {
+    let mut state = state;
+    let mut selected_equip = selected_equip;
+    {
+        let mut guard = state.write();
+        actions::unequip_slot(&mut guard, slot);
+    }
+    selected_equip.set(None);
+    refresh_view(state);
 }
