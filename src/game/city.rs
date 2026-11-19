@@ -116,6 +116,8 @@ pub struct CityState {
     pub clerk_mult: f32,
     /// Момент следующей работы приказчика.
     pub next_clerk_at: f64,
+    /// Момент, когда приказчику можно снова менять полки на другие.
+    pub next_clerk_rotate_at: f64,
     /// Склад приказчика: личный запас лавки, откуда он выставляет товар.
     pub stock: Vec<StockItem>,
     /// Сколько ячеек склада куплено отдельными улучшениями гильдии.
@@ -177,6 +179,7 @@ impl Default for CityState {
             clerk_hired: false,
             clerk_mult: balance::CLERK_DEFAULT_MULT,
             next_clerk_at: 0.0,
+            next_clerk_rotate_at: 0.0,
             stock: Vec::new(),
             stock_cells_bought: 0,
             travelers: Vec::new(),
@@ -1206,8 +1209,11 @@ fn advance_demand(state: &mut GameState, dt: f64) {
         return;
     }
     // Сначала догоняем цеховые шаги за прошедшее время, потом наливаем полку.
-    // `demand_at` — время последнего расчёта, его двигает только тик.
-    let period = (state.total_play_seconds - state.city.demand_at).clamp(0.0, dt);
+    // Период налива — ровно переданный `dt`. Раньше он считался от
+    // `demand_at`, а тик сдвигал это время вперёд ещё до вызова — из-за
+    // этого онлайн-полка не наливалась вообще, и любой товар «умирал»
+    // навсегда после первой продажи.
+    let period = dt.max(0.0);
     // Город живёт по всему каталогу: товар тянет спрос и без полки в лавке,
     // а полка лишь добавляет к нему продажи. Иначе рынок стоял бы полным,
     // пока игрок ничего не выставил.
@@ -1520,12 +1526,12 @@ pub fn buyer_decision(
     BuyerDecision::Buy { vip }
 }
 
-/// Проданный товар съедает спрос города: налитое уменьшается, спрос падает,
-/// предложение растёт — полка сама уходит в избыток.
+/// Проданный товар съедает налитой спрос города: полка пустеет, и следующий
+/// покупатель приходит на меньшее.
 ///
-/// Снимает только налитое. Сам спрос и предложение двигает один шаг рынка
-/// (`advance_demand`), ровно как у торговцев: стоку нечего прибавлять к
-/// паре, иначе продажа и тик считали бы её дважды.
+/// Двигает только налитое. Саму пару «спрос / предложение» шагает рынок
+/// (`advance_demand`) — ровно как у торговцев, чтобы продажа и тик не
+/// считали её дважды.
 pub fn consume_demand(state: &mut GameState, item_id: &str, quantity: u32) {
     ensure_demand(state, item_id);
     let Some(entry) = state.city.demand.get_mut(item_id) else {
@@ -1614,11 +1620,8 @@ pub fn sell_slot_amount(
             shop.sales.remove(0);
         }
     }
-    // Покупка выпивает спрос города.
-    ensure_demand(state, &record.item_id);
-    if let Some(entry) = state.city.demand.get_mut(&record.item_id) {
-        drain_available(entry, quantity);
-    }
+    // Покупка выпивает налитой спрос города.
+    consume_demand(state, &record.item_id, quantity);
     Ok(record)
 }
 
@@ -1717,10 +1720,8 @@ pub fn try_buyer(state: &mut GameState) -> Option<SaleRecord> {
             let batch = balance::SHOP_VISIT_MULT.ceil() as u32;
             let amount = (batch + (amount_roll * max_amount as f64) as u32).min(max_amount);
             let sold = sell_slot_amount(state, index, vip, amount);
-            // Проданное съедает спрос: следующий покупатель придёт на меньшее.
-            if let Ok(record) = &sold {
-                consume_demand(state, &record.item_id, record.quantity);
-            }
+            // `sell_slot_amount` уже выпивает спрос — второй раз не трогаем,
+            // иначе одна продажа била бы по рынку дважды.
             sold.ok()
         }
         BuyerDecision::Leave => {
@@ -3906,24 +3907,20 @@ pub fn set_clerk_mult(state: &mut GameState, mult: f32) {
     state.city.clerk_mult = mult.clamp(balance::CLERK_MULT_MIN, balance::CLERK_MULT_MAX);
 }
 
-/// Приказчик выставляет ходовой товар со своего склада на полку.
+/// Приказчик постоянно следит за лавкой.
 ///
-/// Полка — обычная позиция лавки: если такой товар уже стоит, приказчик
-/// докладывает его, иначе занимает свободное место. Берёт то, у чего больше
-/// невыпитого спроса, и не кладёт товар с мёртвым спросом.
+/// Раньше он просыпался раз в минуту по таймеру и за один заход делал всё:
+/// снимал мёртвое, докладывал партии, менял слабые полки. Теперь он
+/// работает каждый тик — полки живут вместе с рынком, а не рывками.
+///
+/// Чтобы живой приказчик не дёргал полки туда-сюда, у него есть пороги:
+/// снимает только по-настоящему мёртвый товар, а меняет полку не чаще
+/// `CLERK_ROTATE_SECS` и только при явной выгоде.
 pub fn tick_clerk(state: &mut GameState) {
     if !state.city.clerk_hired {
         return;
     }
-    let timestamp = now(state);
-    if state.city.next_clerk_at <= 0.0 {
-        state.city.next_clerk_at = timestamp + balance::CLERK_INTERVAL;
-        return;
-    }
-    if timestamp < state.city.next_clerk_at {
-        return;
-    }
-    state.city.next_clerk_at = timestamp + balance::CLERK_INTERVAL;
+    state.city.next_clerk_at = now(state);
 
     // Сначала снимаем с полок то, что больше не покупают: товар возвращается
     // на склад, а место освобождается под ходовые позиции.
@@ -3966,10 +3963,12 @@ pub fn tick_clerk(state: &mut GameState) {
             }
             take_from_stock(state, &item_id, quantity);
         }
-    } else {
+    } else if now(state) >= state.city.next_clerk_rotate_at {
         // Свободных полок нет: меняем самую слабую позицию на товар,
-        // которого город ждёт заметно сильнее.
+        // которого город ждёт заметно сильнее. Делаем это не каждый тик,
+        // а раз в `CLERK_ROTATE_SECS`, чтобы полки не дёргались.
         swap_in_hotter_goods(state);
+        state.city.next_clerk_rotate_at = now(state) + balance::CLERK_ROTATE_SECS;
     }
 }
 
@@ -5003,6 +5002,24 @@ mod tests {
         assert!(
             (0.78..=0.85).contains(&ratio),
             "за 10 минут должно налиться больше трёх четвертей, а не {ratio}"
+        );
+    }
+
+    #[test]
+    fn online_tick_refills_the_demand_tank() {
+        let mut state = city_with_shop();
+        consume_demand(&mut state, "robe", 10_000);
+        assert_eq!(demand_of(&state, "robe").available, 0.0);
+
+        let start = state.total_play_seconds;
+        for second in 1..=300 {
+            state.total_play_seconds = start + second as f64;
+            tick_city(&mut state);
+        }
+        let ratio = demand_ratio(&state, "robe");
+        assert!(
+            ratio >= 0.4,
+            "за 5 минут онлайн спрос должен налиться хотя бы наполовину, а не {ratio}"
         );
     }
 
@@ -6258,6 +6275,28 @@ mod tests {
         take_stock_amount(&mut state, 0, 10).unwrap();
         assert_eq!(state.amount_of("wooden_bucket"), 6);
         assert!(state.city.stock.is_empty());
+    }
+
+    #[test]
+    fn clerk_works_every_tick_without_a_timer() {
+        let mut state = city_with_shop();
+        state.gold = balance::CLERK_PRICE;
+        hire_clerk(&mut state).unwrap();
+        stock_in_test(&mut state, "wooden_bucket", 5).unwrap();
+        // Таймер специально не трогаем: приказчик обязан выставить товар
+        // сразу, а не ждать минуту.
+        state.total_play_seconds = 5.0;
+        tick_clerk(&mut state);
+        assert_eq!(shelf_quantity(&state, "wooden_bucket"), 5);
+
+        // Доклад на полку тоже идёт без ожидания таймера.
+        stock_in_test(&mut state, "wooden_bucket", 4).unwrap();
+        state.total_play_seconds = 6.0;
+        tick_clerk(&mut state);
+        assert_eq!(
+            shelf_quantity(&state, "wooden_bucket"),
+            5 + 4.min(balance::CLERK_BATCH - 5)
+        );
     }
 
     #[test]

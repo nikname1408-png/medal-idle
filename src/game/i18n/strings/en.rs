@@ -1706,7 +1706,7 @@ pub static WORLD: &[(&str, &str)] = &[
     ("clerk.title", "Clerk"),
     (
         "clerk.hint",
-        "Lists the most wanted goods from your bag on free shelves, avoiding dead demand.",
+        "Watches the shop constantly: moves dead goods to stock, tops up batches and swaps weak shelves for hot ones.",
     ),
     ("clerk.hire", "Hire a clerk for {}"),
     ("clerk.hired", "Clerk hired."),

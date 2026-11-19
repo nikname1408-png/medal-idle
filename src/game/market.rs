@@ -17,6 +17,12 @@ use super::trader;
 /// Предел хранимого тренда.
 pub const TREND_LIMIT: i32 = 20;
 
+/// Шаг настроения за один тик рынка.
+///
+/// Точно такой же, как у торговцев (`market_step` сдвигает тренд на
+/// `noise(±4)`): город и лавки живут в одном ритме, а не скачут на ±20.
+pub const TREND_STEP: i32 = 4;
+
 /// Сколько штук товара город готов принять за один заказ при равновесии.
 ///
 /// Масштаб берётся у торговца: та же наценка за тир товара
@@ -31,16 +37,14 @@ pub fn capacity_per_trend(item_id: &str) -> f64 {
     per_order * super::balance::DEMAND_CITY_SCALE
 }
 
-/// Один шаг настроения: случайный дрейф, притяжение к равновесию и малое
-/// тяготение к настроению дня.
+/// Один шаг настроения: маленький случайный дрейф, как у торговцев.
 ///
-/// Дрейф — основной источник движения; равновесие ловит тренд, если он
-/// уехал слишком далеко, а тяга к настроению дня не даёт рынку навсегда
-/// застрять в избытке или дефиците. Все шаги в целых пунктах.
+/// Раньше город бросал тренд на ±20 за шаг — рынок дёргался, но «умирал»
+/// от любой продажи. Теперь шаг тот же, что в `market_step`: ±`TREND_STEP`
+/// за тик, с потолком `TREND_LIMIT`.
 pub fn drift_trend(trend: i32, seed: &mut u64) -> i32 {
-    let drift = trader::random_below(seed, (TREND_LIMIT * 2 + 1) as u64) as i32 - TREND_LIMIT;
-    let pulled = trader::random_below(seed, 5) as i32 - 2;
-    (trend + drift + pulled).clamp(-TREND_LIMIT, TREND_LIMIT)
+    let drift = trader::random_below(seed, (TREND_STEP * 2 + 1) as u64) as i32 - TREND_STEP;
+    (trend + drift).clamp(-TREND_LIMIT, TREND_LIMIT)
 }
 
 /// Возврат значения к цели на `step` пунктов.

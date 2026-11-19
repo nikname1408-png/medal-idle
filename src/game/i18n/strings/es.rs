@@ -1784,7 +1784,7 @@ pub static WORLD: &[(&str, &str)] = &[
     ("clerk.title", "Dependiente"),
     (
         "clerk.hint",
-        "Pone solo el bien más buscado de la bolsa en los estantes libres, sin tocar la demanda muerta.",
+        "Vigila la tienda sin parar: pasa lo muerto al almacén, repone lotes y cambia estantes flojos por los buscados.",
     ),
     ("clerk.hire", "Contratar dependiente por {}"),
     ("clerk.hired", "Dependiente contratado."),
