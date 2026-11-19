@@ -519,7 +519,7 @@ pub fn tick_active_expedition(state: &mut GameState, dt: f64) -> bool {
     let Some(location_id) = state
         .active_expedition
         .as_ref()
-        .filter(|active| !active.done)
+        .filter(|active| !active.done && !active.paused)
         .map(|active| active.location_id.clone())
     else {
         return false;

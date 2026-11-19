@@ -53,6 +53,20 @@ pub async fn load() -> Result<Option<GameState>, String> {
         .map_err(|error| format!("сохранение повреждено: {error}"))
 }
 
+/// Готовит сохранение в виде текста для переноса на другое устройство.
+pub fn export_text(state: &GameState) -> Result<String, String> {
+    serde_json::to_string_pretty(state)
+        .map_err(|error| format!("не удалось сериализовать состояние: {error}"))
+}
+
+/// Принимает сохранение из текста и прогоняет его через миграции.
+pub fn import_text(text: &str) -> Result<GameState, String> {
+    let mut state: GameState = serde_json::from_str(text.trim())
+        .map_err(|error| format!("сохранение повреждено: {error}"))?;
+    state.migrate();
+    Ok(state)
+}
+
 /// Записывает состояние в localStorage.
 pub async fn save(state: &GameState) -> Result<(), String> {
     let text = serde_json::to_string(state)

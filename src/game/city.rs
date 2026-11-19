@@ -47,9 +47,12 @@ pub struct CityState {
     pub unlocked: bool,
     pub martin: MartinStage,
     pub shop: Option<Shop>,
-    /// Купленные ячейки банка: каждая добавляет золотой лимит.
+    /// Все ячейки банка: купленные за золото и полученные за задания.
     pub bank_cells: u32,
-    /// Сколько квестов банкира уже выполнено (0..=3).
+    /// Из них купленные за золото: только они двигают цену следующей
+    /// ячейки, чтобы награда банкира не удорожала покупку.
+    pub bank_paid_cells: u32,
+    /// Сколько квестов банкира уже выполнено.
     pub bank_quests_done: u32,
     pub guild_unlocked: bool,
     pub town_hall_unlocked: bool,
@@ -140,6 +143,7 @@ impl Default for CityState {
             martin: MartinStage::NotMet,
             shop: None,
             bank_cells: 0,
+            bank_paid_cells: 0,
             bank_quests_done: 0,
             guild_unlocked: false,
             town_hall_unlocked: false,
@@ -1422,13 +1426,16 @@ fn add_shelf(
     Ok(())
 }
 
-/// Убирает предмет с полки и возвращает его в рюкзак.
+/// Убирает предмет с полки. Товар уходит на склад приказчика, а если там
+/// нет места — в рюкзак игрока.
 pub fn remove_slot(state: &mut GameState, index: usize) -> Result<(), ShopError> {
     let slot = {
         let shop = state.city.shop.as_ref().ok_or(ShopError::NoShop)?;
         shop.slots.get(index).ok_or(ShopError::BadSlot)?.clone()
     };
-    if slot.quantity > 0 && state.item_capacity_left(&slot.item_id) < slot.quantity {
+    let to_stock = stock_has_room(state, &slot.item_id);
+    let to_bag = state.item_capacity_left(&slot.item_id) >= slot.quantity;
+    if slot.quantity > 0 && !to_stock && !to_bag {
         return Err(ShopError::NoSpace);
     }
     {
@@ -1439,7 +1446,11 @@ pub fn remove_slot(state: &mut GameState, index: usize) -> Result<(), ShopError>
         shop.slots.remove(index);
     }
     if slot.quantity > 0 {
-        state.add_item(&slot.item_id, slot.quantity);
+        if to_stock {
+            stock_push(state, &slot.item_id, slot.quantity);
+        } else {
+            state.add_item(&slot.item_id, slot.quantity);
+        }
     }
     Ok(())
 }
@@ -1853,17 +1864,32 @@ pub fn bank_cell_price(cells: u32) -> f64 {
     balance::BANK_CELL_BASE_PRICE * balance::BANK_CELL_PRICE_GROWTH.powi(cells as i32)
 }
 
+/// Старые сохранения не знали, какие ячейки куплены, а какие даны
+/// заданиями: восстанавливаем счётчик по числу выполненных заданий.
+pub fn migrate_bank_cells(state: &mut GameState) {
+    if state.city.bank_paid_cells != 0 || state.city.bank_cells == 0 {
+        return;
+    }
+    let granted: u32 = BANK_QUEST_DEFS
+        .iter()
+        .take(state.city.bank_quests_done as usize)
+        .map(|quest| quest.cells)
+        .sum();
+    state.city.bank_paid_cells = state.city.bank_cells.saturating_sub(granted);
+}
+
 /// Покупает ячейку банка за золото.
 pub fn buy_bank_cell(state: &mut GameState) -> Result<(), BankError> {
     if state.city.bank_cells >= balance::BANK_CELLS_MAX {
         return Err(BankError::MaxCells);
     }
-    let price = bank_cell_price(state.city.bank_cells);
+    let price = bank_cell_price(state.city.bank_paid_cells);
     if state.gold + 1e-9 < price {
         return Err(BankError::NoGold);
     }
     state.gold -= price;
     state.city.bank_cells += 1;
+    state.city.bank_paid_cells += 1;
     Ok(())
 }
 
@@ -1875,12 +1901,12 @@ pub struct BankQuest {
     pub cells: u32,
 }
 
-/// Три квеста банкира: 1, 2 и 3 ячейки.
+/// Задания банкира: ячейки за товары. Цена покупных ячеек от них не растёт.
 pub fn bank_quests() -> &'static [BankQuest] {
     &BANK_QUEST_DEFS
 }
 
-static BANK_QUEST_DEFS: [BankQuest; 3] = [
+static BANK_QUEST_DEFS: [BankQuest; 6] = [
     BankQuest {
         item_id: "iron_ingot",
         quantity: 10,
@@ -1895,6 +1921,21 @@ static BANK_QUEST_DEFS: [BankQuest; 3] = [
         item_id: "gold_ingot",
         quantity: 5,
         cells: 3,
+    },
+    BankQuest {
+        item_id: "board",
+        quantity: 40,
+        cells: 2,
+    },
+    BankQuest {
+        item_id: "gems",
+        quantity: 15,
+        cells: 3,
+    },
+    BankQuest {
+        item_id: "gold_ingot",
+        quantity: 20,
+        cells: 5,
     },
 ];
 
@@ -2032,6 +2073,38 @@ pub fn add_stock(state: &mut GameState, item_id: &str, quantity: u32) -> Result<
     }
     state.remove_item(item_id, quantity);
     Ok(())
+}
+
+/// Есть ли на складе место под товар: либо строка уже существует, либо
+/// свободна хотя бы одна ячейка.
+fn stock_has_room(state: &GameState, item_id: &str) -> bool {
+    state.city.stock.iter().any(|row| row.item_id == item_id)
+        || state.city.stock.len() < clerk_stock_cells(state) as usize
+}
+
+/// Кладёт товар на склад без списания из сумки. Возвращает `false`, если
+/// склад заполнен.
+fn stock_push(state: &mut GameState, item_id: &str, quantity: u32) -> bool {
+    if quantity == 0 {
+        return true;
+    }
+    if let Some(row) = state
+        .city
+        .stock
+        .iter_mut()
+        .find(|row| row.item_id == item_id)
+    {
+        row.quantity += quantity;
+        return true;
+    }
+    if state.city.stock.len() >= clerk_stock_cells(state) as usize {
+        return false;
+    }
+    state.city.stock.push(StockItem {
+        item_id: item_id.to_string(),
+        quantity,
+    });
+    true
 }
 
 /// Сколько штук со склада приказчик выставит на полку: не больше партии,
@@ -3250,16 +3323,13 @@ pub fn traveler_house_land(state: &GameState) -> bool {
     state.city.traveler_house_rented
 }
 
-/// Согласился ли игрок на предложение друзей построить дом.
-pub fn traveler_house_agreed(state: &GameState) -> bool {
-    state.city.traveler_house_answer == Some(true)
-}
-
-/// Можно ли уже арендовать землю под дом: путешественники позвали игрока
-/// в дело, и он ответил на предложение — «Да» или «Нет».
+/// Можно ли уже арендовать землю под дом: друзья позвали игрока в дело.
+///
+/// Согласие («Да») и отказ («Нет») только переносят игрока в Ратушу, но не
+/// запирают аренду: после финального компаса землю можно взять сразу, даже
+/// если окно предложения ещё не закрыто.
 pub fn traveler_house_offer_made(state: &GameState) -> bool {
     state.city.traveler_house_offered
-        && (state.city.traveler_house_land || traveler_house_agreed(state))
 }
 
 /// Земля под Дом странников: разовый платёж в Ратуше.
@@ -3845,13 +3915,17 @@ pub fn tick_clerk(state: &mut GameState) {
     }
     state.city.next_clerk_at = timestamp + balance::CLERK_INTERVAL;
 
+    // Сначала снимаем с полок то, что больше не покупают: товар возвращается
+    // на склад, а место освобождается под ходовые позиции.
+    prune_dead_shelves(state);
+
     let stocked: Vec<String> = state
         .city
         .shop
         .as_ref()
         .map(|shop| shop.slots.iter().map(|slot| slot.item_id.clone()).collect())
         .unwrap_or_default();
-    // Сначала докладываем товар на уже стоящие полки.
+    // Докладываем товар на уже стоящие полки.
     let refill = stock_plan(state, &stocked, stocked.len(), None, false);
     let mult = state.city.clerk_mult;
     for (item_id, quantity) in refill {
@@ -3860,7 +3934,7 @@ pub fn tick_clerk(state: &mut GameState) {
         }
         take_from_stock(state, &item_id, quantity);
     }
-    // Потом заводим новые позиции на свободные места.
+    // Заводим новые позиции на свободные места.
     let free_slots = state
         .city
         .shop
@@ -3875,7 +3949,149 @@ pub fn tick_clerk(state: &mut GameState) {
             }
             take_from_stock(state, &item_id, quantity);
         }
+    } else {
+        // Свободных полок нет: меняем самую слабую позицию на товар,
+        // которого город ждёт заметно сильнее.
+        swap_in_hotter_goods(state);
     }
+}
+
+/// Снимает с полки товар, у которого не осталось спроса, и возвращает его
+/// на склад приказчика.
+fn prune_dead_shelves(state: &mut GameState) {
+    let mut index = 0;
+    while index
+        < state
+            .city
+            .shop
+            .as_ref()
+            .map(|shop| shop.slots.len())
+            .unwrap_or(0)
+    {
+        let item_id = state
+            .city
+            .shop
+            .as_ref()
+            .and_then(|shop| shop.slots.get(index))
+            .map(|slot| slot.item_id.clone());
+        let Some(item_id) = item_id else {
+            break;
+        };
+        // Падающий тренд — товар перестал расходиться. Проданная до нуля
+        // ходовая позиция сюда не попадает: у неё тренд не отрицательный.
+        if market_trend(state, &item_id) >= 0 || !shelf_to_stock(state, index) {
+            index += 1;
+        }
+    }
+}
+
+/// Возвращает позицию с полки на склад приказчика. `false` — на складе нет
+/// места, позиция осталась на полке.
+fn shelf_to_stock(state: &mut GameState, index: usize) -> bool {
+    let Some(slot) = state
+        .city
+        .shop
+        .as_ref()
+        .and_then(|shop| shop.slots.get(index))
+        .cloned()
+    else {
+        return false;
+    };
+    if !stock_has_room(state, &slot.item_id) {
+        return false;
+    }
+    if let Some(shop) = state.city.shop.as_mut() {
+        if index < shop.slots.len() {
+            shop.slots.remove(index);
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    stock_push(state, &slot.item_id, slot.quantity);
+    true
+}
+
+/// Меняет слабейшую полку на самый ходовой товар со склада.
+fn swap_in_hotter_goods(state: &mut GameState) {
+    let Some(shop) = state.city.shop.as_ref() else {
+        return;
+    };
+    let Some((worst_index, _worst_id, worst_demand)) = shop
+        .slots
+        .iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            (
+                index,
+                slot.item_id.clone(),
+                demand_of(state, &slot.item_id).demand,
+            )
+        })
+        .min_by(|left, right| {
+            left.2
+                .partial_cmp(&right.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    else {
+        return;
+    };
+    let Some((best_id, best_quantity, best_demand)) = state
+        .city
+        .stock
+        .iter()
+        .map(|row| {
+            (
+                row.item_id.clone(),
+                row.quantity,
+                demand_of(state, &row.item_id).demand,
+            )
+        })
+        .max_by(|left, right| {
+            left.2
+                .partial_cmp(&right.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    else {
+        return;
+    };
+    // Меняем только при явной выгоде, иначе приказчик дёргал бы полки зря.
+    if best_demand == 0 || (best_demand as f64) <= (worst_demand as f64) * 1.25 {
+        return;
+    }
+    let batch = best_quantity.min(clerk_batch(&best_id));
+    let mult = state.city.clerk_mult;
+    if batch == 0 || !shelf_to_stock(state, worst_index) {
+        return;
+    }
+    if add_shelf(state, &best_id, batch, mult).is_ok() {
+        take_from_stock(state, &best_id, batch);
+    }
+}
+
+/// Убирает с полок все товары на склад приказчика. Возвращает число
+/// перенесённых штук; что не влезло на склад, остаётся на полке.
+pub fn clerk_clear_shelves(state: &mut GameState) -> Result<u32, ShopError> {
+    if state.city.shop.is_none() {
+        return Err(ShopError::NoShop);
+    }
+    let mut moved = 0;
+    let mut index = 0;
+    while let Some(slot) = state
+        .city
+        .shop
+        .as_ref()
+        .and_then(|shop| shop.slots.get(index))
+        .cloned()
+    {
+        if shelf_to_stock(state, index) {
+            moved += slot.quantity;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(moved)
 }
 
 /// Снимает товар со склада после того, как он попал на полку.
@@ -3911,9 +4127,17 @@ pub fn stock_plan(
         .filter(|row| !(new_only && stocked.iter().any(|id| id == &row.item_id)))
         .collect();
     rows.sort_by(|left, right| {
-        let a = demand_of(state, &left.item_id).available;
-        let b = demand_of(state, &right.item_id).available;
-        b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal)
+        let a = demand_of(state, &left.item_id);
+        let b = demand_of(state, &right.item_id);
+        // Сначала то, что город хочет сильнее; при равном спросе — то,
+        // у чего больше невыпитого налива.
+        b.demand
+            .cmp(&a.demand)
+            .then_with(|| {
+                b.available
+                    .partial_cmp(&a.available)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
     });
 
     let mut plan: Vec<(String, u32)> = Vec::new();
@@ -4313,6 +4537,28 @@ pub fn tick_city(state: &mut GameState) {
     tick_clerk(state);
 }
 
+/// Городские часы для тайм-варпа: только налог и жалованье.
+pub fn tick_city_warp(state: &mut GameState) {
+    if !state.city.unlocked {
+        return;
+    }
+    let timestamp = now(state);
+    if state.city.next_tax_at <= 0.0 {
+        state.city.next_tax_at = timestamp + balance::CITY_TAX_INTERVAL;
+    }
+    if state.city.next_salary_at <= 0.0 {
+        state.city.next_salary_at = timestamp + balance::CITY_TAX_INTERVAL;
+    }
+    if timestamp >= state.city.next_tax_at {
+        pay_tax(state);
+        state.city.next_tax_at = timestamp + balance::CITY_TAX_INTERVAL;
+    }
+    if timestamp >= state.city.next_salary_at {
+        pay_salaries(state);
+        state.city.next_salary_at = timestamp + balance::CITY_TAX_INTERVAL;
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -4409,12 +4655,16 @@ mod tests {
     }
 
     #[test]
-    fn remove_slot_returns_to_inventory() {
+    fn remove_slot_returns_to_clerk_stock() {
         let mut state = city_with_shop();
         state.add_item("robe", 1);
         add_slot(&mut state, "robe", 1, 1.0).unwrap();
         remove_slot(&mut state, 0).unwrap();
-        assert_eq!(state.amount_of("robe"), 1);
+        // Снятый с полки товар уходит на склад лавки, а не в рюкзак.
+        assert_eq!(state.amount_of("robe"), 0);
+        assert_eq!(state.city.stock.len(), 1);
+        assert_eq!(state.city.stock[0].item_id, "robe");
+        assert_eq!(state.city.stock[0].quantity, 1);
         assert!(state.city.shop.as_ref().unwrap().slots.is_empty());
     }
 
@@ -4716,8 +4966,8 @@ mod tests {
         catch_up_offline(&mut state, 600.0);
         let ratio = demand_ratio(&state, "robe");
         assert!(
-            (0.25..=0.40).contains(&ratio),
-            "за 10 минут должна налиться треть, а не {ratio}"
+            (0.45..=0.55).contains(&ratio),
+            "за 10 минут должна налиться половина, а не {ratio}"
         );
     }
 
@@ -4926,7 +5176,22 @@ mod tests {
         state.gold = 10_000.0;
         buy_bank_cell(&mut state).unwrap();
         assert_eq!(state.city.bank_cells, 1);
+        assert_eq!(state.city.bank_paid_cells, 1);
         assert!((state.gold_cap() - (before + balance::BANK_CELL_BONUS)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn banker_quest_cells_do_not_raise_the_next_price() {
+        let mut state = GameState::default();
+        state.city.bank_cells = 10;
+        state.city.bank_paid_cells = 10;
+        let before = bank_cell_price(state.city.bank_paid_cells);
+        state.add_item("iron_ingot", 10);
+        let granted = complete_bank_quest(&mut state).unwrap();
+        assert_eq!(granted, 1);
+        assert_eq!(state.city.bank_cells, 11);
+        assert_eq!(state.city.bank_paid_cells, 10);
+        assert!((bank_cell_price(state.city.bank_paid_cells) - before).abs() < 1e-6);
     }
 
     #[test]
@@ -5776,6 +6041,23 @@ mod tests {
     }
 
     #[test]
+    fn time_warp_pays_tax_and_salaries() {
+        let mut state = city_with_shop();
+        state.gold = 100_000.0;
+        state.city.production_value = 10_000.0;
+        state.city.next_tax_at = 10.0;
+        state.city.next_salary_at = 10.0;
+        state.total_play_seconds = 1_000.0;
+
+        tick_city_warp(&mut state);
+
+        // Тайм-варп двигает городские часы: налог оплачен, срок сдвинут.
+        assert_eq!(state.city.taxes_paid, 1);
+        assert!(state.city.next_tax_at > 1_000.0);
+        assert!(state.city.next_salary_at > 1_000.0);
+    }
+
+    #[test]
     fn smith_keeps_ingredients_when_there_is_no_room() {
         let mut state = smith_ready_city();
         build_smith(&mut state, 0).unwrap();
@@ -5958,6 +6240,23 @@ mod tests {
         take_stock_amount(&mut state, 0, 10).unwrap();
         assert_eq!(state.amount_of("wooden_bucket"), 6);
         assert!(state.city.stock.is_empty());
+    }
+
+    #[test]
+    fn clerk_clears_all_shelves_to_stock() {
+        let mut state = city_with_shop();
+        state.add_item("robe", 3);
+        add_slot(&mut state, "robe", 3, 1.0).unwrap();
+        state.add_item("jug", 2);
+        add_slot(&mut state, "jug", 2, 1.0).unwrap();
+        let moved = clerk_clear_shelves(&mut state).unwrap();
+        assert_eq!(moved, 5);
+        assert!(state.city.shop.as_ref().unwrap().slots.is_empty());
+        let in_stock: u32 = state.city.stock.iter().map(|row| row.quantity).sum();
+        assert_eq!(in_stock, 5);
+        // В рюкзак ничего не вернулось: всё ушло на склад.
+        assert_eq!(state.amount_of("robe"), 0);
+        assert_eq!(state.amount_of("jug"), 0);
     }
 
     #[test]
@@ -6372,7 +6671,7 @@ mod tests {
     }
 
     #[test]
-    fn land_needs_a_friend_and_an_agreement() {
+    fn land_needs_a_friend_offer() {
         let mut state = city_with_shop();
         ensure_travelers(&mut state);
         state.city.town_hall_unlocked = true;
@@ -6382,16 +6681,21 @@ mod tests {
         assert_eq!(rent_traveler_house(&mut state), Err(TravelerError::HouseNotOffered));
         assert!(!traveler_house_offer_made(&state));
 
-        // Друг позвал, но игрок ещё не ответил.
+        // Друг позвал — землю можно арендовать сразу, не дожидаясь ответа
+        // на окно предложения (иначе после компаса игрок запирался).
         state.city.traveler_house_offered = true;
-        assert_eq!(rent_traveler_house(&mut state), Err(TravelerError::HouseNotOffered));
-
-        // Согласился — землю можно арендовать, стройка тоже открыта.
-        traveler_house_decision(&mut state, true);
         assert!(traveler_house_offer_made(&state));
         assert_eq!(start_traveler_house_stage(&mut state), Err(TravelerError::NoLand));
         rent_traveler_house(&mut state).unwrap();
         assert!(traveler_house_rented(&state));
+        assert_eq!(
+            rent_traveler_house(&mut state),
+            Err(TravelerError::QuestDecided)
+        );
+
+        // Согласие по-прежнему открывает стройку.
+        traveler_house_decision(&mut state, true);
+        assert!(traveler_house_offer_made(&state));
     }
 
     #[test]

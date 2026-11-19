@@ -461,7 +461,7 @@ const COMFORT_COST_GROWTH: f64 = 2.2;
 const WORKER_HOUSE_BASE_COST_WOOD: f64 = 18.0;
 const WORKER_HOUSE_BASE_COST_GOLD: f64 = 0.0;
 const WORKER_HOUSE_BASE_COST_STONE: f64 = 12.0;
-const WORKER_HOUSE_COST_GROWTH: f64 = 2.2;
+const WORKER_HOUSE_COST_GROWTH: f64 = 2.0;
 
 const RESEARCH_HOUSE_BASE_COST_WOOD: f64 = 24.0;
 const RESEARCH_HOUSE_BASE_COST_GOLD: f64 = 0.0;
@@ -671,8 +671,8 @@ pub const DEMAND_TREND_UNITS: f64 = 0.02;
 /// Сколько штук покупатель берёт за визит в городе — вдвое больше, чем
 /// у торговца: город берёт партиями.
 pub const SHOP_VISIT_MULT: f64 = 2.0;
-/// Полная ёмкость спроса наливается за 30 минут.
-pub const DEMAND_FILL_SECS: f64 = 30.0 * 60.0;
+/// Полная ёмкость спроса наливается за 20 минут.
+pub const DEMAND_FILL_SECS: f64 = 20.0 * 60.0;
 /// Вес одной проданной штуки в спросе: 16 штук снимают один пункт.
 pub const DEMAND_SALE_DRAIN: f64 = 1.0;
 /// Максимальный шаг симуляции спроса за один тик (секунды).

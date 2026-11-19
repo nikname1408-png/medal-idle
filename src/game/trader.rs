@@ -18,7 +18,7 @@ pub const MARKET_TICK_SECONDS: f64 = 5.0;
 /// Кошелёк торговца: сколько золота он готов отдать за товар за цикл.
 /// Деньги ограничивают оборот торговца, поэтому оптом сбыть горы дерева
 /// больше не выйдет — крупные партии упираются в кошелёк.
-pub const TRADER_WALLET: f64 = 3_000.0;
+pub const TRADER_WALLET: f64 = 4_000.0;
 /// Раз в сколько секунд кошелёк торговца пополняется.
 pub const TRADER_WALLET_INTERVAL: f64 = 30.0 * 60.0;
 
@@ -659,6 +659,12 @@ pub fn buy(
 
     state.gold = (state.gold - total).max(0.0);
     state.add_item(item_id, quantity);
+    // Покупка пополняет кошелёк торговца: эти же деньги он сможет
+    // потратить, когда игрок придёт продавать. Больше лимита не копится.
+    let wallet = wallet_of(state, trader_index);
+    if let Some(market) = state.traders.get_mut(trader_index) {
+        market.wallet = (wallet + total).min(TRADER_WALLET);
+    }
 
     if let Some(good) = state
         .traders
@@ -1683,18 +1689,43 @@ mod tests {
         };
         state.add_item("stone_block", 160);
 
-        // 120 блоков по 23 золота — 2760 из 3000, кошелёк почти пуст.
+        // 120 блоков по 24 золота — 2880 из 4000, кошелёк заметно худеет.
         assert_eq!(sell(&mut state, 0, "stone_block", 120), Ok(()));
-        assert!(state.traders[0].wallet < TRADER_WALLET);
-        // После обвала цены 30 блоков стоят 360 — кошелька не хватает.
+        let left = state.traders[0].wallet;
+        assert!(left < TRADER_WALLET);
+
+        // Кошелёк конечен: партия дороже остатка не проходит целиком.
+        state.traders[0].wallet = 10.0;
         assert_eq!(
-            sell(&mut state, 0, "stone_block", 30),
+            sell(&mut state, 0, "stone_block", 5),
             Err(TradeError::TraderBroke)
         );
 
+        // Через цикл кошелёк снова полон.
         state.total_play_seconds = TRADER_WALLET_INTERVAL + 1.0;
         assert_eq!(sell(&mut state, 0, "stone_block", 1), Ok(()));
         assert!(state.traders[0].wallet < TRADER_WALLET);
+    }
+
+    #[test]
+    fn buying_from_the_trader_refills_his_wallet() {
+        let mut state = GameState {
+            bank_level: 10,
+            ..GameState::default()
+        };
+        state.gold = 100_000.0;
+        state.traders[0].wallet = 1_000.0;
+        state.traders[0].wallet_at = state.total_play_seconds + TRADER_WALLET_INTERVAL;
+        let item_id = state.traders[0]
+            .goods
+            .iter()
+            .find(|good| good.stock > 0)
+            .map(|good| good.item_id.clone())
+            .unwrap();
+        buy(&mut state, 0, &item_id, 1).unwrap();
+        let after = state.traders[0].wallet;
+        assert!(after > 1_000.0);
+        assert!(after <= TRADER_WALLET);
     }
 
     #[test]

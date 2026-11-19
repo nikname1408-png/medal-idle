@@ -7,7 +7,7 @@ use crate::game::expedition;
 use crate::game::i18n;
 use crate::game::i18n::Lang;
 use crate::game::state::{AchievementStatus, ResourceKind, Theme};
-use crate::game::{balance, city, GameState};
+use crate::game::{balance, city, items, GameState};
 
 use super::city::{CityScreen, MartinDialog};
 use super::expedition::ExpeditionScreen;
@@ -1481,6 +1481,10 @@ fn SettingsScreen(state: Signal<GameState>, view: GameState, lang: Signal<i18n::
     let mut state = state;
     let mut lang = lang;
     let reset_armed = use_signal(|| false);
+    let mut transfer_text = use_signal(String::new);
+    let mut transfer_message = use_signal(String::new);
+    let transfer_now = transfer_text();
+    let transfer_message_now = transfer_message();
     let theme = view.theme;
     let lang_now = lang();
 
@@ -1561,6 +1565,61 @@ fn SettingsScreen(state: Signal<GameState>, view: GameState, lang: Signal<i18n::
                 class: if reset_armed() { "danger-btn armed" } else { "danger-btn" },
                 onclick: move |_| reset_progress(state, reset_armed),
                 "{reset_label}"
+            }
+        }
+
+        section { class: "settings",
+            h2 { class: "settings-title", "{i18n::t(\"settings.save_transfer\")}" }
+            p { class: "settings-note", "{i18n::t(\"settings.save_hint\")}" }
+            textarea {
+                class: "save-transfer",
+                value: "{transfer_now}",
+                oninput: move |event| transfer_text.set(event.value()),
+            }
+            div { class: "settings-actions",
+                button {
+                    class: "city-btn",
+                    onclick: move |_| {
+                        let current = state.peek().clone();
+                        match save::export_text(&current) {
+                            Ok(text) => {
+                                transfer_text.set(text);
+                                transfer_message
+                                    .set(i18n::t("settings.export_done").to_string());
+                            }
+                            Err(error) => transfer_message.set(error),
+                        }
+                    },
+                    "{i18n::t(\"btn.export_save\")}"
+                }
+                button {
+                    class: "city-btn",
+                    onclick: move |_| {
+                        let text = transfer_text();
+                        match save::import_text(&text) {
+                            Ok(mut loaded) => {
+                                loaded.last_seen = actions::unix_now();
+                                state.set(loaded);
+                                refresh_view(state);
+                                transfer_message
+                                    .set(i18n::t("settings.import_done").to_string());
+                                spawn(async move {
+                                    let mut snapshot = state.peek().clone();
+                                    snapshot.last_seen = actions::unix_now();
+                                    if let Err(error) = save::save(&snapshot).await {
+                                        eprintln!("Не удалось сохранить импорт: {error}");
+                                    }
+                                });
+                            }
+                            Err(error) => transfer_message
+                                .set(i18n::tf("settings.import_failed", &[&error])),
+                        }
+                    },
+                    "{i18n::t(\"btn.import_save\")}"
+                }
+            }
+            if !transfer_message_now.is_empty() {
+                p { class: "settings-note", "{transfer_message_now}" }
             }
         }
 
@@ -2354,6 +2413,21 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
     // не должен перерисовывать панель и сбрасывать введённые числа.
     let snapshot = use_hook(|| state.peek().clone());
     let dev = snapshot.dev.clone();
+    let mut dev_message = use_signal(String::new);
+    let mut grant_item = use_signal(|| {
+        items::catalog()
+            .first()
+            .map(|item| item.id.clone())
+            .unwrap_or_default()
+    });
+    let mut grant_amount = use_signal(|| "1".to_string());
+    let grant_items: Vec<(String, String)> = items::catalog()
+        .iter()
+        .map(|item| (item.id.clone(), item.name().to_string()))
+        .collect();
+    let grant_now = grant_item();
+    let grant_amount_now = grant_amount();
+    let dev_message_now = dev_message();
 
     rsx! {
         div { class: "dev-overlay",
@@ -2724,6 +2798,109 @@ fn DevPanel(state: Signal<GameState>, on_close: EventHandler<()>) -> Element {
                         },
                         "Открыть город"
                     }
+                }
+
+                section { class: "dev-group",
+                    h3 { class: "dev-group-title", "Предметы" }
+                    div { class: "dev-row",
+                        span { class: "dev-label", "Предмет" }
+                        select {
+                            class: "dev-input",
+                            value: "{grant_now}",
+                            onchange: move |event| grant_item.set(event.value()),
+                            for (id, name) in grant_items {
+                                option { value: "{id}", "{name}" }
+                            }
+                        }
+                    }
+                    div { class: "dev-row",
+                        span { class: "dev-label", "Количество" }
+                        input {
+                            class: "dev-input",
+                            r#type: "number",
+                            step: "1",
+                            value: "{grant_amount_now}",
+                            oninput: move |event| grant_amount.set(event.value()),
+                        }
+                        button {
+                            class: "dev-btn",
+                            onclick: move |_| {
+                                let next = grant_amount()
+                                    .trim()
+                                    .parse::<f64>()
+                                    .unwrap_or(1.0)
+                                    + 1.0;
+                                grant_amount.set(format_input(next));
+                            },
+                            "+1"
+                        }
+                        button {
+                            class: "dev-btn",
+                            onclick: move |_| {
+                                let next = grant_amount()
+                                    .trim()
+                                    .parse::<f64>()
+                                    .unwrap_or(1.0)
+                                    + 10.0;
+                                grant_amount.set(format_input(next));
+                            },
+                            "+10"
+                        }
+                    }
+                    button {
+                        class: "dev-btn dev-wide",
+                        onclick: move |_| {
+                            let id = grant_item();
+                            let amount = grant_amount()
+                                .trim()
+                                .parse::<f64>()
+                                .unwrap_or(0.0)
+                                .max(0.0) as u32;
+                            if amount == 0 {
+                                dev_message.set("Укажите количество.".to_string());
+                                return;
+                            }
+                            let added = {
+                                let mut guard = state.write();
+                                guard.add_item(&id, amount)
+                            };
+                            let name = items::item(&id)
+                                .map(|item| item.name())
+                                .unwrap_or("предмет");
+                            if added {
+                                dev_message
+                                    .set(format!("Выдано: {amount} × {name}."));
+                            } else {
+                                dev_message
+                                    .set("В рюкзаке нет места для предмета.".to_string());
+                            }
+                            refresh_view(state);
+                        },
+                        "Выдать в инвентарь"
+                    }
+                }
+
+                section { class: "dev-group",
+                    h3 { class: "dev-group-title", "Путешественники" }
+                    button {
+                        class: "dev-btn dev-wide",
+                        onclick: move |_| {
+                            {
+                                let mut guard = state.write();
+                                for traveler in guard.city.travelers.iter_mut() {
+                                    traveler.friendship = 0;
+                                }
+                            }
+                            dev_message
+                                .set("Дружба путешественников обнулена.".to_string());
+                            refresh_view(state);
+                        },
+                        "Обнулить дружбу со странниками"
+                    }
+                }
+
+                if !dev_message_now.is_empty() {
+                    p { class: "dev-note", "{dev_message_now}" }
                 }
 
                 button {

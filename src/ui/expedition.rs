@@ -33,6 +33,10 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
         .as_ref()
         .map(|expedition| expedition.done)
         .unwrap_or(false);
+    let paused = active
+        .as_ref()
+        .map(|expedition| expedition.paused)
+        .unwrap_or(false);
     let good_now = !finished && !message_text.is_empty();
     let found_text = active
         .as_ref()
@@ -91,21 +95,21 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                         }
                     }
                     button {
-                        class: "exp-stop",
+                        class: if paused { "exp-stop paused" } else { "exp-stop" },
                         onclick: move |_| {
                             {
                                 let mut guard = state.write();
                                 if let Some(active) = guard.active_expedition.as_mut() {
-                                    if active.notice.is_none() {
-                                        active.notice =
-                                            Some(i18n::t("hike.finished").to_string());
-                                    }
-                                    active.done = true;
+                                    active.paused = !active.paused;
                                 }
                             }
                             refresh_view(state);
                         },
-                        "{i18n::t(\"btn.finish_hike\")}"
+                        if paused {
+                            "{i18n::t(\"hike.resume\")}"
+                        } else {
+                            "{i18n::t(\"hike.pause\")}"
+                        }
                     }
                 }
             }

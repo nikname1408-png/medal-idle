@@ -682,6 +682,8 @@ struct MarketRow {
     status: String,
     trend: &'static str,
     trend_class: &'static str,
+    /// Числовое значение тренда: по нему сортируется рынок.
+    trend_value: i32,
 }
 
 /// Рынок города: та же пара «спрос / предложение», что у торговцев,
@@ -689,7 +691,7 @@ struct MarketRow {
 #[component]
 fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
     let _ = state;
-    // По алфавиту: рынок города — справочник, а не очередь на сдачу.
+    let mut sort_by_trend = use_signal(|| false);
     let mut rows: Vec<MarketRow> = items::catalog()
         .iter()
         .filter(|item| city::is_shop_sellable(&view, &item.id))
@@ -722,14 +724,36 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                 status: market_status.label().to_string(),
                 trend: trend_label,
                 trend_class,
+                trend_value: trend,
             }
         })
         .collect();
-    rows.sort_by(|left, right| left.name.cmp(&right.name));
+    if sort_by_trend() {
+        rows.sort_by(|left, right| {
+            right
+                .trend_value
+                .cmp(&left.trend_value)
+                .then_with(|| left.name.cmp(&right.name))
+        });
+    } else {
+        rows.sort_by(|left, right| left.name.cmp(&right.name));
+    }
     let count_text = rows.len().to_string();
 
     rsx! {
         p { class: "city-hint", "{i18n::t(\"market.hint\")}" }
+        div { class: "city-topbar market-sort",
+            button {
+                class: if sort_by_trend() { "city-btn small" } else { "city-btn small active" },
+                onclick: move |_| sort_by_trend.set(false),
+                "{i18n::t(\"market.sort_name\")}"
+            }
+            button {
+                class: if sort_by_trend() { "city-btn small active" } else { "city-btn small" },
+                onclick: move |_| sort_by_trend.set(true),
+                "{i18n::t(\"market.sort_trend\")}"
+            }
+        }
         div { class: "city-card market-card",
             div { class: "city-row market-row market-head",
                 span { "{i18n::t(\"market.col_item\")}" }
@@ -762,6 +786,7 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
 #[component]
 fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut state = state;
+    let mut subview = use_context::<Signal<CityView>>();
     let mut message = use_signal(String::new);
     let mut add_open = use_signal(|| false);
     let mut selected_goods = use_signal(|| None::<String>);
@@ -942,6 +967,11 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                 if !message().is_empty() {
                     div { class: "city-msg", "{message()}" }
                 }
+                button {
+                    class: "city-btn wide market-open",
+                    onclick: move |_| subview.set(CityView::Market),
+                    "{i18n::t(\"market.title\")}"
+                }
             }
 
             if slots.is_empty() {
@@ -1116,6 +1146,22 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                     div { class: "city-row muted",
                         span { "{clerk_salary_text}" }
+                    }
+                    button {
+                        class: "city-btn",
+                        onclick: move |_| {
+                            let outcome = {
+                                let mut guard = state.write();
+                                city::clerk_clear_shelves(&mut guard)
+                            };
+                            match outcome {
+                                Ok(moved) => message
+                                    .set(i18n::tf("clerk.cleared", &[&moved.to_string()])),
+                                Err(error) => message.set(error.text().to_string()),
+                            }
+                            refresh_view(state);
+                        },
+                        "{i18n::t(\"clerk.clear_shelves\")}"
                     }
                 } else {
                     button {
@@ -1494,12 +1540,17 @@ fn BankScreen(state: Signal<GameState>, view: GameState) -> Element {
 
     let cells = view.city.bank_cells;
     let maxed = cells >= balance::BANK_CELLS_MAX;
+    // Цена следующей ячейки считается только по купленным: награды банкира
+    // ячейки дают, но покупку не удорожают.
     let cells_text = i18n::tf(
         "bank.cells",
         &[&cells.to_string(), &balance::BANK_CELLS_MAX.to_string()],
     );
     let cap_text = i18n::tf("bank.cap", &[&money(view.gold_cap())]);
-    let price_text = i18n::tf("bank.next_price", &[&money(city::bank_cell_price(cells))]);
+    let price_text = i18n::tf(
+        "bank.next_price",
+        &[&money(city::bank_cell_price(view.city.bank_paid_cells))],
+    );
     let done = view.city.bank_quests_done;
     let quest = city::bank_quests().get(done as usize).copied();
     let quest_text = quest

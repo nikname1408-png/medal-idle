@@ -316,6 +316,10 @@ pub struct ActiveExpedition {
     pub notice: Option<String>,
     /// Поход окончен (энергия или рюкзак).
     pub done: bool,
+    /// Поход на паузе: кнопка «Стоп» останавливает путь, но не закрывает
+    /// поход; находки и время сохраняются до продолжения.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 impl ActiveExpedition {
@@ -326,6 +330,7 @@ impl ActiveExpedition {
             found: Vec::new(),
             notice: None,
             done: false,
+            paused: false,
         }
     }
 
@@ -2150,6 +2155,8 @@ impl GameState {
         }
         // Дом кузнеца из гильдии стал первым кузнецом в «Труде».
         city::migrate_smiths(self);
+        // Награды банкира больше не удорожают покупные ячейки.
+        city::migrate_bank_cells(self);
         // Старые сохранения могли держать на полках распроданные позиции.
         city::drop_empty_slots(self);
         // Спрос города переехал на торговую модель (спрос/предложение/тренд).

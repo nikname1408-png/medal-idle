@@ -1267,6 +1267,31 @@ button {
     font-weight: 700;
 }
 
+.save-transfer {
+    width: 100%;
+    min-height: 120px;
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.28);
+    color: var(--text);
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    resize: vertical;
+}
+
+.settings-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.settings-actions .city-btn {
+    flex: 1;
+}
+
 .danger-btn {
     width: 100%;
     margin-top: 10px;
@@ -1283,6 +1308,20 @@ button {
 .danger-btn.armed {
     background: var(--danger);
     color: #ffffff;
+}
+
+.market-sort {
+    gap: 8px;
+}
+
+.city-btn.small.active {
+    border-color: var(--select);
+    color: var(--select);
+}
+
+.exp-stop.paused {
+    border-color: var(--select);
+    color: var(--select);
 }
 
 /* ---------- Панель разработчика ---------- */
