@@ -3762,7 +3762,7 @@ button {
 /* Рынок города: те же колонки, что у торговца — товар, цена, спрос/предложение, тренд. */
 .city-row.market-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 54px 56px 82px;
+    grid-template-columns: minmax(0, 1fr) 54px 56px 40px;
     gap: 6px;
     align-items: center;
     padding-right: 6px;
@@ -3800,9 +3800,24 @@ button {
 }
 
 .market-name {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+}
+
+.market-name-text {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.market-icon {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    object-fit: contain;
+    image-rendering: pixelated;
 }
 
 .market-head {
@@ -3855,6 +3870,13 @@ button {
 
 .market-arrow.up {
     color: var(--energy);
+}
+
+.market-arrow {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
 }
 
 .market-arrow.down {

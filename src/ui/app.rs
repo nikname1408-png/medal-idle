@@ -924,25 +924,34 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         })
         .collect();
 
-    // Вкладка «Наёмные» видна всегда: даже без грамоты из Ратуши в ней есть
-    // подсказка, где её взять. «Кузнец» открывается вместе с городом.
-    let smith_tab_visible = snapshot.city.unlocked;
+    // Вкладка «Наёмные» появляется после грамоты из Ратуши, «Кузнец» —
+// после постройки кузницы в городе. До покупки их не видно.
+    let hired_tab_visible = snapshot.city.hire_charter;
+    let smith_tab_visible = snapshot.city.smiths.iter().any(|smith| smith.built);
+    // Если открыта только одна вкладка, показываем её без выбора.
+    let show_smith = if hired_tab_visible && smith_tab_visible {
+        smith_tab()
+    } else {
+        smith_tab_visible
+    };
     rsx! {
         div { class: "work-tabs",
-            button {
-                class: if smith_tab() { "work-tab" } else { "work-tab active" },
-                onclick: move |_| smith_tab.set(false),
-                "{i18n::t(\"hire.title\")}"
+            if hired_tab_visible {
+                button {
+                    class: if show_smith { "work-tab" } else { "work-tab active" },
+                    onclick: move |_| smith_tab.set(false),
+                    "{i18n::t(\"hire.title\")}"
+                }
             }
             if smith_tab_visible {
                 button {
-                    class: if smith_tab() { "work-tab active" } else { "work-tab" },
+                    class: if show_smith { "work-tab active" } else { "work-tab" },
                     onclick: move |_| smith_tab.set(true),
                     "{i18n::t(\"work.smith_tab\")}"
                 }
             }
         }
-        if smith_tab() {
+        if show_smith {
             SmithSection { state, view: snapshot.clone() }
         } else {
         section { class: "section",

@@ -12,6 +12,7 @@ use crate::game::state::GameState;
 
 use super::app::{format_num, refresh_view, CostLabel};
 use super::inventory::{ingredient_name, ItemIcon};
+use super::smith::SmithSection;
 
 /// Какой подэкран города открыт. Карта — стартовый вид.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,11 +25,20 @@ pub enum CityView {
     TownHall,
     Tavern,
     Church,
+    /// Кузница в городе: постройка мастеров и их улучшения.
+    Smith,
     /// Дом странников: стройка, а после постройки — сами путешественники.
     TravelersHouse,
     /// Страница разговорного квеста: история и три варианта ответа.
     Quest,
 }
+
+/// Куда вернуться со страницы квеста (таверна или Дом странников).
+///
+/// Dioxus хранит контексты по типу, поэтому второй `Signal<CityView>` в том
+/// же дереве затёр бы первый — оборачиваем адрес возврата в свой тип.
+#[derive(Clone, Copy)]
+struct QuestReturn(Signal<CityView>);
 
 /// Золото с подписью ресурса.
 fn money(value: f64) -> String {
@@ -79,6 +89,7 @@ fn view_title(view: CityView) -> &'static str {
         CityView::TownHall => i18n::t("city.town_hall"),
         CityView::Tavern => i18n::t("city.tavern"),
         CityView::Church => i18n::t("city.church"),
+        CityView::Smith => i18n::t("work.smith_tab"),
         CityView::TravelersHouse => i18n::t("traveler_house.title"),
         CityView::Quest => i18n::t("traveler_quest.page_title"),
     }
@@ -145,7 +156,7 @@ pub fn CityScreen(
     let mut quest_traveler = use_signal(|| Option::<usize>::None);
     let quest_return = use_signal(|| CityView::Tavern);
     use_context_provider(move || quest_traveler);
-    use_context_provider(move || quest_return);
+    use_context_provider(move || QuestReturn(quest_return));
 
     // Системная «Назад» из подэкрана возвращает на карту города.
     // `peek` обязателен: обычное чтение подписало бы эффект на `subview`,
@@ -365,6 +376,13 @@ pub fn CityScreen(
                             on_open: move |_| subview.set(CityView::Guild),
                         }
                         CityBuilding {
+                            icon: "⚒️".to_string(),
+                            title: i18n::t("work.smith_tab").to_string(),
+                            hint: i18n::t("city.smith_hint").to_string(),
+                            unlocked: true,
+                            on_open: move |_| subview.set(CityView::Smith),
+                        }
+                        CityBuilding {
                             icon: "🏛️".to_string(),
                             title: i18n::t("city.town_hall").to_string(),
                             hint: town_hall_hint,
@@ -411,6 +429,9 @@ pub fn CityScreen(
                 },
                 CityView::Guild => rsx! {
                     GuildScreen { state, view: view.clone() }
+                },
+                CityView::Smith => rsx! {
+                    SmithSection { state, view: view.clone() }
                 },
                 CityView::TownHall => rsx! {
                     TownHallScreen { state, view: view.clone() }
@@ -648,17 +669,17 @@ struct GoodView {
     count: u32,
 }
 
-/// Строка рынка города — те же колонки, что у торговца: цена, спрос и
-/// предложение парой, статус и стрелка тренда.
+/// Строка рынка города: товар с иконкой, цена, спрос и стрелка тренда.
 #[derive(Clone, PartialEq)]
 struct MarketRow {
     id: String,
     name: String,
     price: String,
-    pair: String,
+    /// Сколько спроса налито сейчас; предложение в таблице не показываем.
+    demand: String,
     fill_class: &'static str,
+    /// Слово «баланс/избыток/дефицит» показываем подсказкой к спросу.
     status: String,
-    status_class: &'static str,
     trend: &'static str,
     trend_class: &'static str,
 }
@@ -674,37 +695,31 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
         .filter(|item| city::is_shop_sellable(&view, &item.id))
         .map(|item| {
             let entry = city::demand_of(&view, &item.id);
-            let ratio = (entry.available / entry.capacity.max(1.0)).clamp(0.0, 1.0);
-            let percent = (ratio * 100.0).round() as u32;
             let trend = city::market_trend(&view, &item.id);
+            // В узкой колонке — только стрелка: слова «растёт/падает»
+            // растягивали строку и мешали читать.
             let (trend_label, trend_class) = if trend > 0 {
-                (i18n::t("market.up"), "up")
+                ("↑", "up")
             } else if trend < 0 {
-                (i18n::t("market.down"), "down")
+                ("↓", "down")
             } else {
-                (i18n::t("market.flat"), "flat")
+                ("→", "flat")
             };
             let market_status = city::demand_status(&view, &item.id);
-            let status_class = match market_status {
-                super::super::game::trader::MarketStatus::Deficit => "deficit",
-                super::super::game::trader::MarketStatus::Surplus => "surplus",
-                super::super::game::trader::MarketStatus::Balance => "balance",
-            };
             MarketRow {
                 id: item.id.clone(),
                 name: item.name().to_string(),
                 price: format_num(city::shop_price_for(&view, &item.id, 1.0)),
-                // Та же пара, что на витрине торговца: спрос / предложение.
-                pair: format!("{}/{}", entry.demand, entry.supply),
-                fill_class: if percent >= 67 {
+                // В таблице оставляем только спрос: предложение игроку не нужно.
+                demand: entry.demand.to_string(),
+                fill_class: if entry.demand >= 67 {
                     "high"
-                } else if percent >= 34 {
+                } else if entry.demand >= 34 {
                     "mid"
                 } else {
                     "low"
                 },
                 status: market_status.label().to_string(),
-                status_class,
                 trend: trend_label,
                 trend_class,
             }
@@ -724,13 +739,18 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
             for row in rows {
                 div { class: "city-row market-row", key: "{row.id}",
-                    span { class: "market-name", "{row.name}" }
-                    span { class: "market-price", "{row.price}" }
-                    span { class: "market-pair {row.fill_class}", "{row.pair}" }
-                    span { class: "market-trend market-status {row.status_class}",
-                        span { class: "market-short", "{row.status}" }
-                        span { class: "market-arrow {row.trend_class}", "{row.trend}" }
+                    span { class: "market-name",
+                        if let Some(item) = items::item(&row.id) {
+                            ItemIcon {
+                                item: item.clone(),
+                                class: "market-icon".to_string(),
+                            }
+                        }
+                        span { class: "market-name-text", "{row.name}" }
                     }
+                    span { class: "market-price", "{row.price}" }
+                    span { class: "market-pair {row.fill_class}", title: "{row.status}", "{row.demand}" }
+                    span { class: "market-trend market-arrow {row.trend_class}", "{row.trend}" }
                 }
             }
         }
@@ -2446,7 +2466,7 @@ fn TravelerQuestScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut message = use_signal(String::new);
     let mut quest_traveler = use_context::<Signal<Option<usize>>>();
     let mut screen = use_context::<Signal<CityView>>();
-    let origin = use_context::<Signal<CityView>>();
+    let origin = use_context::<QuestReturn>().0;
     let message_text = message();
     let Some(index) = quest_traveler() else {
         return rsx! {
@@ -2861,6 +2881,11 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
     let mut state = state;
     let mut message = use_signal(String::new);
     let mut gear_slot = use_signal(|| 0usize);
+    // Контексты берём на отрисовке: `use_context` внутри обработчика клика
+    // вызывается вне рендера и роняет приложение.
+    let mut quest_traveler = use_context::<Signal<Option<usize>>>();
+    let mut screen = use_context::<Signal<CityView>>();
+    let mut quest_return = use_context::<QuestReturn>().0;
     let message_text = message();
     let has_result = card.result.is_some();
     rsx! {
@@ -2901,12 +2926,8 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                                 match outcome {
                                     Ok(()) => {
                                         // История открывается отдельной страницей.
-                                        let mut quest_traveler =
-                                            use_context::<Signal<Option<usize>>>();
                                         quest_traveler.set(Some(index));
-                                        let mut screen = use_context::<Signal<CityView>>();
-                                        let mut origin = use_context::<Signal<CityView>>();
-                                        origin.set(*screen.peek());
+                                        quest_return.set(*screen.peek());
                                         screen.set(CityView::Quest);
                                     }
                                     Err(error) => message.set(error.text().to_string()),
@@ -2920,12 +2941,8 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                         button {
                             class: "city-btn",
                             onclick: move |_| {
-                                let mut quest_traveler =
-                                    use_context::<Signal<Option<usize>>>();
                                 quest_traveler.set(Some(index));
-                                let mut screen = use_context::<Signal<CityView>>();
-                                let mut origin = use_context::<Signal<CityView>>();
-                                origin.set(*screen.peek());
+                                quest_return.set(*screen.peek());
                                 screen.set(CityView::Quest);
                             },
                             "{i18n::t(\"traveler.quest_open\")}"
