@@ -4555,28 +4555,6 @@ pub fn tick_city(state: &mut GameState) {
     tick_clerk(state);
 }
 
-/// Городские часы для тайм-варпа: только налог и жалованье.
-pub fn tick_city_warp(state: &mut GameState) {
-    if !state.city.unlocked {
-        return;
-    }
-    let timestamp = now(state);
-    if state.city.next_tax_at <= 0.0 {
-        state.city.next_tax_at = timestamp + balance::CITY_TAX_INTERVAL;
-    }
-    if state.city.next_salary_at <= 0.0 {
-        state.city.next_salary_at = timestamp + balance::CITY_TAX_INTERVAL;
-    }
-    if timestamp >= state.city.next_tax_at {
-        pay_tax(state);
-        state.city.next_tax_at = timestamp + balance::CITY_TAX_INTERVAL;
-    }
-    if timestamp >= state.city.next_salary_at {
-        pay_salaries(state);
-        state.city.next_salary_at = timestamp + balance::CITY_TAX_INTERVAL;
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -6056,23 +6034,6 @@ mod tests {
         if candles > 0 {
             assert_eq!(state.city.smiths[0].wage_due, balance::SMITH_WAGE_MIN);
         }
-    }
-
-    #[test]
-    fn time_warp_pays_tax_and_salaries() {
-        let mut state = city_with_shop();
-        state.gold = 100_000.0;
-        state.city.production_value = 10_000.0;
-        state.city.next_tax_at = 10.0;
-        state.city.next_salary_at = 10.0;
-        state.total_play_seconds = 1_000.0;
-
-        tick_city_warp(&mut state);
-
-        // Тайм-варп двигает городские часы: налог оплачен, срок сдвинут.
-        assert_eq!(state.city.taxes_paid, 1);
-        assert!(state.city.next_tax_at > 1_000.0);
-        assert!(state.city.next_salary_at > 1_000.0);
     }
 
     #[test]

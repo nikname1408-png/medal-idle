@@ -451,10 +451,6 @@ fn tick_inner(state: &mut GameState, dt_seconds: f64, advance_quests: bool) {
         crate::game::quests::tick_quests(state);
         crate::game::quests::tick_collectors(state);
         city::tick_city(state);
-    } else {
-        // Тайм-варп двигает городские часы налогов и жалованья, но не
-        // покупателей, события и кузнецов: у них свой ритм.
-        city::tick_city_warp(state);
     }
     check_offers(state);
 }
