@@ -3925,14 +3925,21 @@ pub fn tick_clerk(state: &mut GameState) {
         .as_ref()
         .map(|shop| shop.slots.iter().map(|slot| slot.item_id.clone()).collect())
         .unwrap_or_default();
-    // Докладываем товар на уже стоящие полки.
+    // Докладываем товар на уже стоящие полки — ровно до партии приказчика,
+    // а не бесконечно: иначе полка распухала бы без спроса.
     let refill = stock_plan(state, &stocked, stocked.len(), None, false);
     let mult = state.city.clerk_mult;
     for (item_id, quantity) in refill {
-        if add_shelf(state, &item_id, quantity, mult).is_err() {
+        let on_shelf = shelf_quantity(state, &item_id);
+        let target = clerk_batch(&item_id);
+        let add = quantity.min(target.saturating_sub(on_shelf));
+        if add == 0 {
+            continue;
+        }
+        if add_shelf(state, &item_id, add, mult).is_err() {
             break;
         }
-        take_from_stock(state, &item_id, quantity);
+        take_from_stock(state, &item_id, add);
     }
     // Заводим новые позиции на свободные места.
     let free_slots = state
@@ -4092,6 +4099,17 @@ pub fn clerk_clear_shelves(state: &mut GameState) -> Result<u32, ShopError> {
         }
     }
     Ok(moved)
+}
+
+/// Сколько штук этого товара уже стоит на полке.
+fn shelf_quantity(state: &GameState, item_id: &str) -> u32 {
+    state
+        .city
+        .shop
+        .as_ref()
+        .and_then(|shop| shop.slots.iter().find(|slot| slot.item_id == item_id))
+        .map(|slot| slot.quantity)
+        .unwrap_or(0)
 }
 
 /// Снимает товар со склада после того, как он попал на полку.
@@ -6240,6 +6258,24 @@ mod tests {
         take_stock_amount(&mut state, 0, 10).unwrap();
         assert_eq!(state.amount_of("wooden_bucket"), 6);
         assert!(state.city.stock.is_empty());
+    }
+
+    #[test]
+    fn clerk_keeps_the_shelf_at_one_batch() {
+        let mut state = city_with_shop();
+        state.gold = balance::CLERK_PRICE;
+        hire_clerk(&mut state).unwrap();
+        stock_in_test(&mut state, "wooden_bucket", 30).unwrap();
+        state.city.next_clerk_at = 100.0;
+        state.total_play_seconds = 100.0;
+        tick_clerk(&mut state);
+        assert_eq!(shelf_quantity(&state, "wooden_bucket"), balance::CLERK_BATCH);
+
+        // Второй цикл не докладывает: на полке уже партия.
+        state.total_play_seconds = 100.0 + balance::CLERK_INTERVAL;
+        state.city.next_clerk_at = state.total_play_seconds;
+        tick_clerk(&mut state);
+        assert_eq!(shelf_quantity(&state, "wooden_bucket"), balance::CLERK_BATCH);
     }
 
     #[test]
