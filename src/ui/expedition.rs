@@ -94,21 +94,40 @@ pub fn ExpeditionScreen(state: Signal<GameState>, view: GameState) -> Element {
                             "{i18n::tf(\"hike.elapsed\", &[&format_num(elapsed as f64)])}"
                         }
                     }
-                    button {
-                        class: if paused { "exp-stop paused" } else { "exp-stop" },
-                        onclick: move |_| {
-                            {
-                                let mut guard = state.write();
-                                if let Some(active) = guard.active_expedition.as_mut() {
-                                    active.paused = !active.paused;
+                    div { class: "exp-live-actions",
+                        button {
+                            class: if paused { "exp-stop paused" } else { "exp-stop" },
+                            onclick: move |_| {
+                                {
+                                    let mut guard = state.write();
+                                    if let Some(active) = guard.active_expedition.as_mut() {
+                                        active.paused = !active.paused;
+                                    }
                                 }
+                                refresh_view(state);
+                            },
+                            if paused {
+                                "{i18n::t(\"hike.resume\")}"
+                            } else {
+                                "{i18n::t(\"hike.pause\")}"
                             }
-                            refresh_view(state);
-                        },
-                        if paused {
-                            "{i18n::t(\"hike.resume\")}"
-                        } else {
-                            "{i18n::t(\"hike.pause\")}"
+                        }
+                        button {
+                            class: "exp-finish",
+                            onclick: move |_| {
+                                {
+                                    let mut guard = state.write();
+                                    if let Some(active) = guard.active_expedition.as_mut() {
+                                        if active.notice.is_none() {
+                                            active.notice =
+                                                Some(i18n::t("hike.finished").to_string());
+                                        }
+                                        active.done = true;
+                                    }
+                                }
+                                refresh_view(state);
+                            },
+                            "{i18n::t(\"btn.finish_hike\")}"
                         }
                     }
                 }

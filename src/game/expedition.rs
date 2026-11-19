@@ -991,6 +991,26 @@ mod tests {
     }
 
     #[test]
+    fn paused_expedition_freezes_time_and_energy() {
+        use crate::game::state::ActiveExpedition;
+
+        let mut state = endless_state();
+        state.active_expedition = Some(ActiveExpedition::new("field"));
+        if let Some(active) = state.active_expedition.as_mut() {
+            active.paused = true;
+        }
+        let energy = state.energy;
+        for _ in 0..30 {
+            assert!(!tick_active_expedition(&mut state, 1.0));
+        }
+        let active = state.active_expedition.as_ref().expect("поход на месте");
+        assert_eq!(active.elapsed, 0);
+        assert!(active.found.is_empty());
+        assert!(!active.done);
+        assert_eq!(state.energy, energy);
+    }
+
+    #[test]
     fn finished_expedition_does_not_restart() {
         use crate::game::state::ActiveExpedition;
 
