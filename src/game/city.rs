@@ -1265,9 +1265,10 @@ fn advance_demand(state: &mut GameState, dt: f64) {
         } else {
             1.0
         };
-        // Полная ёмкость наливается за `DEMAND_FILL_SECS`; сравнялую ёмкость
-        // подрезаем, чтобы полоска не показывала больше единицы.
-        let filled = entry.available + capacity / balance::DEMAND_FILL_SECS * period * fill_mult;
+        // Налив идёт к ёмкости по экспоненте: после опустошения полка
+        // набирает спрос быстро, а к полной подходит плавно.
+        let share = 1.0 - (-period / balance::DEMAND_FILL_SECS).exp();
+        let filled = entry.available + (capacity - entry.available).max(0.0) * share * fill_mult;
         entry.capacity = capacity;
         entry.available = if is_dead { 0.0 } else { filled.min(capacity) };
         state.market_seed = seed;
@@ -1285,7 +1286,9 @@ pub fn catch_up_offline(state: &mut GameState, elapsed: f64) {
     if elapsed >= balance::CITY_TAX_INTERVAL && salary_total(state) > 1e-6 {
         pay_salaries(state);
     }
-    let dt = elapsed.clamp(0.0, balance::DEMAND_FILL_SECS * 2.0);
+    // Больше пяти постоянных налива не начисляем: за 30 минут спрос и так
+    // восстанавливается почти полностью, а отпуск не должен быть выгоднее игры.
+    let dt = elapsed.clamp(0.0, balance::DEMAND_FILL_SECS * 5.0);
     advance_demand(state, dt);
     state.city.demand_at = state.total_play_seconds;
 }
@@ -1528,7 +1531,14 @@ pub fn consume_demand(state: &mut GameState, item_id: &str, quantity: u32) {
     let Some(entry) = state.city.demand.get_mut(item_id) else {
         return;
     };
-    entry.available = (entry.available - quantity as f64).max(0.0);
+    drain_available(entry, quantity);
+}
+
+/// Снимает налитое за проданные штуки. Вес штуки — `DEMAND_SALE_DRAIN`,
+/// поэтому крупная партия не выпивает рынок мгновенно.
+fn drain_available(entry: &mut DemandEntry, quantity: u32) {
+    let drain = quantity as f64 * balance::DEMAND_SALE_DRAIN;
+    entry.available = (entry.available - drain).max(0.0);
 }
 
 /// Снимает пустые полки: товар распродан — позиции в лавке быть не должно.
@@ -1607,7 +1617,7 @@ pub fn sell_slot_amount(
     // Покупка выпивает спрос города.
     ensure_demand(state, &record.item_id);
     if let Some(entry) = state.city.demand.get_mut(&record.item_id) {
-        entry.available = (entry.available - quantity as f64).max(0.0);
+        drain_available(entry, quantity);
     }
     Ok(record)
 }
@@ -4885,7 +4895,7 @@ mod tests {
         let before = demand_of(&state, "robe").available;
         sell_slot_amount(&mut state, 0, false, 5).unwrap();
         let entry = state.city.demand.get("robe").cloned().unwrap();
-        let diff = entry.available - (before - 5.0);
+        let diff = entry.available - (before - 5.0 * balance::DEMAND_SALE_DRAIN);
         assert!(
             diff.abs() <= (before * 1e-6).max(1e-3),
             "налито {} было {}",
@@ -4950,6 +4960,35 @@ mod tests {
     }
 
     #[test]
+    fn a_big_sale_does_not_kill_the_market_outright() {
+        let mut state = city_with_shop();
+        let before = demand_of(&state, "robe").available;
+        consume_demand(&mut state, "robe", 50);
+        let after = demand_of(&state, "robe").available;
+        // Полсотни вещей снимают лишь половину пункта за штуку, а не весь спрос.
+        assert!(after > 0.0);
+        assert!((before - after - 50.0 * balance::DEMAND_SALE_DRAIN).abs() < 1e-6);
+    }
+
+    #[test]
+    fn empty_tank_refills_fast_at_first() {
+        let mut state = city_with_shop();
+        if let Some(entry) = state.city.demand.get_mut("robe") {
+            entry.available = 0.0;
+        } else {
+            consume_demand(&mut state, "robe", 10_000);
+        }
+        state.total_play_seconds = 60.0;
+        catch_up_offline(&mut state, 60.0);
+        let ratio = demand_ratio(&state, "robe");
+        // За первую минуту возвращается примерно шестая часть ёмкости.
+        assert!(
+            (0.12..=0.18).contains(&ratio),
+            "за минуту должно налиться ~15 %, а не {ratio}"
+        );
+    }
+
+    #[test]
     fn demand_refills_over_time() {
         let mut state = city_with_shop();
         state.add_item("robe", 10);
@@ -4962,8 +5001,8 @@ mod tests {
         catch_up_offline(&mut state, 600.0);
         let ratio = demand_ratio(&state, "robe");
         assert!(
-            (0.45..=0.55).contains(&ratio),
-            "за 10 минут должна налиться половина, а не {ratio}"
+            (0.78..=0.85).contains(&ratio),
+            "за 10 минут должно налиться больше трёх четвертей, а не {ratio}"
         );
     }
 
