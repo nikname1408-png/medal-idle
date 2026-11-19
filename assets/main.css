@@ -3743,19 +3743,32 @@ button {
     color: var(--muted);
 }
 
-/* Рынок города: четыре колонки — товар, цена, спрос, тренд. */
+/* Рынок города: те же колонки, что у торговца — товар, цена, спрос/предложение, тренд. */
 .city-row.market-row {
     display: grid;
-    grid-template-columns: 1fr 52px 58px 74px 44px;
+    grid-template-columns: minmax(0, 1fr) 58px 62px 46px;
     gap: 8px;
     align-items: center;
     text-align: right;
 }
 
 .market-pair {
-    font-size: 11px;
-    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
+}
+
+/* Спрос/предложение подсвечивается, как на витрине: дефицит — ярче. */
+.market-pair.high {
+    color: var(--energy);
+}
+
+.market-pair.mid {
+    color: var(--text);
+}
+
+.market-pair.low {
+    color: var(--muted);
 }
 
 .city-row.market-row > span:first-child {

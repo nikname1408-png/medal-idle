@@ -1087,15 +1087,12 @@ pub fn buyer_interval(state: &GameState) -> Option<f64> {
     Some(interval)
 }
 
-/// Полная ёмкость спроса при равновесии: чем дороже товар, тем меньше штук
-/// нужно городу. Город берёт цехами, поэтому ёмкость в `DEMAND_CITY_SCALE`
-/// раз больше торговой.
+/// Сколько штук товара город берёт за один заказ при равновесии.
+///
+/// Тот же тир, что у торговца, умноженный на `DEMAND_CITY_SCALE`: экономика
+/// одна, отличается только масштаб.
 pub fn demand_capacity(item_id: &str) -> f64 {
-    let base = items::item(item_id)
-        .map(|item| item.base_price as f64)
-        .unwrap_or(1.0)
-        .max(1.0);
-    (balance::DEMAND_UNIT_BUDGET / base).max(1.0) * super::market::capacity_per_trend(item_id)
+    super::market::capacity_per_trend(item_id)
 }
 
 /// Спрос города на полке, выведенный из пары «спрос / предложение»:
@@ -1103,7 +1100,7 @@ pub fn demand_capacity(item_id: &str) -> f64 {
 fn capacity_of(item_id: &str, demand: u8, supply: u8) -> f64 {
     let base = demand_capacity(item_id);
     let diff = demand as f64 - supply as f64;
-    (base * (1.0 + diff / 100.0)).max(1.0)
+    (base * (1.0 + diff * balance::DEMAND_TREND_UNITS)).max(1.0)
 }
 
 /// Текущий спрос на товар. Для товара без записи — ровное равновесие.
@@ -1507,17 +1504,16 @@ pub fn buyer_decision(
 
 /// Проданный товар съедает спрос города: налитое уменьшается, спрос падает,
 /// предложение растёт — полка сама уходит в избыток.
+///
+/// Снимает только налитое. Сам спрос и предложение двигает один шаг рынка
+/// (`advance_demand`), ровно как у торговцев: стоку нечего прибавлять к
+/// паре, иначе продажа и тик считали бы её дважды.
 pub fn consume_demand(state: &mut GameState, item_id: &str, quantity: u32) {
     ensure_demand(state, item_id);
     let Some(entry) = state.city.demand.get_mut(item_id) else {
         return;
     };
     entry.available = (entry.available - quantity as f64).max(0.0);
-    // Каждые 16 проданных штук — один пункт спроса (по образцу торговцев:
-    // продажа двигает рынок на `min(quantity * 4, 80)` из 100).
-    let drained = ((quantity as f64 * balance::DEMAND_SALE_DRAIN) / 16.0).round() as i32;
-    entry.demand = (entry.demand as i32 - drained).clamp(5, 95) as u8;
-    entry.supply = (entry.supply as i32 + (drained / 2)).clamp(5, 95) as u8;
 }
 
 /// Снимает пустые полки: товар распродан — позиции в лавке быть не должно.
@@ -2394,10 +2390,41 @@ const KAI_CHOICES: &[TravelerChoiceDef] = &[
     },
 ];
 
+/// Перевал в тумане: совет старухи у костра.
+const PASS_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "salt",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "raven",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "night",
+        good: false,
+    },
+];
+
+/// Разбойники без оружия: отдать половину и уйти живым.
+const BANDITS_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "share",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "run",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "fight",
+        good: false,
+    },
+];
+
 /// Пул разговорных квестов плюс квест с компасом в конце.
-/// Каждый персонаж проходит разговорные по порядку,
-/// а последним— компас.
-pub const TRAVELER_QUESTS: [TravelerQuestDef; 11] = [
+/// Разговорные истории выдаются в случайном порядке, компас — последним.
+pub const TRAVELER_QUESTS: [TravelerQuestDef; 13] = [
     TravelerQuestDef {
         id: "captain_compass",
         kind: TravelerQuestKind::Story,
@@ -2551,6 +2578,16 @@ pub const TRAVELER_QUESTS: [TravelerQuestDef; 11] = [
         id: "finders_keepers",
         kind: TravelerQuestKind::Story,
         choices: KAI_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "pass_fog",
+        kind: TravelerQuestKind::Story,
+        choices: PASS_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "bandits_unarmed",
+        kind: TravelerQuestKind::Story,
+        choices: BANDITS_CHOICES,
     },
     TravelerQuestDef {
         id: "captain_compass_ask",
@@ -2717,10 +2754,33 @@ pub fn start_traveler_quest(state: &mut GameState, index: usize) -> Result<(), T
     if traveler.active_quest.is_some() {
         return Err(TravelerError::QuestDecided);
     }
-    let Some(quest) = next_traveler_quest(traveler) else {
+    let Some(next) = next_traveler_quest(traveler) else {
         return Err(TravelerError::NoQuest);
     };
-    let id = quest.id.to_string();
+    // Компас — последним, а разговорные истории выдаются в случайном
+    // порядке: одна и та же последовательность наскучила бы к третьему
+    // персонажу.
+    let id = if next.kind == TravelerQuestKind::Compass {
+        next.id.to_string()
+    } else {
+        let traveler = &state.city.travelers[index];
+        let pool: Vec<&'static str> = TRAVELER_QUESTS
+            .iter()
+            .filter(|quest| quest.kind == TravelerQuestKind::Story)
+            .filter(|quest| {
+                !traveler.quests_asked.iter().any(|id| id == quest.id)
+                    && !traveler.quests_failed.iter().any(|id| id == quest.id)
+            })
+            .map(|quest| quest.id)
+            .collect();
+        if pool.is_empty() {
+            return Err(TravelerError::NoQuest);
+        }
+        let mut seed = state.market_seed ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let picked = super::trader::random_below(&mut seed, pool.len() as u64) as usize;
+        state.market_seed = seed;
+        pool[picked].to_string()
+    };
     let traveler = &mut state.city.travelers[index];
     traveler.quests_asked.push(id.clone());
     traveler.active_quest = Some(id);
@@ -2765,7 +2825,8 @@ pub fn answer_traveler_quest(
     if good {
         change_friendship(traveler, balance::TRAVELER_QUEST_GAIN, 0);
     } else {
-        change_friendship(traveler, 0, balance::TRAVELER_QUEST_LOSS);
+        // Промах не отнимает дружбу: история просто уходит из пула и
+        // у этого персонажа больше не появится.
         traveler.quests_failed.push(quest_id);
     }
     traveler.quest_result = true;
@@ -4483,7 +4544,6 @@ mod tests {
         add_slot(&mut state, "robe", 10, 1.0).unwrap();
         let before = demand_of(&state, "robe").available;
         sell_slot_amount(&mut state, 0, false, 5).unwrap();
-        consume_demand(&mut state, "robe", 5);
         let entry = state.city.demand.get("robe").cloned().unwrap();
         let diff = entry.available - (before - 5.0);
         assert!(
@@ -4499,17 +4559,14 @@ mod tests {
         }
         assert_eq!(buyer_decision(&state, 0, 0.0, 0.99), BuyerDecision::Skip);
 
-        // Крупные партии съедают и сам спрос: товар стал городу нужнее.
+        // Пару двигает только тик рынка: продажа её не трогает, поэтому
+        // шаг и продажа не считают одно и то же дважды.
+        let pair_before = demand_of(&state, "robe");
         consume_demand(&mut state, "robe", 20);
-        assert!(demand_of(&state, "robe").demand < balance::DEMAND_EQUILIBRIUM);
-        // А ходовой цех наоборот уходит в избыток.
-        let mut busy = city_with_shop();
-        busy.add_item("robe", 10);
-        add_slot(&mut busy, "robe", 10, 1.0).unwrap();
-        for _ in 0..40 {
-            consume_demand(&mut busy, "robe", 20);
-        }
-        assert_eq!(demand_status(&busy, "robe"), MarketStatus::Surplus);
+        let pair_after = demand_of(&state, "robe");
+        assert_eq!(pair_after.demand, pair_before.demand);
+        assert_eq!(pair_after.supply, pair_before.supply);
+        assert!(pair_after.available.abs() < 1e-6);
     }
 
     #[test]
@@ -5078,6 +5135,37 @@ mod tests {
         );
         // И записи живут в самом городе, а не только на полках.
         assert!(!state.city.demand.is_empty());
+    }
+
+    #[test]
+    fn town_limits_are_the_trader_tier_in_city_scale() {
+        // Одна экономика: город берёт ровно ту же норму, что торговец,
+        // только в `DEMAND_CITY_SCALE` раз больше.
+        for item_id in ["candle", "robe", "iron_ingot", "chainmail", "gold_ring"] {
+            let trader = super::super::trader::tier_of(item_id).values().1 as f64;
+            let city_units = demand_capacity(item_id);
+            assert!(
+                (city_units - trader * balance::DEMAND_CITY_SCALE).abs() < 1e-6,
+                "{item_id}: город {city_units}, торговец {trader}"
+            );
+        }
+        // Лимиты остаются читаемыми числами, а не миллиардами.
+        assert!(demand_capacity("candle") <= 2_000.0);
+        assert!(demand_capacity("chainmail") >= 30.0);
+    }
+
+    #[test]
+    fn new_demand_starts_at_the_equilibrium_capacity() {
+        let mut state = city_with_shop();
+        state.add_item("robe", 10);
+        add_slot(&mut state, "robe", 10, 1.0).unwrap();
+        advance_demand(&mut state, balance::DEMAND_STEP_SECS);
+        let entry = state.city.demand.get("robe").cloned().unwrap();
+        // Ёмкость — от тира, а не «бюджет / цена»: дешёвой робы не бывает
+        // полутора миллионов штук.
+        assert!((entry.capacity - demand_capacity("robe")).abs() < 400.0);
+        assert!(entry.available <= entry.capacity + 1e-6);
+        assert!(entry.capacity < 5_000.0, "ёмкость {}", entry.capacity);
     }
 
     #[test]
@@ -5832,7 +5920,8 @@ mod tests {
         ensure_travelers(&mut state);
         state.city.travelers[0].friendship = 20;
 
-        // Первый разговорный квест на двух кружках.
+        // Разговорные истории выдаются случайно: подбираем верный ответ
+        // по самому квесту, а не по его месту в пуле.
         let quest = next_traveler_quest(&state.city.travelers[0]).unwrap();
         assert_eq!(quest.kind, TravelerQuestKind::Story);
         start_traveler_quest(&mut state, 0).unwrap();
@@ -5841,17 +5930,34 @@ mod tests {
             Err(TravelerError::QuestDecided)
         );
         assert!(answer_traveler_quest(&mut state, 0, "base").is_err());
-        let good = answer_traveler_quest(&mut state, 0, "gave").unwrap();
+        let first_id = state.city.travelers[0].active_quest.clone().unwrap();
+        let good_choice = traveler_quest(&first_id)
+            .unwrap()
+            .choices
+            .iter()
+            .find(|choice| choice.good)
+            .unwrap()
+            .id;
+        let good = answer_traveler_quest(&mut state, 0, good_choice).unwrap();
         assert!(good);
         assert_eq!(state.city.travelers[0].friendship, 30);
         finish_traveler_quest(&mut state, 0).unwrap();
         assert_eq!(traveler_circles(&state.city.travelers[0]), 3);
 
-        // Второй разговорный квест на трёх кружках.
+        // Второй разговорный квест на трёх кружках — другая история.
         let quest = next_traveler_quest(&state.city.travelers[0]).unwrap();
-        assert_eq!(quest.id, "merchant_leather");
+        assert_eq!(quest.kind, TravelerQuestKind::Story);
         start_traveler_quest(&mut state, 0).unwrap();
-        answer_traveler_quest(&mut state, 0, "tanner").unwrap();
+        let second_id = state.city.travelers[0].active_quest.clone().unwrap();
+        assert_ne!(second_id, first_id, "история повторилась");
+        let good_choice = traveler_quest(&second_id)
+            .unwrap()
+            .choices
+            .iter()
+            .find(|choice| choice.good)
+            .unwrap()
+            .id;
+        answer_traveler_quest(&mut state, 0, good_choice).unwrap();
         finish_traveler_quest(&mut state, 0).unwrap();
         assert_eq!(state.city.travelers[0].friendship, 40);
 
@@ -5892,19 +5998,29 @@ mod tests {
         state.city.travelers[0].friendship = 30;
 
         start_traveler_quest(&mut state, 0).unwrap();
-        let good = answer_traveler_quest(&mut state, 0, "kept").unwrap();
+        let failed_id = state.city.travelers[0].active_quest.clone().unwrap();
+        let bad_choice = traveler_quest(&failed_id)
+            .unwrap()
+            .choices
+            .iter()
+            .find(|choice| !choice.good)
+            .unwrap()
+            .id;
+        let good = answer_traveler_quest(&mut state, 0, bad_choice).unwrap();
         assert!(!good);
-        assert_eq!(state.city.travelers[0].friendship, 20);
+        // Ошибка не отнимает дружбу: история просто блокируется.
+        assert_eq!(state.city.travelers[0].friendship, 30);
         finish_traveler_quest(&mut state, 0).unwrap();
 
         assert!(state.city.travelers[0]
             .quests_failed
             .iter()
-            .any(|id| id == "captain_compass"));
+            .any(|id| id == &failed_id));
 
-        // Проваленный квест больше не предлагают — идёт следующий.
+        // Проваленный квест больше не предлагают — идёт другая история.
         let quest = next_traveler_quest(&state.city.travelers[0]).unwrap();
-        assert_eq!(quest.id, "merchant_leather");
+        assert_eq!(quest.kind, TravelerQuestKind::Story);
+        assert_ne!(quest.id, failed_id);
     }
 
     #[test]

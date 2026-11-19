@@ -609,29 +609,30 @@ struct GoodView {
     count: u32,
 }
 
-/// Строка рынка: сколько город готов купить и как идёт цена.
+/// Строка рынка города — те же колонки, что у торговца: цена, спрос и
+/// предложение парой, статус и стрелка тренда.
 #[derive(Clone, PartialEq)]
 struct MarketRow {
     id: String,
     name: String,
     price: String,
-    demand: String,
     pair: String,
-    demand_percent: u32,
-    dead: bool,
+    fill_class: &'static str,
     status: String,
     status_class: &'static str,
     trend: &'static str,
     trend_class: &'static str,
 }
 
-/// Рынок города: спрос наливается сам, покупатель берёт не больше налитого.
+/// Рынок города: та же пара «спрос / предложение», что у торговцев,
+/// только масштаб крупнее — на полке надо держать больше товара.
 #[component]
 fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
     let _ = state;
-    // Дефицит — наверху: там товара ждут, туда и стоит выставлять.
+    // По алфавиту: рынок города — справочник, а не очередь на сдачу.
     let mut rows: Vec<MarketRow> = items::catalog()
         .iter()
+        .filter(|item| city::is_shop_sellable(&view, &item.id))
         .map(|item| {
             let entry = city::demand_of(&view, &item.id);
             let ratio = (entry.available / entry.capacity.max(1.0)).clamp(0.0, 1.0);
@@ -654,17 +655,15 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                 id: item.id.clone(),
                 name: item.name().to_string(),
                 price: format_num(city::shop_price_for(&view, &item.id, 1.0)),
-                demand: format!(
-                    "{} / {}",
-                    format_num(entry.available.floor()),
-                    format_num(entry.capacity.floor())
-                ),
-                pair: i18n::tf(
-                    "demand.pair",
-                    &[&entry.demand.to_string(), &entry.supply.to_string()],
-                ),
-                demand_percent: percent,
-                dead: percent == 0,
+                // Та же пара, что на витрине торговца: спрос / предложение.
+                pair: format!("{}/{}", entry.demand, entry.supply),
+                fill_class: if percent >= 67 {
+                    "high"
+                } else if percent >= 34 {
+                    "mid"
+                } else {
+                    "low"
+                },
                 status: market_status.short().to_string(),
                 status_class,
                 trend: trend_label,
@@ -672,12 +671,7 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         })
         .collect();
-    rows.sort_by(|left, right| {
-        right
-            .demand_percent
-            .cmp(&left.demand_percent)
-            .then_with(|| left.name.cmp(&right.name))
-    });
+    rows.sort_by(|left, right| left.name.cmp(&right.name));
     let count_text = rows.len().to_string();
 
     rsx! {
@@ -686,7 +680,6 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
             div { class: "city-row market-row market-head",
                 span { "{i18n::t(\"market.col_item\")}" }
                 span { "{i18n::t(\"market.col_price\")}" }
-                span { "{i18n::t(\"market.col_demand\")}" }
                 span { "{i18n::t(\"market.col_pair\")}" }
                 span { "{i18n::t(\"market.col_trend\")}" }
             }
@@ -694,8 +687,7 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                 div { class: "city-row market-row", key: "{row.id}",
                     span { class: "market-name", "{row.name}" }
                     span { class: "market-price", "{row.price}" }
-                    span { class: "market-demand", "{row.demand}" }
-                    span { class: "market-pair", "{row.pair}" }
+                    span { class: "market-pair {row.fill_class}", "{row.pair}" }
                     span { class: "market-trend market-status {row.status_class}",
                         span { class: "market-short", "{row.status}" }
                         span { class: "market-arrow {row.trend_class}", "{row.trend}" }

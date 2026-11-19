@@ -17,22 +17,18 @@ use super::trader;
 /// Предел хранимого тренда.
 pub const TREND_LIMIT: i32 = 20;
 
-/// Сколько дешёвых товаров копится в одной единице ёмкости.
-fn cheap_unit() -> f64 {
-    super::balance::DEMAND_UNIT_BUDGET
-        / super::balance::DEMAND_UNIT_PRICE.max(1.0)
-}
-
-/// Один цех города: сколько единиц ёмкости приходится на одну единицу
-/// тренда. Дешёвый товар ещё и делится на `DEMAND_UNIT_BUDGET`, иначе
-/// свечи и дрова «съедали» бы весь бюджет спроса.
+/// Сколько штук товара город готов принять за один заказ при равновесии.
+///
+/// Масштаб берётся у торговца: та же наценка за тир товара
+/// (`Tier::values().1`), только умноженная на `DEMAND_CITY_SCALE` — город
+/// закупает партиями в `DEMAND_CITY_SCALE` раз больше одной лавки.
+///
+/// Раньше здесь была своя формула «бюджет / цена» с двойным счётом, и у
+/// свечи выходило 3×10¹⁰ штук. Теперь никакой отдельной экономики у города
+/// нет: один тир, один масштаб, те же числа, что на витрине торговца.
 pub fn capacity_per_trend(item_id: &str) -> f64 {
-    let price = super::items::item(item_id)
-        .map(|item| item.base_price as f64)
-        .unwrap_or(1.0)
-        .max(1.0);
-    let cheap = (super::balance::DEMAND_UNIT_BUDGET / price).max(1.0);
-    cheap_unit() * cheap * super::balance::DEMAND_CAPACITY_PER_TREND
+    let per_order = trader::tier_of(item_id).values().1 as f64;
+    per_order * super::balance::DEMAND_CITY_SCALE
 }
 
 /// Один шаг настроения: случайный дрейф, притяжение к равновесию и малое
