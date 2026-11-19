@@ -290,6 +290,17 @@ impl Letter {
     pub fn body(&self) -> &'static str {
         i18n::t_or(&format!("letter.{}.body", self.key()), "")
     }
+
+    /// Ждёт ли письмо действия игрока: такие записки не исчезают после
+    /// прочтения, а висят в колокольчике, пока дело не закроют.
+    ///
+    /// `offer` открывает окно постройки, `quest` — карточка заказа, а счёт по
+    /// налогу и счёт за работников несут кнопку и итог последнего расчёта.
+    pub fn waits_for_the_player(&self) -> bool {
+        self.offer.is_some()
+            || self.quest.is_some()
+            || matches!(self.id.as_str(), "tax_due" | "salary_bill" | "debt")
+    }
 }
 
 /// Активный поход. Живёт в состоянии игры, поэтому идёт вне вкладки «Походы».
@@ -1219,19 +1230,32 @@ impl GameState {
             .retain(|letter| letter.quest.as_deref() != Some(quest_id));
     }
 
-    /// Открывает письмо: помечает прочитанным и снова показывает предложение.
+    /// Открывает письмо: помечает прочитанным, снова показывает предложение
+    /// и убирает записку из колокольчика.
+    ///
+    /// В почте остаются только письма, которые ещё чего-то ждут от игрока:
+    /// счёт по налогу, счёт за работников, долг и карточки заказов. Остальные
+    /// (`город открыт`, `скоро налог`, `налог уплачен`, возвращения
+    /// путешественников и т.п.) — разовые вести: прочитал и убрал.
     pub fn open_letter(&mut self, letter_id: &str) {
-        let offer = self
-            .letters
-            .iter_mut()
-            .find(|letter| letter.id == letter_id)
-            .and_then(|letter| {
-                letter.read = true;
-                letter.offer.clone()
-            });
+        let mut offer = None;
+        let mut keeps = false;
+        if let Some(letter) = self.letters.iter_mut().find(|l| l.id == letter_id) {
+            letter.read = true;
+            offer = letter.offer.clone();
+            keeps = letter.waits_for_the_player();
+        }
         if offer.is_some() {
             self.pending_offer = offer;
         }
+        if !keeps {
+            self.letters.retain(|letter| letter.id != letter_id);
+        }
+    }
+
+    /// Убирает письмо из колокольчика по id.
+    pub fn dismiss_letter(&mut self, letter_id: &str) {
+        self.letters.retain(|letter| letter.id != letter_id);
     }
 
     /// Добавляет активный ресурс с проверкой лимита. Возвращает добавленное.

@@ -507,6 +507,40 @@
     истину после любого ответа, а кнопка в Ратуше остаётся.
   - Тесты: 315 (логика рынка и квестов не менялась). `SAVE_VERSION` 16.
 
+- [x] v0.26 «Городские иконки, церковь и разговорные истории» — подготовка
+      сборки под телефон.
+  - **Иконки города.** `ICON_CITY_*` в `src/ui/city.rs`: банк, церковь,
+    гильдия, рынок (лавка), таверна, ратуша, Дом странников, город.
+    `CityBuilding` принимает `Asset` и рисует `img.city-building-icon`
+    34×34; у вкладки «Город» — `tab_city.png` (`ICON_TAB_CITY`,
+    `TAB_CITY => Some(...)` в `tab_icon`).
+  - **Церковь.** «Храм» переименован в «церковь»: `city.church`,
+    `church.title`, `npc.line.4` в ru/en/es.
+  - **«Поговорить».** `city::talk_to_traveler` возвращает
+    `TravelerTalk::{Friendship, Quest}`: при доступной истории она
+    открывается бесплатно (дружба не тратится), иначе платный разговор
+    +1 кружок за `TRAVELER_TALK_PRICE` с потолком на
+    `TRAVELER_QUEST_STEPS[0]`, чтобы нельзя было перепрыгнуть квесты.
+    `TravelerList` держит контексты и уводит на `CityView::Quest`;
+    `TravelerFocus(Signal<Option<usize>>)` в `src/ui/app.rs` — отдельная
+    обёртка, чтобы не совпасть по типу с `quest_traveler`.
+  - **Десять историй.** `TRAVELER_QUESTS` = 10 присланных квестов
+    (`pass_fog`, `bandits_unarmed`, `captain_compass`,
+    `merchant_leather`, `forest_noise`, `road_language`, `desert_well`,
+    `campfire_song`, `two_roads`, `last_city`) + `captain_compass_ask`.
+    У каждого три варианта: правильный +10 дружбы
+    (`TRAVELER_QUEST_GAIN`), неправильные −10 (`TRAVELER_QUEST_LOSS`) и
+    история уходит в `quests_failed`. Ключи `traveler_quest.*` в трёх
+    языках переписаны, `trade_quarrel`/`finders_keepers` удалены.
+  - **Письма.** `Letter::waits_for_the_player()` — в колокольчике висят
+    только `offer`, `quest`, `tax_due`, `salary_bill`, `debt`.
+    `open_letter` удаляет остальные вести, у писем без действия есть
+    крестик (`dismiss_letter`, `mail.dismiss`), счёт за работников
+    закрывается кнопкой в `SalaryLetterCard`.
+  - **Железная броня.** 25 железных слитков + 5 кожи, цена 1600
+    (пол себестоимости 1540), разбор возвращает 12 слитков и 2 кожи.
+  - Тесты: 316. `SAVE_VERSION` 16.
+
 - [x] v0.24 «Живой рынок и город с нуля» — единая экономика торговцев и
       города, сброс города при перерождении.
   - **Общее ядро.** `src/game/market.rs`: `TREND_LIMIT = 20`,

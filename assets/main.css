@@ -931,6 +931,43 @@ button {
     border-left: 3px solid var(--select);
 }
 
+/* Записка и крестик «убрать»: строка, чтобы письмо можно было закрыть. */
+.letter-line {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+}
+
+.letter-line .letter {
+    flex: 1;
+}
+
+.letter-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.letter-dismiss {
+    flex: none;
+    width: 22px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 20px;
+    opacity: 0.6;
+    cursor: pointer;
+}
+
+.letter-dismiss:active {
+    background: var(--accent-soft);
+    opacity: 1;
+}
+
 .letter-title {
     font-size: 13px;
     font-weight: 700;
@@ -3698,8 +3735,10 @@ button {
 }
 
 .city-building-icon {
-    font-size: 28px;
-    line-height: 1;
+    width: 34px;
+    height: 34px;
+    object-fit: contain;
+    image-rendering: pixelated;
 }
 
 .city-building-name {

@@ -2482,11 +2482,11 @@ mod tests {
     #[test]
     fn dismantle_fire_cost_not_refunded() {
         let mut state = GameState::default();
-        // Рецепт iron_armor: iron_ingot 15, leather 4, огонь 200.
+        // Рецепт iron_armor: iron_ingot 25, leather 5, огонь 200.
         state.add_item("iron_armor", 1);
         let refund = dismantle_item(&mut state, "iron_armor").expect("разбор");
         assert_eq!(refund.len(), 2, "огонь не должен возвращаться");
-        assert_eq!(refund[0], ("iron_ingot".to_string(), 7));
+        assert_eq!(refund[0], ("iron_ingot".to_string(), 12));
         assert_eq!(refund[1], ("leather".to_string(), 2));
     }
 

@@ -10,6 +10,35 @@
 
 ## Текущий статус
 
+- v0.26: «Городские иконки, церковь и разговорные истории».
+  Здания города получили PNG-иконки (`ICON_CITY_*` в `src/ui/city.rs`,
+  `CityBuilding` принимает `Asset`, картинка 34×34), у вкладки «Город»
+  появилась `tab_city.png` (`ICON_TAB_CITY`).
+  «Храм» в интерфейсе переименован в «церковь» (`city.church`,
+  `church.title`, `npc.line.4`) во всех трёх языках.
+  «Поговорить» в таверне больше не просто платит золото: `talk_to_traveler`
+  возвращает `TravelerTalk::{Friendship, Quest}` — если дружбы хватает
+  на историю, она открывается бесплатно, иначе идёт платный разговор
+  (+1 кружок за 100 з.) с потолком на первом пороге `TRAVELER_QUEST_STEPS`,
+  чтобы нельзя было перескочить квесты. Карточка путешественника
+  запрашивает фокус через контекст `TravelerFocus(Signal<Option<usize>>)`
+  из `src/ui/app.rs` (не конфликтует по типу с `quest_traveler`).
+  Пул `TRAVELER_QUESTS` — ровно десять присланных историй
+  (`pass_fog`, `bandits_unarmed`, `captain_compass`, `merchant_leather`,
+  `forest_noise`, `road_language`, `desert_well`, `campfire_song`,
+  `two_roads`, `last_city`) плюс просьба о компасе; старые
+  `trade_quarrel`/`finders_keepers` удалены вместе с ключами.
+  Неправильный ответ отнимает `TRAVELER_QUEST_LOSS = 10` дружбы
+  (правильный даёт +10) и убирает историю из пула.
+  Письма в колокольчике исчезают после прочтения: `Letter::waits_for_the_player()`
+  оставляет только `offer`, `quest`, `tax_due`, `salary_bill` и `debt`,
+  `open_letter` удаляет остальные, у писем без действия есть крестик
+  (`dismiss_letter`, `mail.dismiss`), счёт за работников закрывается
+  кнопкой в `SalaryLetterCard`.
+  Железная броня: 25 железных слитков + 5 кожи, цена 1600.
+  Локализация: `traveler_quest.*`, `mail.dismiss` в трёх языках,
+  CSS `.letter-line`/`.letter-head`/`.letter-dismiss`. 316 тестов.
+
 - v0.25: «Починка города, лавки и храма». Восемь замечаний игрока.
   Гильдия на карте города больше не `disabled`: здание открывается
   всегда, а требования (15 продаж + 4 000 золота) показываются внутри

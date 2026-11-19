@@ -33,6 +33,7 @@ const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
 const ICON_STEAM_PROTOTYPE: Asset = asset!("/assets/icons/item_steam_prototype.png");
 const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
 const ICON_TAB_FORGE: Asset = asset!("/assets/icons/tab_forge.png");
+const ICON_TAB_CITY: Asset = asset!("/assets/icons/tab_city.png");
 const ICON_TAB_HIKE: Asset = asset!("/assets/icons/tab_hike.png");
 const ICON_TAB_HIRING: Asset = asset!("/assets/icons/tab_hiring.png");
 const ICON_TAB_REBORN: Asset = asset!("/assets/icons/tab_reborn.png");
@@ -47,6 +48,14 @@ const TAB_EXPEDITION: usize = 4;
 const TAB_CYCLE: usize = 5;
 const TAB_STATS: usize = 6;
 const TAB_SETTINGS: usize = 7;
+
+/// Просьба раскрыть карточку путешественника в списке (письмо о возвращении).
+///
+/// Обёртка нужна, чтобы не столкнуться по типу с `quest_traveler` из
+/// `CityScreen`: Dioxus хранит контексты по типу, и два `Signal<Option<usize>>`
+/// в одном дереве затирали бы друг друга.
+#[derive(Clone, Copy)]
+pub struct TravelerFocus(pub Signal<Option<usize>>);
 
 /// Иконка вкладки и ключ её подписи в словаре.
 const TABS: [(&str, &str); 8] = [
@@ -89,7 +98,7 @@ pub fn App() -> Element {
     let mut city_view = use_signal(|| crate::ui::city::CityView::Map);
     // Письмо о возвращении путешественника раскрывает его карточку в списке.
     let mut traveler_focus = use_signal(|| Option::<usize>::None);
-    use_context_provider(move || traveler_focus);
+    use_context_provider(move || TravelerFocus(traveler_focus));
     use_context_provider(move || active_tab);
     // Язык живёт в словаре, но сигналом сверху: чтение в `App` перерисовывает
     // всё дерево экранов, а не только «Настройки».
@@ -1744,17 +1753,31 @@ fn BellPanel(
                                 SalaryLetterCard {
                                     key: "{letter.id}",
                                     view: view.clone(),
+                                    state,
                                 }
                             } else {
-                                button {
-                                    key: "{letter.id}",
-                                    class: if letter.read { "letter" } else { "letter unread" },
-                                    onclick: {
-                                        let id = letter.id.clone();
-                                        move |_| on_open_letter.call(id.clone())
-                                    },
-                                    span { class: "letter-title", "{letter.title()}" }
-                                    span { class: "letter-body", "{letter.body()}" }
+                                div { key: "{letter.id}", class: "letter-line",
+                                    button {
+                                        class: if letter.read { "letter" } else { "letter unread" },
+                                        onclick: {
+                                            let id = letter.id.clone();
+                                            move |_| on_open_letter.call(id.clone())
+                                        },
+                                        span { class: "letter-title", "{letter.title()}" }
+                                        span { class: "letter-body", "{letter.body()}" }
+                                    }
+                                    button {
+                                        class: "letter-dismiss",
+                                        title: "{i18n::t(\"mail.dismiss\")}",
+                                        onclick: {
+                                            let id = letter.id.clone();
+                                            move |_| {
+                                                state.write().dismiss_letter(&id);
+                                                refresh_view(state);
+                                            }
+                                        },
+                                        "×"
+                                    }
                                 }
                             }
                         }
@@ -1775,7 +1798,8 @@ fn BellPanel(
 /// собирается на лету из живого состояния — сама сумма, кто её набрал и
 /// когда пройдёт следующее начисление.
 #[component]
-fn SalaryLetterCard(view: GameState) -> Element {
+fn SalaryLetterCard(view: GameState, state: Signal<GameState>) -> Element {
+    let mut state = state;
     let line = crate::game::city::salary_bill_line(&view);
     let due = crate::game::city::salary_due_in(&view)
         .map(|left| i18n::tf("salary.due", &[&format_duration(left)]))
@@ -1787,7 +1811,18 @@ fn SalaryLetterCard(view: GameState) -> Element {
     };
     rsx! {
         div { class: "letter salary-letter",
-            span { class: "letter-title", "{i18n::t(\"letter.salary_bill.title\")}" }
+            div { class: "letter-head",
+                span { class: "letter-title", "{i18n::t(\"letter.salary_bill.title\")}" }
+                button {
+                    class: "letter-dismiss",
+                    title: "{i18n::t(\"mail.dismiss\")}",
+                    onclick: move |_| {
+                        state.write().dismiss_letter("salary_bill");
+                        refresh_view(state);
+                    },
+                    "×"
+                }
+            }
             div { class: "letter-quest-line", "{line}" }
             if !stage.is_empty() {
                 div { class: "letter-quest-line", "{stage}" }
@@ -3532,6 +3567,7 @@ fn tab_icon(index: usize) -> Option<Asset> {
         TAB_FIELD => Some(ICON_TAB_FORGE),
         TAB_WORK => Some(ICON_TAB_HIRING),
         TAB_BAG => Some(ICON_BAG),
+        TAB_CITY => Some(ICON_TAB_CITY),
         TAB_EXPEDITION => Some(ICON_TAB_HIKE),
         TAB_CYCLE => Some(ICON_TAB_REBORN),
         TAB_STATS => Some(ICON_TAB_STATS),

@@ -10,8 +10,16 @@ use crate::game::i18n;
 use crate::game::items;
 use crate::game::state::GameState;
 
-use super::app::{format_num, refresh_view, CostLabel};
+use super::app::{format_num, refresh_view, CostLabel, TravelerFocus};
 use super::inventory::{ingredient_name, ItemIcon};
+
+const ICON_CITY_BANK: Asset = asset!("/assets/icons/city_bank.png");
+const ICON_CITY_CHURCH: Asset = asset!("/assets/icons/city_church.png");
+const ICON_CITY_GUILD: Asset = asset!("/assets/icons/city_guild.png");
+const ICON_CITY_MARKET: Asset = asset!("/assets/icons/city_market.png");
+const ICON_CITY_TAVERN: Asset = asset!("/assets/icons/city_tavern.png");
+const ICON_CITY_TOWN_HALL: Asset = asset!("/assets/icons/city_town_hall.png");
+const ICON_CITY_TRAVELERS: Asset = asset!("/assets/icons/city_travelers.png");
 
 /// Какой подэкран города открыт. Карта — стартовый вид.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -351,21 +359,21 @@ pub fn CityScreen(
                 CityView::Map => rsx! {
                     div { class: "city-map",
                         CityBuilding {
-                            icon: "🏪".to_string(),
+                            icon: ICON_CITY_MARKET,
                             title: i18n::t("city.shop").to_string(),
                             hint: shop_hint,
                             unlocked: shop_open,
                             on_open: move |_| subview.set(CityView::Shop),
                         }
                         CityBuilding {
-                            icon: "🏦".to_string(),
+                            icon: ICON_CITY_BANK,
                             title: i18n::t("city.bank").to_string(),
                             hint: i18n::t("city.bank_hint").to_string(),
                             unlocked: true,
                             on_open: move |_| subview.set(CityView::Bank),
                         }
                         CityBuilding {
-                            icon: "⚖️".to_string(),
+                            icon: ICON_CITY_GUILD,
                             title: i18n::t("city.guild").to_string(),
                             hint: guild_hint,
                             unlocked: true,
@@ -373,14 +381,14 @@ pub fn CityScreen(
                         }
                         
                         CityBuilding {
-                            icon: "🏛️".to_string(),
+                            icon: ICON_CITY_TOWN_HALL,
                             title: i18n::t("city.town_hall").to_string(),
                             hint: town_hall_hint,
                             unlocked: view.city.town_hall_unlocked,
                             on_open: move |_| subview.set(CityView::TownHall),
                         }
                         CityBuilding {
-                            icon: "🍺".to_string(),
+                            icon: ICON_CITY_TAVERN,
                             title: i18n::t("city.tavern").to_string(),
                             hint: i18n::t("city.tavern_hint").to_string(),
                             unlocked: true,
@@ -388,7 +396,7 @@ pub fn CityScreen(
                         }
                         if view.city.traveler_house_rented {
                             CityBuilding {
-                                icon: "🏠".to_string(),
+                                icon: ICON_CITY_TRAVELERS,
                                 title: i18n::t("traveler_house.title").to_string(),
                                 hint: house_hint.clone(),
                                 unlocked: true,
@@ -396,7 +404,7 @@ pub fn CityScreen(
                             }
                         }
                         CityBuilding {
-                            icon: "⛪".to_string(),
+                            icon: ICON_CITY_CHURCH,
                             title: i18n::t("city.church").to_string(),
                             hint: i18n::t("city.church_hint").to_string(),
                             unlocked: true,
@@ -445,7 +453,7 @@ pub fn CityScreen(
 /// Квадрат здания на карте города.
 #[component]
 fn CityBuilding(
-    icon: String,
+    icon: Asset,
     title: String,
     hint: String,
     unlocked: bool,
@@ -456,7 +464,7 @@ fn CityBuilding(
             class: if unlocked { "city-building" } else { "city-building locked" },
             disabled: !unlocked,
             onclick: move |_| on_open.call(()),
-            span { class: "city-building-icon", "{icon}" }
+            img { class: "city-building-icon", src: "{icon}", alt: "" }
             span { class: "city-building-name", "{title}" }
             span { class: "city-building-hint", "{hint}" }
         }
@@ -548,6 +556,10 @@ fn travelers_view(state: &GameState, open: Option<usize>, with_gear: bool) -> Ve
                 )
             };
             let circles = city::traveler_circles(traveler);
+            // «Поговорить» ведёт в историю, когда она открылась, и стоит
+            // золота, только пока дружба ещё не доросла до первого квеста.
+            let step = city::TravelerQuestStep::of(traveler);
+            let in_talk = !matches!(step, city::TravelerQuestStep::None);
             let info = if open == Some(index) {
                 Some(traveler_card(state, traveler, index, with_gear))
             } else {
@@ -560,7 +572,9 @@ fn travelers_view(state: &GameState, open: Option<usize>, with_gear: bool) -> Ve
                 status,
                 circles_text: traveler_circles_text(circles),
                 ready,
-                can_talk: ready && state.gold + 1e-9 >= balance::TRAVELER_TALK_PRICE,
+                can_talk: ready
+                    && !waiting
+                    && (in_talk || state.gold + 1e-9 >= balance::TRAVELER_TALK_PRICE),
                 advance_text: i18n::tf(
                     "traveler.advance",
                     &[&money(balance::TRAVELER_LOCATIONS[0].advance)],
@@ -584,8 +598,6 @@ struct TravelerCardView {
     quest_choice: String,
     choices: Vec<TravelerChoiceView>,
     result: Option<String>,
-    offer_house: bool,
-    house_hint: String,
     locations: Vec<TravelerTripView>,
     /// Что путешественник принёс и ждёт, пока это заберут.
     loot_text: String,
@@ -2337,7 +2349,7 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
     let mut open = use_signal(|| Option::<usize>::None);
     // Письмо о возвращении раскрывает нужную карточку: фокус приходит
     // из `CityView::Traveler` и срабатывает один раз.
-    let focus = use_context::<Signal<Option<usize>>>();
+    let focus = use_context::<TravelerFocus>().0;
     use_effect(move || {
         if let Some(index) = focus() {
             open.set(Some(index));
@@ -2346,6 +2358,10 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
     });
     let house_built = city::traveler_house_built(&view);
     let travelers = travelers_view(&view, open(), with_gear);
+    // «Поговорить» из общего списка открывает историю отдельной страницей.
+    let mut quest_traveler = use_context::<Signal<Option<usize>>>();
+    let mut screen = use_context::<Signal<CityView>>();
+    let mut quest_return = use_context::<QuestReturn>().0;
     let free_count = view
         .city
         .travelers
@@ -2443,7 +2459,17 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
                                                 city::talk_to_traveler(&mut guard, index)
                                             };
                                             match outcome {
-                                                Ok(()) => message.set(String::new()),
+                                                Ok(city::TravelerTalk::Quest) => {
+                                                    message.set(String::new());
+                                                    // История открылась сразу: ведём
+                                                    // игрока на её страницу.
+                                                    quest_traveler.set(Some(index));
+                                                    quest_return.set(*screen.peek());
+                                                    screen.set(CityView::Quest);
+                                                }
+                                                Ok(city::TravelerTalk::Friendship) => {
+                                                    message.set(String::new())
+                                                }
                                                 Err(error) => message.set(error.text().to_string()),
                                             }
                                             refresh_view(state);
@@ -2725,7 +2751,6 @@ fn traveler_card(
     let mut quest_choice = String::new();
     let mut choices = Vec::new();
     let mut result = None;
-    let mut offer_house = false;
     match step {
         city::TravelerQuestStep::None => {
             quest_title = i18n::t("traveler.quest_none").to_string();
@@ -2763,26 +2788,12 @@ fn traveler_card(
                 }
             }
         }
-        city::TravelerQuestStep::Result {
-            quest,
-            good,
-            friend,
-        } => {
+        city::TravelerQuestStep::Result { quest, good, .. } => {
             let key = if good { "good" } else { "bad" };
             result = Some(i18n::t(&format!("traveler_quest.{quest}.result_{key}")).to_string());
-            if friend {
-                offer_house = true;
-            }
         }
-        city::TravelerQuestStep::OfferHouse => {
-            offer_house = true;
-        }
+        city::TravelerQuestStep::OfferHouse => {}
     }
-    let house_hint = if offer_house {
-        i18n::t("traveler.house_offer").to_string()
-    } else {
-        String::new()
-    };
     let locations = balance::TRAVELER_LOCATIONS
         .iter()
         .map(|location| {
@@ -2889,8 +2900,6 @@ fn traveler_card(
         quest_choice,
         choices,
         result,
-        offer_house,
-        house_hint,
         locations,
         loot_text,
         payout_text,
@@ -2990,9 +2999,6 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                     },
                     "{i18n::t(\"traveler.quest_close\")}"
                 }
-            }
-            if card.offer_house {
-                div { class: "traveler-result", "{card.house_hint}" }
             }
             if card.claim_ready {
                 div { class: "traveler-loot",

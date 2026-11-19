@@ -422,7 +422,7 @@ fn build_catalog() -> Vec<Item> {
             })
             .with_fire_cost(150),
         // ---------- Броня ----------
-        item_def("iron_armor", Category::Gear, 971, Some(EquipSlot::Body))
+        item_def("iron_armor", Category::Gear, 1600, Some(EquipSlot::Body))
             .with_stats(ItemStats {
                 max_energy: Some(30),
                 fire_discount: Some(10.0),
@@ -903,7 +903,7 @@ fn build_recipes() -> Vec<Recipe> {
             "iron_armor",
             1,
             200,
-            vec![need("iron_ingot", 15), need("leather", 4)],
+            vec![need("iron_ingot", 25), need("leather", 5)],
         ),
         make_recipe(
             "archers_jacket",
@@ -1461,7 +1461,7 @@ mod tests {
             ("coif", 450),
             ("wanderers_hood", 88),
             ("armet", 1581),
-            ("iron_armor", 971),
+            ("iron_armor", 1600),
             ("archers_jacket", 126),
             ("wanderers_belt", 84),
             ("belt_with_bag", 169),

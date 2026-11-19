@@ -2408,37 +2408,7 @@ pub struct TravelerQuestDef {
     pub choices: &'static [TravelerChoiceDef],
 }
 
-const KIOSK_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "market",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "temple",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "tower",
-        good: false,
-    },
-];
-
-const KAI_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "owner",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "keep",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "split",
-        good: false,
-    },
-];
-
-/// Перевал в тумане: совет старухи у костра.
+/// Перевал в тумане: совет старухи у костра — брать соль.
 const PASS_CHOICES: &[TravelerChoiceDef] = &[
     TravelerChoiceDef {
         id: "salt",
@@ -2470,163 +2440,137 @@ const BANDITS_CHOICES: &[TravelerChoiceDef] = &[
     },
 ];
 
-/// Пул разговорных квестов плюс квест с компасом в конце.
+/// Капитан и компас: чужое возвращают хозяину.
+const CAPTAIN_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "gave",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "kept",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "sold",
+        good: false,
+    },
+];
+
+/// Купец и кожа: честная цена важнее наживы.
+const LEATHER_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "friend",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "me",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "neither",
+        good: false,
+    },
+];
+
+/// Шум в лесу: это был заблудившийся охотник.
+const FOREST_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "hunter",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "werewolf",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "ghost",
+        good: false,
+    },
+];
+
+/// Иностранное слово: «киоск» — маленькая лавка для путников.
+const KIOSK_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "shop",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "weapon",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "knot",
+        good: false,
+    },
+];
+
+/// Колодец в пустыне: вода живая, её можно пить.
+const DESERT_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "drink",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "test",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "pass",
+        good: false,
+    },
+];
+
+/// Песня у костра: пела мать, провожавшая сына.
+const SONG_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "mother",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "bandit",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "witch",
+        good: false,
+    },
+];
+
+/// Две дороги: через лес — там можно укрыться от непогоды.
+const ROADS_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "forest",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "field",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "river",
+        good: false,
+    },
+];
+
+/// Последний город: важнее всего оказался друг.
+const CITY_CHOICES: &[TravelerChoiceDef] = &[
+    TravelerChoiceDef {
+        id: "friend",
+        good: true,
+    },
+    TravelerChoiceDef {
+        id: "debt",
+        good: false,
+    },
+    TravelerChoiceDef {
+        id: "mistake",
+        good: false,
+    },
+];
+
+/// Пул из десяти разговорных квестов плюс просьба о компасе в конце.
 /// Разговорные истории выдаются в случайном порядке, компас — последним.
-pub const TRAVELER_QUESTS: [TravelerQuestDef; 13] = [
-    TravelerQuestDef {
-        id: "captain_compass",
-        kind: TravelerQuestKind::Story,
-        choices: &[
-            TravelerChoiceDef {
-                id: "gave",
-                good: true,
-            },
-            TravelerChoiceDef {
-                id: "kept",
-                good: false,
-            },
-            TravelerChoiceDef {
-                id: "sold",
-                good: false,
-            },
-        ],
-    },
-    TravelerQuestDef {
-        id: "merchant_leather",
-        kind: TravelerQuestKind::Story,
-        choices: &[
-            TravelerChoiceDef {
-                id: "merchant",
-                good: false,
-            },
-            TravelerChoiceDef {
-                id: "tanner",
-                good: true,
-            },
-            TravelerChoiceDef {
-                id: "price",
-                good: false,
-            },
-        ],
-    },
-    TravelerQuestDef {
-        id: "campfire_song",
-        kind: TravelerQuestKind::Story,
-        choices: &[
-            TravelerChoiceDef {
-                id: "old_soldier",
-                good: true,
-            },
-            TravelerChoiceDef {
-                id: "guide",
-                good: false,
-            },
-            TravelerChoiceDef {
-                id: "wind",
-                good: false,
-            },
-        ],
-    },
-    TravelerQuestDef {
-        id: "last_city",
-        kind: TravelerQuestKind::Story,
-        choices: &[
-            TravelerChoiceDef {
-                id: "forge",
-                good: false,
-            },
-            TravelerChoiceDef {
-                id: "family",
-                good: true,
-            },
-            TravelerChoiceDef {
-                id: "name",
-                good: false,
-            },
-        ],
-    },
-    TravelerQuestDef {
-        id: "road_language",
-        kind: TravelerQuestKind::Story,
-        choices: KIOSK_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "desert_well",
-        kind: TravelerQuestKind::Story,
-        choices: &[
-            TravelerChoiceDef {
-                id: "drink",
-                good: false,
-            },
-            TravelerChoiceDef {
-                id: "test",
-                good: true,
-            },
-            TravelerChoiceDef {
-                id: "pass",
-                good: false,
-            },
-        ],
-    },
-    TravelerQuestDef {
-        id: "forest_noise",
-        kind: TravelerQuestKind::Story,
-        choices: &[
-            TravelerChoiceDef {
-                id: "wolf",
-                good: false,
-            },
-            TravelerChoiceDef {
-                id: "deer",
-                good: true,
-            },
-            TravelerChoiceDef {
-                id: "spirit",
-                good: false,
-            },
-        ],
-    },
-    TravelerQuestDef {
-        id: "two_roads",
-        kind: TravelerQuestKind::Story,
-        choices: &[
-            TravelerChoiceDef {
-                id: "forest",
-                good: false,
-            },
-            TravelerChoiceDef {
-                id: "field",
-                good: true,
-            },
-            TravelerChoiceDef {
-                id: "back",
-                good: false,
-            },
-        ],
-    },
-    TravelerQuestDef {
-        id: "trade_quarrel",
-        kind: TravelerQuestKind::Story,
-        choices: &[
-            TravelerChoiceDef {
-                id: "seller",
-                good: false,
-            },
-            TravelerChoiceDef {
-                id: "guard",
-                good: true,
-            },
-            TravelerChoiceDef {
-                id: "nobody",
-                good: false,
-            },
-        ],
-    },
-    TravelerQuestDef {
-        id: "finders_keepers",
-        kind: TravelerQuestKind::Story,
-        choices: KAI_CHOICES,
-    },
+pub const TRAVELER_QUESTS: [TravelerQuestDef; 11] = [
     TravelerQuestDef {
         id: "pass_fog",
         kind: TravelerQuestKind::Story,
@@ -2636,6 +2580,46 @@ pub const TRAVELER_QUESTS: [TravelerQuestDef; 13] = [
         id: "bandits_unarmed",
         kind: TravelerQuestKind::Story,
         choices: BANDITS_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "captain_compass",
+        kind: TravelerQuestKind::Story,
+        choices: CAPTAIN_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "merchant_leather",
+        kind: TravelerQuestKind::Story,
+        choices: LEATHER_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "forest_noise",
+        kind: TravelerQuestKind::Story,
+        choices: FOREST_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "road_language",
+        kind: TravelerQuestKind::Story,
+        choices: KIOSK_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "desert_well",
+        kind: TravelerQuestKind::Story,
+        choices: DESERT_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "campfire_song",
+        kind: TravelerQuestKind::Story,
+        choices: SONG_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "two_roads",
+        kind: TravelerQuestKind::Story,
+        choices: ROADS_CHOICES,
+    },
+    TravelerQuestDef {
+        id: "last_city",
+        kind: TravelerQuestKind::Story,
+        choices: CITY_CHOICES,
     },
     TravelerQuestDef {
         id: "captain_compass_ask",
@@ -2873,8 +2857,9 @@ pub fn answer_traveler_quest(
     if good {
         change_friendship(traveler, balance::TRAVELER_QUEST_GAIN, 0);
     } else {
-        // Промах не отнимает дружбу: история просто уходит из пула и
-        // у этого персонажа больше не появится.
+        // Промах отнимает кружок дружбы, а история уходит из пула и у
+        // этого персонажа больше не появится.
+        change_friendship(traveler, 0, balance::TRAVELER_QUEST_LOSS);
         traveler.quests_failed.push(quest_id);
     }
     traveler.quest_result = true;
@@ -2925,13 +2910,37 @@ pub fn deliver_compass(state: &mut GameState, index: usize) -> Result<(), Travel
     Ok(())
 }
 
+/// Что дал разговор с путешественником.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TravelerTalk {
+    /// Дружба выросла на один кружок.
+    Friendship,
+    /// Дружбы уже хватало: разговор сразу открыл историю.
+    Quest,
+}
+
 /// Разговор с путешественником: 100 золотых и один кружок дружбы.
-pub fn talk_to_traveler(state: &mut GameState, index: usize) -> Result<(), TravelerError> {
+///
+/// Если дружбы уже хватает на очередную историю, разговор бесплатно
+/// открывает её — иначе игрок платил бы за молчание, а болтовня обгоняла
+/// бы квесты и доводила до дружбы, не рассказав ни одной истории.
+pub fn talk_to_traveler(
+    state: &mut GameState,
+    index: usize,
+) -> Result<TravelerTalk, TravelerError> {
     ensure_travelers(state);
     let Some(traveler) = state.city.travelers.get(index) else {
         return Err(TravelerError::BadTraveler);
     };
-    if traveler.friendship >= balance::TRAVELER_FRIENDSHIP_MAX {
+    if traveler.active_quest.is_some() {
+        return Ok(TravelerTalk::Quest);
+    }
+    if next_traveler_quest(traveler).is_some() {
+        start_traveler_quest(state, index)?;
+        return Ok(TravelerTalk::Quest);
+    }
+    let step = TRAVELER_QUEST_STEPS[0];
+    if traveler_circles(traveler) >= step {
         return Err(TravelerError::NoQuest);
     }
     let price = balance::TRAVELER_TALK_PRICE;
@@ -2941,7 +2950,10 @@ pub fn talk_to_traveler(state: &mut GameState, index: usize) -> Result<(), Trave
     state.gold -= price;
     let traveler = &mut state.city.travelers[index];
     change_friendship(traveler, balance::TRAVELER_QUEST_GAIN, 0);
-    Ok(())
+    // Дальше дружбу дают сами истории: разговор не должен перескочить порог.
+    let cap = step * balance::TRAVELER_FRIENDSHIP_POINT;
+    traveler.friendship = traveler.friendship.min(cap);
+    Ok(TravelerTalk::Friendship)
 }
 
 /// Ответил ли игрок на предложение построить Дом странников.
@@ -6037,22 +6049,30 @@ mod tests {
         );
 
         state.gold = balance::TRAVELER_TALK_PRICE * 10.0;
-        talk_to_traveler(&mut state, 0).unwrap();
+        assert_eq!(
+            talk_to_traveler(&mut state, 0),
+            Ok(TravelerTalk::Friendship)
+        );
         assert_eq!(
             state.city.travelers[0].friendship,
             balance::TRAVELER_FRIENDSHIP_POINT
         );
         assert_eq!(traveler_circles(&state.city.travelers[0]), 1);
 
-        // Потолок дружбы — пять кружков, дальше платить не дадут.
-        for _ in 0..4 {
-            talk_to_traveler(&mut state, 0).unwrap();
-        }
+        // Второй разговор добирает дружбу до первого квеста, но не выше.
+        assert_eq!(
+            talk_to_traveler(&mut state, 0),
+            Ok(TravelerTalk::Friendship)
+        );
         assert_eq!(
             state.city.travelers[0].friendship,
-            balance::TRAVELER_FRIENDSHIP_MAX
+            balance::TRAVELER_FRIENDSHIP_POINT * TRAVELER_QUEST_STEPS[0]
         );
-        assert_eq!(talk_to_traveler(&mut state, 0), Err(TravelerError::NoQuest));
+        assert_eq!(traveler_circles(&state.city.travelers[0]), 2);
+
+        // Дальше разговор не копит дружбу, а сразу открывает историю.
+        assert_eq!(talk_to_traveler(&mut state, 0), Ok(TravelerTalk::Quest));
+        assert!(state.city.travelers[0].active_quest.is_some());
     }
 
     #[test]
@@ -6149,8 +6169,8 @@ mod tests {
             .id;
         let good = answer_traveler_quest(&mut state, 0, bad_choice).unwrap();
         assert!(!good);
-        // Ошибка не отнимает дружбу: история просто блокируется.
-        assert_eq!(state.city.travelers[0].friendship, 30);
+        // Промах отнимает один кружок дружбы и блокирует историю.
+        assert_eq!(state.city.travelers[0].friendship, 20);
         finish_traveler_quest(&mut state, 0).unwrap();
 
         assert!(state.city.travelers[0]
