@@ -925,9 +925,10 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         .collect();
 
     // Вкладка «Наёмные» появляется после грамоты из Ратуши, «Кузнец» —
-// после постройки кузницы в городе. До покупки их не видно.
+    // после разрешения ратуши на кузницу. До покупки их не видно.
     let hired_tab_visible = snapshot.city.hire_charter;
-    let smith_tab_visible = snapshot.city.smiths.iter().any(|smith| smith.built);
+    let smith_tab_visible = snapshot.city.smith_first_permit
+        || snapshot.city.smiths.iter().any(|smith| smith.built);
     // Если открыта только одна вкладка, показываем её без выбора.
     let show_smith = if hired_tab_visible && smith_tab_visible {
         smith_tab()

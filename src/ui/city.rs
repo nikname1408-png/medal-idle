@@ -12,7 +12,6 @@ use crate::game::state::GameState;
 
 use super::app::{format_num, refresh_view, CostLabel};
 use super::inventory::{ingredient_name, ItemIcon};
-use super::smith::SmithSection;
 
 /// Какой подэкран города открыт. Карта — стартовый вид.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,8 +24,6 @@ pub enum CityView {
     TownHall,
     Tavern,
     Church,
-    /// Кузница в городе: постройка мастеров и их улучшения.
-    Smith,
     /// Дом странников: стройка, а после постройки — сами путешественники.
     TravelersHouse,
     /// Страница разговорного квеста: история и три варианта ответа.
@@ -89,7 +86,6 @@ fn view_title(view: CityView) -> &'static str {
         CityView::TownHall => i18n::t("city.town_hall"),
         CityView::Tavern => i18n::t("city.tavern"),
         CityView::Church => i18n::t("city.church"),
-        CityView::Smith => i18n::t("work.smith_tab"),
         CityView::TravelersHouse => i18n::t("traveler_house.title"),
         CityView::Quest => i18n::t("traveler_quest.page_title"),
     }
@@ -375,13 +371,7 @@ pub fn CityScreen(
                             unlocked: true,
                             on_open: move |_| subview.set(CityView::Guild),
                         }
-                        CityBuilding {
-                            icon: "⚒️".to_string(),
-                            title: i18n::t("work.smith_tab").to_string(),
-                            hint: i18n::t("city.smith_hint").to_string(),
-                            unlocked: true,
-                            on_open: move |_| subview.set(CityView::Smith),
-                        }
+                        
                         CityBuilding {
                             icon: "🏛️".to_string(),
                             title: i18n::t("city.town_hall").to_string(),
@@ -430,9 +420,7 @@ pub fn CityScreen(
                 CityView::Guild => rsx! {
                     GuildScreen { state, view: view.clone() }
                 },
-                CityView::Smith => rsx! {
-                    SmithSection { state, view: view.clone() }
-                },
+                
                 CityView::TownHall => rsx! {
                     TownHallScreen { state, view: view.clone() }
                 },
@@ -1983,6 +1971,11 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
     let charter_cost = money(balance::CHARTER_COST);
     let charter_buy = i18n::tf("charter.buy", &[&charter_cost]);
     let can_buy_charter = view.gold + 1e-9 >= balance::CHARTER_COST;
+    let first_permit_buy = i18n::tf(
+        "smith.first_permit.buy",
+        &[&money(balance::SMITH_FIRST_PERMIT_GOLD)],
+    );
+    let can_buy_first_permit = view.gold + 1e-9 >= balance::SMITH_FIRST_PERMIT_GOLD;
     let permit_buy = i18n::tf(
         "smith.permit.buy",
         &[&money(balance::SMITH_SECOND_PERMIT_GOLD)],
@@ -2080,6 +2073,40 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
                         refresh_view(state);
                     },
                     "{charter_buy}"
+                }
+            }
+            if !message().is_empty() {
+                div { class: "city-msg", "{message()}" }
+            }
+        }
+
+        div { class: "city-card",
+            div { class: "city-row",
+                span { class: "city-upgrade-name", "{i18n::t(\"smith.first_permit.name\")}" }
+            }
+            div { class: "city-row muted",
+                span { "{i18n::t(\"smith.first_permit.desc\")}" }
+            }
+            if view.city.smith_first_permit {
+                div { class: "city-msg", "{i18n::t(\"smith.first_permit.owned\")}" }
+            } else {
+                button {
+                    class: "city-btn",
+                    disabled: !can_buy_first_permit,
+                    onclick: move |_| {
+                        let outcome = {
+                            let mut guard = state.write();
+                            city::buy_first_smith_permit(&mut guard)
+                        };
+                        match outcome {
+                            Ok(()) => {
+                                message.set(i18n::t("smith.first_permit.owned").to_string())
+                            }
+                            Err(error) => message.set(error.text().to_string()),
+                        }
+                        refresh_view(state);
+                    },
+                    "{first_permit_buy}"
                 }
             }
             if !message().is_empty() {

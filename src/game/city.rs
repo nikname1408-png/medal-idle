@@ -90,6 +90,9 @@ pub struct CityState {
     pub next_salary_at: f64,
     /// Кузнецы в «Труде»: два независимых мастера.
     pub smiths: [SmithState; balance::SMITH_COUNT],
+    /// Разрешение ратуши на первую кузницу: без него вкладки «Кузнец»
+    /// в «Труде» нет и построить мастера нельзя.
+    pub smith_first_permit: bool,
     /// Разрешение ратуши на постройку второй кузницы.
     pub smith_second_permit: bool,
     /// Старое сохранение до v15: уровень дома кузнеца в гильдии.
@@ -161,6 +164,7 @@ impl Default for CityState {
             hired_coal: 0,
             next_salary_at: 0.0,
             smiths: std::array::from_fn(|_| SmithState::default()),
+            smith_first_permit: false,
             smith_second_permit: false,
             legacy_smith_level: 0,
             legacy_smith_recipes: Vec::new(),
@@ -3425,7 +3429,12 @@ pub fn migrate_demand(state: &mut GameState) {
 /// Переводит старое сохранение с домом кузнеца в гильдии на двух мастеров.
 pub fn migrate_smiths(state: &mut GameState) {
     let level = state.city.legacy_smith_level;
-    if level == 0 || state.city.smiths[0].built {
+    if state.city.smiths[0].built {
+        // Мастер уже стоит: разрешение ратуши ему больше не нужно.
+        state.city.smith_first_permit = true;
+        return;
+    }
+    if level == 0 {
         return;
     }
     let level = level.min(balance::SMITH_FORGE_MAX_LEVEL);
@@ -3442,9 +3451,11 @@ pub fn migrate_smiths(state: &mut GameState) {
     smith.next_craft_at = state.city.legacy_next_smith_craft_at;
     smith.paused = state.city.legacy_smith_paused;
     smith.wage_due = 0.0;
+    state.city.smith_first_permit = true;
 }
 
-/// Строит кузнеца. Второй мастер требует разрешения ратуши.
+/// Строит кузнеца. Первый мастер требует разрешения ратуши, второй —
+/// отдельного разрешения на вторую кузницу.
 pub fn build_smith(state: &mut GameState, index: usize) -> Result<(), SmithError> {
     if !state.city.unlocked || index >= balance::SMITH_COUNT {
         return Err(SmithError::Locked);
@@ -3452,7 +3463,7 @@ pub fn build_smith(state: &mut GameState, index: usize) -> Result<(), SmithError
     if state.city.smiths[index].built {
         return Err(SmithError::Built);
     }
-    if index > 0 && !state.city.smith_second_permit {
+    if !smith_permit_owned(state, index) {
         return Err(SmithError::MissingPermit);
     }
     let cost = balance::smith_build_cost(index);
@@ -3496,6 +3507,31 @@ pub fn upgrade_smith(
         SmithLine::Forge => smith.forge_level += 1,
         SmithLine::Slots => smith.slots_level += 1,
     }
+    Ok(())
+}
+
+/// Куплено ли разрешение ратуши на кузницу с этим номером.
+fn smith_permit_owned(state: &GameState, index: usize) -> bool {
+    if index == 0 {
+        state.city.smith_first_permit
+    } else {
+        state.city.smith_second_permit
+    }
+}
+
+/// Покупает в ратуше разрешение на первую кузницу.
+pub fn buy_first_smith_permit(state: &mut GameState) -> Result<(), SmithError> {
+    if !state.city.town_hall_unlocked {
+        return Err(SmithError::NoTownHall);
+    }
+    if state.city.smith_first_permit {
+        return Err(SmithError::PermitOwned);
+    }
+    if state.gold + 1e-9 < balance::SMITH_FIRST_PERMIT_GOLD {
+        return Err(SmithError::NotEnough);
+    }
+    state.gold -= balance::SMITH_FIRST_PERMIT_GOLD;
+    state.city.smith_first_permit = true;
     Ok(())
 }
 
@@ -5482,6 +5518,8 @@ mod tests {
         state.active_resources.insert("wood".to_string(), 3_000);
         state.active_resources.insert("stone".to_string(), 2_000);
         state.gold = 10_000.0;
+        // Разрешение ратуши на первую кузницу уже куплено.
+        state.city.smith_first_permit = true;
         state
     }
 
@@ -5530,6 +5568,28 @@ mod tests {
         state.city.smiths[0].next_craft_at = 1_000.0;
         tick_smiths(&mut state);
         assert_eq!(state.amount_of("board"), 0);
+    }
+
+    #[test]
+    fn first_smith_needs_the_town_hall_permit() {
+        let mut state = city_with_shop();
+        state.active_resources.insert("wood".to_string(), 3_000);
+        state.active_resources.insert("stone".to_string(), 2_000);
+        state.gold = 10_000.0;
+        assert_eq!(build_smith(&mut state, 0), Err(SmithError::MissingPermit));
+
+        state.city.town_hall_unlocked = true;
+        state.gold = balance::SMITH_FIRST_PERMIT_GOLD;
+        buy_first_smith_permit(&mut state).unwrap();
+        assert!(state.city.smith_first_permit);
+        assert_eq!(
+            buy_first_smith_permit(&mut state),
+            Err(SmithError::PermitOwned)
+        );
+
+        state.gold = 10_000.0;
+        build_smith(&mut state, 0).unwrap();
+        assert!(state.city.smiths[0].built);
     }
 
     #[test]

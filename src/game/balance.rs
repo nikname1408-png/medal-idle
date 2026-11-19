@@ -990,6 +990,8 @@ pub const SMITH_SLOTS_MAX_LEVEL: u32 = 5;
 pub const SMITH_WAGE_SHARE: f64 = 0.10;
 /// Минимальное жалованье за одну поделку.
 pub const SMITH_WAGE_MIN: f64 = 2.0;
+/// Разрешение ратуши на первую кузницу.
+pub const SMITH_FIRST_PERMIT_GOLD: f64 = 10_000.0;
 /// Разрешение ратуши на вторую кузницу.
 pub const SMITH_SECOND_PERMIT_GOLD: f64 = 20_000.0;
 
