@@ -609,13 +609,14 @@ struct GoodView {
     count: u32,
 }
 
-/// Строка рынка: сколько город ещё готов купить и как идёт цена.
+/// Строка рынка: сколько город готов купить и как идёт цена.
 #[derive(Clone, PartialEq)]
 struct MarketRow {
     id: String,
     name: String,
     price: String,
     demand: String,
+    pair: String,
     demand_percent: u32,
     dead: bool,
     status: String,
@@ -658,6 +659,10 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                     format_num(entry.available.floor()),
                     format_num(entry.capacity.floor())
                 ),
+                pair: i18n::tf(
+                    "demand.pair",
+                    &[&entry.demand.to_string(), &entry.supply.to_string()],
+                ),
                 demand_percent: percent,
                 dead: percent == 0,
                 status: market_status.short().to_string(),
@@ -682,6 +687,7 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                 span { "{i18n::t(\"market.col_item\")}" }
                 span { "{i18n::t(\"market.col_price\")}" }
                 span { "{i18n::t(\"market.col_demand\")}" }
+                span { "{i18n::t(\"market.col_pair\")}" }
                 span { "{i18n::t(\"market.col_trend\")}" }
             }
             for row in rows {
@@ -689,6 +695,7 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                     span { class: "market-name", "{row.name}" }
                     span { class: "market-price", "{row.price}" }
                     span { class: "market-demand", "{row.demand}" }
+                    span { class: "market-pair", "{row.pair}" }
                     span { class: "market-trend market-status {row.status_class}",
                         span { class: "market-short", "{row.status}" }
                         span { class: "market-arrow {row.trend_class}", "{row.trend}" }

@@ -1111,12 +1111,20 @@ pub fn demand_of(state: &GameState, item_id: &str) -> DemandEntry {
     if let Some(entry) = state.city.demand.get(item_id) {
         // Старые сохранения писали только налитое, без ёмкости: заводим её
         // заново, иначе доля спроса делила бы на ноль.
-        if entry.capacity > 0.0 && entry.capacity.is_finite() {
-            return entry.clone();
-        }
+        let capacity = if entry.capacity > 0.0 && entry.capacity.is_finite() {
+            entry.capacity
+        } else {
+            demand_capacity(item_id)
+        };
         let mut repaired = entry.clone();
-        repaired.capacity = demand_capacity(item_id);
-        repaired.available = repaired.available.clamp(0.0, repaired.capacity);
+        // Налитое никогда не больше ёмкости: мусор из старого сохранения
+        // не должен превращаться в «774 793 388 419 / 500» на рынке.
+        repaired.available = if repaired.available.is_finite() {
+            repaired.available.clamp(0.0, capacity)
+        } else {
+            capacity
+        };
+        repaired.capacity = capacity;
         return repaired;
     }
     let capacity = demand_capacity(item_id);
@@ -1195,12 +1203,21 @@ fn advance_demand(state: &mut GameState, dt: f64) {
     // Сначала догоняем цеховые шаги за прошедшее время, потом наливаем полку.
     // `demand_at` — время последнего расчёта, его двигает только тик.
     let period = (state.total_play_seconds - state.city.demand_at).clamp(0.0, dt);
-    let item_ids: Vec<String> = state
-        .city
-        .shop
-        .as_ref()
-        .map(|shop| shop.slots.iter().map(|slot| slot.item_id.clone()).collect())
-        .unwrap_or_default();
+    // Город живёт по всему каталогу: товар тянет спрос и без полки в лавке,
+    // а полка лишь добавляет к нему продажи. Иначе рынок стоял бы полным,
+    // пока игрок ничего не выставил.
+    let mut item_ids: Vec<String> = items::catalog()
+        .iter()
+        .filter(|item| is_shop_sellable(state, &item.id))
+        .map(|item| item.id.clone())
+        .collect();
+    if let Some(shop) = state.city.shop.as_ref() {
+        for slot in &shop.slots {
+            if !item_ids.iter().any(|id| id == &slot.item_id) {
+                item_ids.push(slot.item_id.clone());
+            }
+        }
+    }
     if item_ids.is_empty() {
         return;
     }
@@ -1697,8 +1714,11 @@ pub fn try_buyer(state: &mut GameState) -> Option<SaleRecord> {
 
 /// Учитывает стоимость потока производственных линий для налога с
 /// производства. Вызывается только из тика, не из ручной добычи.
+///
+/// До открытия города налога нет: лесопилка и шахта работают с первого дня,
+/// и иначе к приходу лавки на игрока вешался бы счёт за всю прошлую игру.
 pub fn record_production(state: &mut GameState, item_id: &str, amount: f64) {
-    if amount <= 0.0 {
+    if amount <= 0.0 || !state.city.unlocked {
         return;
     }
     state.city.production_value += amount * balance::production_cost(item_id);
@@ -3282,18 +3302,22 @@ pub fn migrate_demand(state: &mut GameState) {
         entry.demand = balance::DEMAND_EQUILIBRIUM;
         entry.supply = balance::DEMAND_EQUILIBRIUM;
         let capacity = demand_capacity(item_id);
-        if entry.capacity <= 0.0 || !entry.capacity.is_finite() {
-            entry.capacity = capacity;
-        }
-        if entry.available < 0.0 || !entry.available.is_finite() {
-            entry.available = entry.capacity;
-        }
-        entry.available = entry.available.min(entry.capacity);
+        // Старое налитое считалось от прежней ёмкости и после перехода
+        // на новую модель оказывалось в разы больше неё — рынок показывал
+        // «774 793 388 419 / 500». Возвращаем долю, а не сырое число.
+        let ratio = if entry.capacity > 1e-6 && entry.available.is_finite() {
+            (entry.available / entry.capacity).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        entry.capacity = capacity;
+        entry.available = (capacity * ratio).clamp(0.0, capacity);
     }
 }
 
 /// Переводит старое сохранение с домом кузнеца в гильдии на двух мастеров.
-pub fn migrate_smiths(state: &mut GameState) {    let level = state.city.legacy_smith_level;
+pub fn migrate_smiths(state: &mut GameState) {
+    let level = state.city.legacy_smith_level;
     if level == 0 || state.city.smiths[0].built {
         return;
     }
@@ -3904,6 +3928,8 @@ pub fn martin_answer(state: &mut GameState, accepts: bool) -> bool {
 pub fn unlock_city(state: &mut GameState) {
     state.city.unlocked = true;
     state.city.martin = MartinStage::Complete;
+    // Всё, что цеха намолотили до открытия города, налогом не облагается.
+    state.city.production_value = 0.0;
     open_shop(state);
     state.add_letter("city_unlocked", None);
 }
@@ -4988,7 +5014,8 @@ mod tests {
                 ..DemandEntry::default()
             },
         );
-        let mut statuses: Vec<MarketStatus> = Vec::new();        let mut trends = Vec::new();
+        let mut statuses: Vec<MarketStatus> = Vec::new();
+        let mut trends = Vec::new();
         // Час города: по 20 секунд на шаг.
         for step in 1..=180u32 {
             state.total_play_seconds = step as f64 * balance::DEMAND_STEP_SECS;
@@ -5006,6 +5033,51 @@ mod tests {
         // И спрос с предложением живут: пара не держится ровно 50/50.
         let entry = demand_of(&state, "robe");
         assert!(entry.demand != 50 || entry.supply != 50 || entry.trend != 0);
+    }
+
+    #[test]
+    fn huge_demand_from_an_old_save_is_clamped_to_capacity() {
+        // Регрессия: старое сохранение держало налитое от прежней модели,
+        // и рынок показывал «774 793 388 419 / 500».
+        let mut state = city_with_shop();
+        state.city.demand.insert(
+            "robe".to_string(),
+            DemandEntry {
+                available: 774_793_388_419.0,
+                capacity: 500.0,
+                ..DemandEntry::default()
+            },
+        );
+        migrate_demand(&mut state);
+        let entry = demand_of(&state, "robe");
+        assert!(entry.available <= entry.capacity);
+        assert!((entry.available - entry.capacity).abs() < 1e-3);
+    }
+
+    #[test]
+    fn town_market_moves_even_with_an_empty_shop() {
+        // Регрессия: раньше город шагал только по полкам лавки, и пустая
+        // лавка означала вечное «50 / 50» на рынке. Теперь торговля идёт
+        // по всему каталогу, даже если игрок ничего не выставил.
+        let mut state = city_with_shop();
+        assert!(state.city.shop.is_some());
+        state.city.shop.as_mut().unwrap().slots.clear();
+        let mut statuses: Vec<MarketStatus> = Vec::new();
+        for step in 1..=180u32 {
+            state.total_play_seconds = step as f64 * balance::DEMAND_STEP_SECS;
+            advance_demand(&mut state, balance::DEMAND_STEP_SECS);
+            let status = demand_status(&state, "robe");
+            if !statuses.contains(&status) {
+                statuses.push(status);
+            }
+        }
+        // За час город увёл хоть какой-то товар из равновесия.
+        assert!(
+            statuses.len() >= 2,
+            "пустая лавка заморозила рынок: {statuses:?}"
+        );
+        // И записи живут в самом городе, а не только на полках.
+        assert!(!state.city.demand.is_empty());
     }
 
     #[test]
@@ -6102,5 +6174,33 @@ mod tests {
         actions::tick(&mut state, 10.0);
         // 5 дерева по 0.5 — 2.5 стоимости потока.
         assert!((state.city.production_value - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn production_before_the_city_opens_is_not_taxed() {
+        // Регрессия: лесопилка молотит с первого дня, и раньше её поток
+        // копился в `production_value`. Открыв лавку, игрок получал счёт
+        // за всё, что произвёл до города.
+        let mut state = GameState::default();
+        assert!(!state.city.unlocked);
+        state.energy = 10_000.0;
+        state.sawmill_level = 1;
+        state.sawmill_workers = 1;
+        actions::tick(&mut state, 10.0);
+        assert!(state.city.production_value.abs() < 1e-6);
+
+        unlock_city(&mut state);
+        state.energy = 10_000.0;
+        actions::tick(&mut state, 10.0);
+        // После открытия города налог снова считает поток.
+        assert!(state.city.production_value > 0.0);
+    }
+
+    #[test]
+    fn unlocking_clears_the_old_production_bill() {
+        let mut state = GameState::default();
+        state.city.production_value = 10_000.0;
+        unlock_city(&mut state);
+        assert!(state.city.production_value.abs() < 1e-6);
     }
 }

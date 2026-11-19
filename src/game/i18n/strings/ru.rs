@@ -694,6 +694,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("market.col_item", "Товар"),
     ("market.col_price", "Цена"),
     ("market.col_demand", "Спрос"),
+    ("market.col_pair", "Спрос / предложение"),
     ("market.col_trend", "Тренд"),
     ("market.up", "↑ растёт"),
     ("market.down", "↓ падает"),

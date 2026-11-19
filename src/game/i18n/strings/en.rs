@@ -804,6 +804,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("market.col_item", "Good"),
     ("market.col_price", "Price"),
     ("market.col_demand", "Demand"),
+    ("market.col_pair", "Demand / supply"),
     ("market.col_trend", "Trend"),
     ("market.up", "↑ rising"),
     ("market.down", "↓ falling"),
