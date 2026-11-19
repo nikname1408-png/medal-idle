@@ -278,7 +278,13 @@ pub fn App() -> Element {
                 SettingsScreen { state, view: snapshot.clone(), lang }
             },
             TAB_CITY => rsx! {
-                CityScreen { state, view: snapshot.clone(), back, subview: city_view }
+                CityScreen {
+                    state,
+                    view: snapshot.clone(),
+                    back,
+                    subview: city_view,
+                    house_modal: true,
+                }
             },
             index => rsx! {
                 PlaceholderScreen { title: i18n::t(TABS[index].1).to_string() }
@@ -382,15 +388,6 @@ pub fn App() -> Element {
                 if !trader_open() && !menu_open() {
                     OfferModal { state, view: snapshot.clone(), offer_id }
                 }
-            }
-            // Согласие друга на Дом снято в таверне, а подэкран города уже
-            // переключён на Ратушу: здесь остаётся только убрать флаг.
-            // state.write() прямо в разметке не проходит, поэтому через
-            // компонент-пустышку с эффектом.
-            if snapshot.city.traveler_house_offered
-                && snapshot.city.traveler_house_answer == Some(true)
-            {
-                HouseOfferCleanup { state }
             }
             if snapshot.steam_prototype_event && !trader_open() && !menu_open() {
                 SteamEventModal { state }
@@ -927,22 +924,17 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         })
         .collect();
 
-    // Вкладки «Наёмные» и «Кузнец» появляются только после того, как их
-    // пустили из города: грамота в Ратуше и сама постройка кузницы.
-    // Вкладки «Наёмные» и «Кузнец» появляются по мере покупок в городе:
-    // грамота в Ратуше пускает наёмных, постройка кузницы — «Кузнеца».
-    let hired_tab = snapshot.city.hire_charter || !snapshot.city.unlocked;
-    let show_hired = !smith_tab() || !hired_tab;
+    // Вкладка «Наёмные» видна всегда: даже без грамоты из Ратуши в ней есть
+    // подсказка, где её взять. «Кузнец» открывается вместе с городом.
+    let smith_tab_visible = snapshot.city.unlocked;
     rsx! {
         div { class: "work-tabs",
-            if show_hired {
-                button {
-                    class: if smith_tab() { "work-tab" } else { "work-tab active" },
-                    onclick: move |_| smith_tab.set(false),
-                    "{i18n::t(\"hire.title\")}"
-                }
+            button {
+                class: if smith_tab() { "work-tab" } else { "work-tab active" },
+                onclick: move |_| smith_tab.set(false),
+                "{i18n::t(\"hire.title\")}"
             }
-            if hired_tab {
+            if smith_tab_visible {
                 button {
                     class: if smith_tab() { "work-tab active" } else { "work-tab" },
                     onclick: move |_| smith_tab.set(true),
@@ -1097,8 +1089,8 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                         }
                     }
                 } else {
-                    // Вкладка наёмных — деньги города: без грамоты она не
-                    // появляется, а тут объясняется, где её взять.
+                    // Вкладка наёмных видна всегда, но линии открываются только
+                    // после грамоты из Ратуши — здесь подсказка, где её взять.
                     div { class: "locked-note", "{i18n::t(\"hire.charter_hint\")}" }
                 }
             }
@@ -1738,6 +1730,11 @@ fn BellPanel(
                                         "{i18n::tf(\"quest.debt_label\", &[&format_num(view.debt)])}"
                                     }
                                 }
+                            } else if letter.id == "salary_bill" {
+                                SalaryLetterCard {
+                                    key: "{letter.id}",
+                                    view: view.clone(),
+                                }
                             } else {
                                 button {
                                     key: "{letter.id}",
@@ -1759,6 +1756,34 @@ fn BellPanel(
                 div { class: "goal-panel-body",
                     CurrentGoal { state: view }
                 }
+            }
+        }
+    }
+}
+
+/// Письмо-счёт по зарплатам: живёт в колокольчике постоянно, поэтому текст
+/// собирается на лету из живого состояния — сама сумма, кто её набрал и
+/// когда пройдёт следующее начисление.
+#[component]
+fn SalaryLetterCard(view: GameState) -> Element {
+    let line = crate::game::city::salary_bill_line(&view);
+    let due = crate::game::city::salary_due_in(&view)
+        .map(|left| i18n::tf("salary.due", &[&format_duration(left)]))
+        .unwrap_or_default();
+    let stage = match view.salary_bill_stage {
+        crate::game::state::SalaryBillStage::None => String::new(),
+        crate::game::state::SalaryBillStage::Paid => i18n::t("salary.paid").to_string(),
+        crate::game::state::SalaryBillStage::Unpaid => i18n::t("salary.unpaid").to_string(),
+    };
+    rsx! {
+        div { class: "letter salary-letter",
+            span { class: "letter-title", "{i18n::t(\"letter.salary_bill.title\")}" }
+            div { class: "letter-quest-line", "{line}" }
+            if !stage.is_empty() {
+                div { class: "letter-quest-line", "{stage}" }
+            }
+            if !due.is_empty() {
+                div { class: "letter-quest-line", "{due}" }
             }
         }
     }
@@ -2900,17 +2925,6 @@ fn ActionRow(label: String, info: String, available: bool, on_press: EventHandle
             }
         }
     }
-}
-
-/// Друг согласился на Дом: флаг предложения снимается один раз в эффекте.
-#[component]
-fn HouseOfferCleanup(state: Signal<GameState>) -> Element {
-    let mut state = state;
-    use_effect(move || {
-        let mut guard = state.write();
-        guard.city.traveler_house_offered = false;
-    });
-    rsx! {}
 }
 
 #[component]

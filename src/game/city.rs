@@ -2260,14 +2260,56 @@ pub fn buy_charter(state: &mut GameState) -> Result<(), HireError> {
     Ok(())
 }
 
+/// Письмо-счёт по зарплатам. Живёт в колокольчике постоянно: прочитанное
+/// письмо не исчезает, а показывает итог последнего начисления и момент
+/// следующего. Отдельный `stage` нужен потому, что текст собирается на
+/// лету: без него повторный тик переписывал бы «выплачено» на «не хватило».
+pub fn record_salary_bill(state: &mut GameState, stage: state::SalaryBillStage) {
+    state.salary_log_at = state.total_play_seconds;
+    state.salary_bill_stage = stage;
+    state.add_letter("salary_bill", None);
+}
+
+/// Текст письма-счёта: сумма за цикл, кто её набрал и итог прошлой выплаты.
+pub fn salary_bill_line(state: &GameState) -> String {
+    let total = salary_total(state);
+    let workers = state.city.hired_sawmill + state.city.hired_mine + state.city.hired_coal;
+    let smiths = state.city.smiths.iter().filter(|smith| smith.built).count();
+    let clerk = u32::from(state.city.clerk_hired);
+    i18n::tf(
+        "salary.bill",
+        &[
+            &format!("{}", total.floor() as i64),
+            &workers.to_string(),
+            &smiths.to_string(),
+            &clerk.to_string(),
+        ],
+    )
+}
+
+/// Сколько осталось до следующего счёта по зарплатам.
+pub fn salary_due_in(state: &GameState) -> Option<f64> {
+    if state.city.next_salary_at <= 0.0 {
+        return None;
+    }
+    Some((state.city.next_salary_at - state.total_play_seconds).max(0.0))
+}
+
 /// Выплата зарплат раз в 30 минут.
 ///
 /// Если золота не хватило, наёмные уходят, приказчик увольняется, а кузнецы
 /// встают до следующего цикла. Жалованье кузнецов копится за каждую поделку
 /// и гасится здесь же. Возвращает итог для тестов и писем.
 pub fn pay_salaries(state: &mut GameState) -> SalaryOutcome {
+    // Счёт выставляется всегда, даже пустой: тогда в колокольчике видно,
+    // когда был прошлый расчёт и сколько он стоил.
     let total = salary_total(state);
     if total <= 1e-6 {
+        // Счёт не создаём в пустом городе, но если он уже есть — обновляем,
+        // чтобы в колокольчике всегда была последняя сумма.
+        if state.letters.iter().any(|letter| letter.id == "salary_bill") {
+            record_salary_bill(state, state::SalaryBillStage::Paid);
+        }
         return SalaryOutcome::Nothing;
     }
     if state.gold + 1e-9 >= total {
@@ -2276,6 +2318,7 @@ pub fn pay_salaries(state: &mut GameState) -> SalaryOutcome {
             smith.wage_due = 0.0;
             smith.paused = false;
         }
+        record_salary_bill(state, state::SalaryBillStage::Paid);
         return SalaryOutcome::Paid;
     }
     let had_hired = state.city.hired_sawmill + state.city.hired_mine + state.city.hired_coal > 0;
@@ -2290,6 +2333,7 @@ pub fn pay_salaries(state: &mut GameState) -> SalaryOutcome {
             smith.paused = true;
         }
     }
+    record_salary_bill(state, state::SalaryBillStage::Unpaid);
     if had_hired {
         state.add_letter("hired_left", None);
     }
@@ -2899,9 +2943,10 @@ pub fn talk_to_traveler(state: &mut GameState, index: usize) -> Result<(), Trave
 /// Ответил ли игрок на предложение построить Дом странников.
 pub fn traveler_house_decision(state: &mut GameState, agree: bool) {
     state.city.traveler_house_answer = Some(agree);
-    if agree {
-        state.city.traveler_house_land = true;
-    }
+    // Землю под Дом друзья предлагают в любом случае: и «Да», и «Нет»
+    // открывают аренду в Ратуше, разница только в том, согласился игрок
+    // сразу или отложил стройку.
+    state.city.traveler_house_land = true;
 }
 
 /// Отправляет путешественника в локацию за аванс.
@@ -3194,10 +3239,11 @@ pub fn traveler_house_agreed(state: &GameState) -> bool {
     state.city.traveler_house_answer == Some(true)
 }
 
-/// Можно ли уже арендовать землю под дом: сначала путешественники должны
-/// позвать игрока в дело, а он — согласиться.
+/// Можно ли уже арендовать землю под дом: путешественники позвали игрока
+/// в дело, и он ответил на предложение — «Да» или «Нет».
 pub fn traveler_house_offer_made(state: &GameState) -> bool {
-    state.city.traveler_house_offered && traveler_house_agreed(state)
+    state.city.traveler_house_offered
+        && (state.city.traveler_house_land || traveler_house_agreed(state))
 }
 
 /// Земля под Дом странников: разовый платёж в Ратуше.
@@ -5152,6 +5198,41 @@ mod tests {
         // Лимиты остаются читаемыми числами, а не миллиардами.
         assert!(demand_capacity("candle") <= 2_000.0);
         assert!(demand_capacity("chainmail") >= 30.0);
+    }
+
+    #[test]
+    fn salary_bill_stays_in_the_bell_after_reading() {
+        // Регрессия: счёт по зарплатам раньше исчезал после прочтения.
+        // Теперь он живёт в колокольчике постоянно и обновляется.
+        let mut state = city_with_shop();
+        state.city.hire_charter = true;
+        state.city.hired_sawmill = 2;
+        state.gold = 10_000.0;
+
+        assert_eq!(pay_salaries(&mut state), SalaryOutcome::Paid);
+        assert!(state.letters.iter().any(|letter| letter.id == "salary_bill"));
+        // Прочитали — письмо остаётся на месте.
+        state.open_letter("salary_bill");
+        assert!(state.letters.iter().any(|letter| letter.id == "salary_bill"));
+
+        // Состояние счёта не переписывается повторным тиком.
+        assert_eq!(state.salary_bill_stage, state::SalaryBillStage::Paid);
+        let line = salary_bill_line(&state);
+        assert!(!line.is_empty());
+        assert!(line.contains("300"), "в счёте нет суммы: {line}");
+
+        // Нечем платить — счёт меняется на «не хватило», а письмо то же.
+        state.gold = 0.0;
+        assert_eq!(pay_salaries(&mut state), SalaryOutcome::Unpaid);
+        assert_eq!(state.salary_bill_stage, state::SalaryBillStage::Unpaid);
+        assert_eq!(
+            state
+                .letters
+                .iter()
+                .filter(|letter| letter.id == "salary_bill")
+                .count(),
+            1
+        );
     }
 
     #[test]

@@ -1123,6 +1123,22 @@ button {
     overflow: hidden;
 }
 
+/* Окно внутри экрана города: закрывает только город, а не всё приложение,
+ * и держит прокрутку на месте, пока висит на экране. */
+.notif-overlay.city-modal-inline {
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.55);
+    overscroll-behavior: none;
+}
+
+.notif-overlay.city-modal-inline .notif-panel {
+    width: min(320px, 100%);
+}
+
 .notif-head {
     display: flex;
     align-items: center;
@@ -3746,10 +3762,18 @@ button {
 /* Рынок города: те же колонки, что у торговца — товар, цена, спрос/предложение, тренд. */
 .city-row.market-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 58px 62px 46px;
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) 54px 56px 82px;
+    gap: 6px;
     align-items: center;
-    text-align: right;
+    padding-right: 6px;
+    text-align: left;
+}
+
+/* Колонки цены, пары и тренда отделены тонкой чертой: так видно, где
+ * кончается название и начинаются числа, а стрелки не сливаются. */
+.city-row.market-row > span:not(:first-child) {
+    border-left: 1px solid var(--line);
+    padding-left: 6px;
 }
 
 .market-pair {
@@ -3804,11 +3828,12 @@ button {
 .market-status {
     display: inline-flex;
     align-items: baseline;
+    justify-content: flex-start;
     gap: 3px;
 }
 
 .market-short {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 600;
     letter-spacing: 0.03em;
 }
@@ -4342,6 +4367,30 @@ button {
     font-size: 12px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+}
+
+/* Наценка товара и приказчика: − значение + вместо ползунка. */
+.city-row.price-stepper {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+}
+
+.price-stepper .city-stepper-value {
+    min-width: 44px;
+}
+
+/* Кнопки пожертвований в храме: три суммы в ряд с переносом. */
+.church-donations {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.church-donations .city-btn {
+    flex: 1 1 30%;
 }
 
 .city-goods-icon {

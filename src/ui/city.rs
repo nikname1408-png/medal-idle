@@ -26,6 +26,8 @@ pub enum CityView {
     Church,
     /// Дом странников: стройка, а после постройки — сами путешественники.
     TravelersHouse,
+    /// Страница разговорного квеста: история и три варианта ответа.
+    Quest,
 }
 
 /// Золото с подписью ресурса.
@@ -78,6 +80,7 @@ fn view_title(view: CityView) -> &'static str {
         CityView::Tavern => i18n::t("city.tavern"),
         CityView::Church => i18n::t("city.church"),
         CityView::TravelersHouse => i18n::t("traveler_house.title"),
+        CityView::Quest => i18n::t("traveler_quest.page_title"),
     }
 }
 
@@ -130,9 +133,19 @@ pub fn CityScreen(
     view: GameState,
     back: Signal<u32>,
     subview: Signal<CityView>,
+    /// Окно предложения Дома странников рисуется прямо в городе, а не
+    /// отдельным оверлеем сверху: тогда под ним нечего двигать.
+    #[props(default = true)]
+    house_modal: bool,
 ) -> Element {
     let mut subview = subview;
     use_context_provider(move || subview);
+    // Разговорный квест открывается отдельной страницей: здесь живёт, кого
+    // именно слушаем и куда вернуться после ответа.
+    let mut quest_traveler = use_signal(|| Option::<usize>::None);
+    let quest_return = use_signal(|| CityView::Tavern);
+    use_context_provider(move || quest_traveler);
+    use_context_provider(move || quest_return);
 
     // Системная «Назад» из подэкрана возвращает на карту города.
     // `peek` обязателен: обычное чтение подписало бы эффект на `subview`,
@@ -222,13 +235,32 @@ pub fn CityScreen(
         )
     };
 
+    let house_offer = house_modal
+        && view.city.traveler_house_offered
+        && view.city.traveler_house_answer.is_none()
+        && !city::traveler_house_built(&view)
+        // Окно идёт после финального квеста: пока открыт его результат,
+        // предложение ждёт, чтобы не накрывать реплику.
+        && view
+            .city
+            .travelers
+            .iter()
+            .all(|traveler| !traveler.quest_result);
+
     rsx! {
         section { class: "city-screen",
             if subview() != CityView::Map {
                 div { class: "city-head",
                     button {
                         class: "city-back",
-                        onclick: move |_| subview.set(CityView::Map),
+                        onclick: move |_| {
+                            if *subview.peek() == CityView::Quest {
+                                quest_traveler.set(None);
+                                subview.set(*quest_return.peek());
+                            } else {
+                                subview.set(CityView::Map);
+                            }
+                        },
                         "{i18n::t(\"city.back\")}"
                     }
                     h2 { class: "city-title", "{view_title(subview())}" }
@@ -276,9 +308,7 @@ pub fn CityScreen(
                 div { class: "city-event",
                     div { class: "city-event-head",
                         span { class: "city-event-name", "{event_title}" }
-                        span { class: "city-event-time",
-                            "{i18n::tf(\"event.active\", &[&event_left])}"
-                        }
+                        span { class: "city-event-time", "{i18n::tf(\"event.active\", &[&event_left])}" }
                     }
                     p { class: "city-event-body", "{event_body}" }
                     if matches!(active_event, Some(CityEvent::Competitor { .. })) {
@@ -308,7 +338,9 @@ pub fn CityScreen(
             }
 
             match subview() {
-                CityView::Church => rsx! {},
+                CityView::Church => rsx! {
+                    ChurchScreen { state, view: view.clone() }
+                },
                 CityView::Map => rsx! {
                     div { class: "city-map",
                         CityBuilding {
@@ -329,7 +361,7 @@ pub fn CityScreen(
                             icon: "⚖️".to_string(),
                             title: i18n::t("city.guild").to_string(),
                             hint: guild_hint,
-                            unlocked: view.city.guild_unlocked,
+                            unlocked: true,
                             on_open: move |_| subview.set(CityView::Guild),
                         }
                         CityBuilding {
@@ -389,6 +421,13 @@ pub fn CityScreen(
                 CityView::TravelersHouse => rsx! {
                     TravelersHouseScreen { state, view: view.clone() }
                 },
+                CityView::Quest => rsx! {
+                    TravelerQuestScreen { state, view: view.clone() }
+                },
+            }
+
+            if house_offer {
+                TravelerHouseModal { state, city_view: subview, overlay: false }
             }
         }
     }
@@ -664,7 +703,7 @@ fn MarketScreen(state: Signal<GameState>, view: GameState) -> Element {
                 } else {
                     "low"
                 },
-                status: market_status.short().to_string(),
+                status: market_status.label().to_string(),
                 status_class,
                 trend: trend_label,
                 trend_class,
@@ -708,8 +747,6 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut selected_goods = use_signal(|| None::<String>);
     let mut pick_amount = use_signal(|| 1u32);
     let mut stock_open = use_signal(|| false);
-    let mut stock_pick = use_signal(|| None::<String>);
-    let mut stock_amount = use_signal(|| 1u32);
 
     let shop = view.city.shop.clone().unwrap_or_default();
     let shop_open = view.city.shop.is_some();
@@ -765,12 +802,12 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                 quantity: slot.quantity,
                 mult: slot.price_mult,
                 price_text: i18n::tf("shop.per_unit", &[&money(city::shop_price(&view, slot))]),
-                mult_text: format!("{:.2}", slot.price_mult),
+                mult_text: format!("{:.1}", slot.price_mult),
                 band: price_band(slot.price_mult),
                 demand_percent: percent,
                 demand_text,
                 demand_dead: percent == 0,
-                status: status.short().to_string(),
+                status: status.label().to_string(),
                 status_class,
             }
         })
@@ -810,27 +847,15 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
     let picked_amount = pick_amount().clamp(1, picked_have.max(1));
     let put_id = selected_now.clone().unwrap_or_default();
     let put_name = picked_name.clone();
+    let stock_id = put_id.clone();
+    let stock_put_name = picked_name.clone();
 
     let clerk_hired = view.city.clerk_hired;
-    let clerk_mult_value = format!("{:.2}", view.city.clerk_mult);
+    let clerk_mult_value = format!("{:.1}", view.city.clerk_mult);
     let clerk_mult_text = i18n::tf("clerk.mult", &[&clerk_mult_value]);
     let clerk_salary_text = i18n::tf("clerk.salary", &[&money(balance::CLERK_SALARY)]);
     let clerk_hire_text = i18n::tf("clerk.hire", &[&money(balance::CLERK_PRICE)]);
     let clerk_can_hire = !clerk_hired && view.gold + 1e-9 >= balance::CLERK_PRICE;
-    // Кладём на склад приказчика через «Добавить на склад».
-    let stock_now = stock_pick();
-    let stock_item = stock_now.as_deref().and_then(|id| items::item(id).cloned());
-    let stock_name = stock_item
-        .as_ref()
-        .map(|item| item.name().to_string())
-        .unwrap_or_default();
-    let stock_have = stock_now
-        .as_deref()
-        .map(|id| view.amount_of(id))
-        .unwrap_or(0);
-    let stock_take = stock_amount().clamp(1, stock_have.max(1));
-    let stock_id = stock_now.clone().unwrap_or_default();
-    let stock_put_name = stock_name.clone();
 
     rsx! {
         if shop_open {
@@ -849,20 +874,25 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                                 let mut guard = state.write();
                                 city::withdraw_cash(&mut guard)
                             };
-                            message.set(
-                                if taken > 0.0 {
-                                    i18n::tf("shop.withdrawn", &[&money(taken)])
-                                } else {
-                                    i18n::t("err.no_gold").to_string()
-                                },
-                            );
+                            message
+                                .set(
+                                    if taken > 0.0 {
+                                        i18n::tf("shop.withdrawn", &[&money(taken)])
+                                    } else {
+                                        i18n::t("err.no_gold").to_string()
+                                    },
+                                );
                             refresh_view(state);
                         },
                         "{i18n::t(\"shop.withdraw\")}"
                     }
                 }
-                div { class: "city-row muted", span { "{tax_text}" } }
-                div { class: "city-row muted", span { "{production_text}" } }
+                div { class: "city-row muted",
+                    span { "{tax_text}" }
+                }
+                div { class: "city-row muted",
+                    span { "{production_text}" }
+                }
                 if tax_due > 1e-6 {
                     div { class: "city-row",
                         span { class: "city-row-muted", "{tax_due_text}" }
@@ -879,9 +909,7 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                                     .set(
                                         match outcome {
                                             city::TaxOutcome::Paid => i18n::t("tax.paid").to_string(),
-                                            city::TaxOutcome::Short => {
-                                                i18n::tf("tax.short", &[&money(left)])
-                                            }
+                                            city::TaxOutcome::Short => i18n::tf("tax.short", &[&money(left)]),
                                             _ => i18n::t("tax.nothing").to_string(),
                                         },
                                     );
@@ -900,11 +928,7 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                 p { class: "city-hint", "{i18n::t(\"shop.slot_empty\")}" }
             } else {
                 for slot in slots {
-                    ShopSlotCard {
-                        key: "{slot.index}",
-                        state,
-                        slot,
-                    }
+                    ShopSlotCard { key: "{slot.index}", state, slot }
                 }
             }
 
@@ -915,7 +939,9 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
             if add_open() {
                 div { class: "city-card",
-                    div { class: "city-row muted", span { "{i18n::t(\"shop.add_title\")}" } }
+                    div { class: "city-row muted",
+                        span { "{i18n::t(\"shop.add_title\")}" }
+                    }
                     if goods.is_empty() {
                         p { class: "city-hint", "{i18n::t(\"shop.no_goods\")}" }
                     } else {
@@ -943,24 +969,18 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                                 div { class: "city-goods-controls",
                                     button {
                                         class: "city-stepper",
-                                        onclick: move |_| {
-                                            pick_amount.set(picked_amount.saturating_sub(1).max(1))
-                                        },
-                                        "в€’"
+                                        onclick: move |_| { pick_amount.set(picked_amount.saturating_sub(1).max(1)) },
+                                        "-"
                                     }
                                     span { class: "city-stepper-value", "{picked_amount}" }
                                     button {
                                         class: "city-stepper",
-                                        onclick: move |_| {
-                                            pick_amount.set((picked_amount + 1).min(picked_have))
-                                        },
+                                        onclick: move |_| { pick_amount.set((picked_amount + 1).min(picked_have)) },
                                         "+"
                                     }
                                     button {
                                         class: "city-stepper",
-                                        onclick: move |_| {
-                                            pick_amount.set((picked_amount + 10).min(picked_have))
-                                        },
+                                        onclick: move |_| { pick_amount.set((picked_amount + 10).min(picked_have)) },
                                         "+10"
                                     }
                                     button {
@@ -971,7 +991,10 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                                 }
                             }
                             div { class: "city-goods-icon",
-                                ItemIcon { item: picked_item, class: "inv-item-icon".to_string() }
+                                ItemIcon {
+                                    item: picked_item,
+                                    class: "inv-item-icon".to_string(),
+                                }
                             }
                         }
                         button {
@@ -987,10 +1010,7 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                                     Ok(()) => {
                                         message
                                             .set(
-                                                i18n::tf(
-                                                    "shop.put_done",
-                                                    &[&format!("{} ×{}", put_name, qty)],
-                                                ),
+                                                i18n::tf("shop.put_done", &[&format!("{} ×{}", put_name, qty)]),
                                             );
                                         selected_goods.set(None);
                                         pick_amount.set(1);
@@ -1001,86 +1021,14 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                             },
                             "{i18n::t(\"shop.put\")}"
                         }
-                    }
-                }
-            }
-
-            button {
-                class: "city-btn wide",
-                onclick: move |_| {
-                    stock_pick.set(None);
-                    stock_amount.set(1);
-                    stock_open.set(!stock_open());
-                },
-                "{i18n::t(\"stock.add\")}"
-            }
-            if stock_open() {
-                div { class: "city-card",
-                    div { class: "city-row muted", span { "{i18n::t(\"stock.add_hint\")}" } }
-                    if goods.is_empty() {
-                        p { class: "city-hint", "{i18n::t(\"shop.no_goods\")}" }
-                    } else {
-                        div { class: "inv-grid shop-goods-grid",
-                            for good in goods {
-                                GoodCell {
-                                    key: "{good.id}",
-                                    item: good.item,
-                                    count: good.count,
-                                    selected: stock_now.as_deref() == Some(good.id.as_str()),
-                                    on_select: move |item_id: String| {
-                                        stock_pick.set(Some(item_id));
-                                        stock_amount.set(1);
-                                    },
-                                }
-                            }
-                        }
-                    }
-                    if let Some(stock_picked_item) = stock_item {
-                        div { class: "city-goods-card",
-                            div { class: "city-goods-main",
-                                div { class: "city-goods-name", "{stock_name}" }
-                                div { class: "city-goods-controls",
-                                    button {
-                                        class: "city-stepper",
-                                        onclick: move |_| {
-                                            stock_amount.set(stock_take.saturating_sub(1).max(1))
-                                        },
-                                        "в€’"
-                                    }
-                                    span { class: "city-stepper-value", "{stock_take}" }
-                                    button {
-                                        class: "city-stepper",
-                                        onclick: move |_| {
-                                            stock_amount.set((stock_take + 1).min(stock_have))
-                                        },
-                                        "+"
-                                    }
-                                    button {
-                                        class: "city-stepper",
-                                        onclick: move |_| {
-                                            stock_amount.set((stock_take + 10).min(stock_have))
-                                        },
-                                        "+10"
-                                    }
-                                    button {
-                                        class: "city-stepper",
-                                        onclick: move |_| stock_amount.set(stock_have),
-                                        "{i18n::t(\"shop.max\")}"
-                                    }
-                                }
-                            }
-                            div { class: "city-goods-icon",
-                                ItemIcon { item: stock_picked_item, class: "inv-item-icon".to_string() }
-                            }
-                        }
                         button {
                             class: "city-btn wide",
-                            disabled: stock_have == 0,
+                            disabled: picked_have == 0,
                             onclick: move |_| {
-                                let quantity = stock_amount().clamp(1, stock_have.max(1));
+                                let qty = pick_amount().clamp(1, picked_have.max(1));
                                 let outcome = {
                                     let mut guard = state.write();
-                                    city::add_stock(&mut guard, &stock_id, quantity)
+                                    city::add_stock(&mut guard, &stock_id, qty)
                                 };
                                 match outcome {
                                     Ok(()) => {
@@ -1088,12 +1036,11 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                                             .set(
                                                 i18n::tf(
                                                     "stock.added",
-                                                    &[&format!("{} ×{}", stock_put_name, quantity)],
+                                                    &[&format!("{} ×{}", stock_put_name, qty)],
                                                 ),
                                             );
-                                        stock_pick.set(None);
-                                        stock_amount.set(1);
-                                        stock_open.set(false);
+                                        selected_goods.set(None);
+                                        pick_amount.set(1);
                                     }
                                     Err(error) => message.set(error.text().to_string()),
                                 }
@@ -1109,27 +1056,47 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                 div { class: "city-row",
                     span { class: "city-upgrade-name", "{i18n::t(\"clerk.title\")}" }
                 }
-                div { class: "city-row muted", span { "{i18n::t(\"clerk.hint\")}" } }
+                div { class: "city-row muted",
+                    span { "{i18n::t(\"clerk.hint\")}" }
+                }
                 if clerk_hired {
-                    div { class: "city-row muted", span { "{clerk_mult_text}" } }
-                    input {
-                        class: "city-slider",
-                        r#type: "range",
-                        min: "{balance::CLERK_MULT_MIN}",
-                        max: "{balance::CLERK_MULT_MAX}",
-                        step: "0.05",
-                        value: "{clerk_mult_value}",
-                        oninput: move |event| {
-                            if let Ok(value) = event.value().parse::<f32>() {
+                    div { class: "city-row muted",
+                        span { "{clerk_mult_text}" }
+                    }
+                    div { class: "city-row price-stepper",
+                        button {
+                            class: "city-stepper",
+                            disabled: view.city.clerk_mult <= balance::CLERK_MULT_MIN + 1e-6,
+                            onclick: move |_| {
+                                let current = state.read().city.clerk_mult;
+                                let next = ((current - 0.1) * 10.0).round() / 10.0;
                                 {
                                     let mut guard = state.write();
-                                    city::set_clerk_mult(&mut guard, value);
+                                    city::set_clerk_mult(&mut guard, next);
                                 }
                                 refresh_view(state);
-                            }
-                        },
+                            },
+                            "−"
+                        }
+                        span { class: "city-stepper-value", "×{clerk_mult_value}" }
+                        button {
+                            class: "city-stepper",
+                            disabled: view.city.clerk_mult >= balance::CLERK_MULT_MAX - 1e-6,
+                            onclick: move |_| {
+                                let current = state.read().city.clerk_mult;
+                                let next = ((current + 0.1) * 10.0).round() / 10.0;
+                                {
+                                    let mut guard = state.write();
+                                    city::set_clerk_mult(&mut guard, next);
+                                }
+                                refresh_view(state);
+                            },
+                            "+"
+                        }
                     }
-                    div { class: "city-row muted", span { "{clerk_salary_text}" } }
+                    div { class: "city-row muted",
+                        span { "{clerk_salary_text}" }
+                    }
                 } else {
                     button {
                         class: "city-btn",
@@ -1157,7 +1124,9 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                 div { class: "city-row",
                     span { class: "city-upgrade-name", "{i18n::t(\"stock.title\")}" }
                 }
-                div { class: "city-row muted", span { "{i18n::t(\"stock.hint\")}" } }
+                div { class: "city-row muted",
+                    span { "{i18n::t(\"stock.hint\")}" }
+                }
                 button {
                     class: "city-btn wide",
                     onclick: move |_| stock_open.set(!stock_open()),
@@ -1167,7 +1136,6 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
             if stock_open() {
                 StockPanel { state, view: view.clone(), message }
             }
-
         } else {
             div { class: "city-card",
                 p { class: "city-hint", "{i18n::t(\"shop.closed\")}" }
@@ -1235,17 +1203,6 @@ fn StockPanel(state: Signal<GameState>, view: GameState, message: Signal<String>
     } else {
         let parts: Vec<String> = plan
             .iter()
-            .map(|(id, _quantity)| ingredient_name(id).to_string())
-            .collect();
-        i18n::tf("stock.plan", &[&parts.join(", ")])
-    };
-    let _ = plan_text;
-    let plan = city::stock_plan(&view, &[], cells as usize, None, false);
-    let plan_text = if plan.is_empty() {
-        String::new()
-    } else {
-        let parts: Vec<String> = plan
-            .iter()
             .map(|(id, quantity)| format!("{} ×{quantity}", ingredient_name(id)))
             .collect();
         i18n::tf("stock.plan", &[&parts.join(", ")])
@@ -1266,32 +1223,41 @@ fn StockPanel(state: Signal<GameState>, view: GameState, message: Signal<String>
                 span { "{cells_text}" }
             }
             if !plan_text.is_empty() {
-                div { class: "city-row muted", span { "{plan_text}" } }
+                div { class: "city-row muted",
+                    span { "{plan_text}" }
+                }
             }
             if rows.is_empty() {
                 p { class: "city-hint", "{i18n::t(\"stock.empty\")}" }
             } else {
-                for row in rows {
-                    {
-                        let row_id = row.item_id.clone();
-                        let active = picked() == Some(row.index);
-                        rsx! {
-                            button {
-                                key: "{row.index}",
-                                class: if active { "city-row stock-row active" } else { "city-row stock-row" },
-                                onclick: move |_| {
-                                    if picked() == Some(row.index) {
-                                        picked.set(None);
-                                    } else {
-                                        picked.set(Some(row.index));
-                                        amount.set(1);
+                div { class: "inv-grid shop-goods-grid",
+                    for row in rows.clone() {
+                        {
+                            let row_id = row.item_id.clone();
+                            let row_index = row.index;
+                            let quantity = row.quantity;
+                            let row_name = row.name.clone();
+                            let active = picked() == Some(row_index);
+                            rsx! {
+                                button {
+                                    key: "{row_index}",
+                                    class: if active { "inv-item selected" } else { "inv-item" },
+                                    title: "{row_name}",
+                                    onclick: move |_| {
+                                        if picked() == Some(row_index) {
+                                            picked.set(None);
+                                        } else {
+                                            picked.set(Some(row_index));
+                                            amount.set(1);
+                                        }
+                                    },
+                                    if let Some(item) = items::item(&row_id) {
+                                        ItemIcon { item: item.clone(), class: "inv-item-icon".to_string() }
                                     }
-                                },
-                                if let Some(item) = items::item(&row_id) {
-                                    ItemIcon { item: item.clone(), class: "city-item-icon".to_string() }
+                                    if quantity > 1 {
+                                        span { class: "inv-badge", "{quantity}" }
+                                    }
                                 }
-                                span { class: "city-upgrade-name", "{row.name}" }
-                                span { class: "city-slot-qty", "×{row.quantity}" }
                             }
                         }
                     }
@@ -1310,7 +1276,7 @@ fn StockPanel(state: Signal<GameState>, view: GameState, message: Signal<String>
                                 let next = amount_now.saturating_sub(1).max(1);
                                 amount.set(next);
                             },
-                            "в€’"
+                            "-"
                         }
                         span { class: "city-stepper-value", "{amount_now}" }
                         button {
@@ -1410,7 +1376,10 @@ fn ShopSlotCard(state: Signal<GameState>, slot: SlotView) -> Element {
         div { class: "city-slot",
             div { class: "city-slot-head",
                 if let Some(item) = item {
-                    ItemIcon { item: item.clone(), class: "city-item-icon".to_string() }
+                    ItemIcon {
+                        item: item.clone(),
+                        class: "city-item-icon".to_string(),
+                    }
                 }
                 span { class: "city-slot-name", "{slot.name}" }
                 span { class: "city-slot-qty", "×{slot.quantity}" }
@@ -1431,8 +1400,7 @@ fn ShopSlotCard(state: Signal<GameState>, slot: SlotView) -> Element {
                 span { class: "city-price-mult {slot.band}", "×{slot.mult_text}" }
             }
             div { class: "demand-row",
-                span {
-                    class: if slot.demand_dead { "demand-label dead" } else { "demand-label" },
+                span { class: if slot.demand_dead { "demand-label dead" } else { "demand-label" },
                     "{slot.demand_text}"
                 }
                 span { class: "market-short {slot.status_class}", "{slot.status}" }
@@ -1443,22 +1411,34 @@ fn ShopSlotCard(state: Signal<GameState>, slot: SlotView) -> Element {
                     }
                 }
             }
-            input {
-                class: "city-slider {slot.band}",
-                r#type: "range",
-                min: "{balance::SHOP_PRICE_MIN}",
-                max: "{balance::SHOP_PRICE_MAX}",
-                step: "0.05",
-                value: "{slot.mult}",
-                oninput: move |event| {
-                    if let Ok(value) = event.value().parse::<f32>() {
+            div { class: "city-row price-stepper",
+                button {
+                    class: "city-stepper",
+                    disabled: slot.mult <= balance::SHOP_PRICE_MIN + 1e-6,
+                    onclick: move |_| {
+                        let next = ((slot.mult - 0.1) * 10.0).round() / 10.0;
                         {
                             let mut guard = state.write();
-                            let _ = city::set_price(&mut guard, index, value);
+                            let _ = city::set_price(&mut guard, index, next);
                         }
                         refresh_view(state);
-                    }
-                },
+                    },
+                    "−"
+                }
+                span { class: "city-stepper-value", "×{slot.mult_text}" }
+                button {
+                    class: "city-stepper",
+                    disabled: slot.mult >= balance::SHOP_PRICE_MAX - 1e-6,
+                    onclick: move |_| {
+                        let next = ((slot.mult + 0.1) * 10.0).round() / 10.0;
+                        {
+                            let mut guard = state.write();
+                            let _ = city::set_price(&mut guard, index, next);
+                        }
+                        refresh_view(state);
+                    },
+                    "+"
+                }
             }
         }
     }
@@ -1524,8 +1504,13 @@ fn BankScreen(state: Signal<GameState>, view: GameState) -> Element {
 
     rsx! {
         div { class: "city-card",
-            div { class: "city-row", span { "{cells_text}" } span { "{cap_text}" } }
-            div { class: "city-row muted", span { "{price_text}" } }
+            div { class: "city-row",
+                span { "{cells_text}" }
+                span { "{cap_text}" }
+            }
+            div { class: "city-row muted",
+                span { "{price_text}" }
+            }
             button {
                 class: "city-btn",
                 disabled: maxed,
@@ -1535,9 +1520,12 @@ fn BankScreen(state: Signal<GameState>, view: GameState) -> Element {
                         city::buy_bank_cell(&mut guard)
                     };
                     match outcome {
-                        Ok(()) => message.set(
-                            i18n::tf("bank.bought", &[&format_num(balance::BANK_CELL_BONUS)]),
-                        ),
+                        Ok(()) => {
+                            message
+                                .set(
+                                    i18n::tf("bank.bought", &[&format_num(balance::BANK_CELL_BONUS)]),
+                                )
+                        }
                         Err(error) => message.set(error.text().to_string()),
                     }
                     refresh_view(state);
@@ -1550,7 +1538,9 @@ fn BankScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         div { class: "city-card",
-            div { class: "city-row muted", span { "{i18n::t(\"bank.quests\")}" } }
+            div { class: "city-row muted",
+                span { "{i18n::t(\"bank.quests\")}" }
+            }
             if quest.is_some() {
                 div { class: "city-row",
                     span { "{quest_text}" }
@@ -1565,9 +1555,7 @@ fn BankScreen(state: Signal<GameState>, view: GameState) -> Element {
                             city::complete_bank_quest(&mut guard)
                         };
                         match outcome {
-                            Ok(cells) => message.set(
-                                i18n::tf("bank.bought", &[&cells.to_string()]),
-                            ),
+                            Ok(cells) => message.set(i18n::tf("bank.bought", &[&cells.to_string()])),
                             Err(error) => message.set(error.text().to_string()),
                         }
                         refresh_view(state);
@@ -1577,6 +1565,94 @@ fn BankScreen(state: Signal<GameState>, view: GameState) -> Element {
             } else {
                 p { class: "city-hint", "{i18n::t(\"bank.no_more\")}" }
             }
+        }
+    }
+}
+
+/// Храм: благословение за пожертвование и исповедь.
+#[component]
+fn ChurchScreen(state: Signal<GameState>, view: GameState) -> Element {
+    let mut state = state;
+    let mut message = use_signal(String::new);
+    let blessing_left = (view.city.blessing_until - view.total_play_seconds).max(0.0);
+    let blessing_text = if blessing_left > 0.0 {
+        i18n::tf("church.blessing", &[&format_duration(blessing_left)])
+    } else {
+        i18n::t("church.no_blessing").to_string()
+    };
+    let confession_left = (view.city.next_confession_at - view.total_play_seconds).max(0.0);
+    let confession_ready = confession_left <= 0.0;
+    let confession_price = money(balance::CHURCH_CONFESSION_PRICE);
+    let confess_text = if confession_ready {
+        i18n::tf("church.confess", &[&confession_price])
+    } else {
+        i18n::tf("church.cooldown", &[&format_duration(confession_left)])
+    };
+    let missed_text = i18n::tf(
+        "church.missed",
+        &[&view.city.taxes_missed.to_string()],
+    );
+    let message_text = message();
+
+    rsx! {
+        div { class: "city-card",
+            div { class: "city-row muted",
+                span { "{i18n::t(\"church.bless_hint\")}" }
+            }
+            div { class: "city-row",
+                span { "{blessing_text}" }
+            }
+            div { class: "church-donations",
+                for amount in balance::CHURCH_DONATIONS {
+                    {
+                        let label = i18n::tf("church.donate", &[&money(amount)]);
+                        let affordable = view.gold + 1e-9 >= amount;
+                        rsx! {
+                            button {
+                                class: "city-btn",
+                                disabled: !affordable,
+                                onclick: move |_| {
+                                    let outcome = {
+                                        let mut guard = state.write();
+                                        city::donate(&mut guard, amount)
+                                    };
+                                    match outcome {
+                                        Ok(()) => message.set(i18n::t("church.donated").to_string()),
+                                        Err(error) => message.set(error.text().to_string()),
+                                    }
+                                    refresh_view(state);
+                                },
+                                "{label}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        div { class: "city-card",
+            div { class: "city-row muted",
+                span { "{missed_text}" }
+            }
+            button {
+                class: "city-btn wide",
+                disabled: !confession_ready
+                    || view.gold + 1e-9 < balance::CHURCH_CONFESSION_PRICE,
+                onclick: move |_| {
+                    let outcome = {
+                        let mut guard = state.write();
+                        city::confess(&mut guard)
+                    };
+                    match outcome {
+                        Ok(()) => message.set(i18n::t("church.confessed").to_string()),
+                        Err(error) => message.set(error.text().to_string()),
+                    }
+                    refresh_view(state);
+                },
+                "{confess_text}"
+            }
+        }
+        if !message_text.is_empty() {
+            div { class: "city-msg", "{message_text}" }
         }
     }
 }
@@ -1633,13 +1709,22 @@ fn GuildScreen(state: Signal<GameState>, view: GameState) -> Element {
     rsx! {
         if member {
             div { class: "city-card",
-                div { class: "city-row", span { "{rank_text}" } span { "{title_text}" } }
-                div { class: "city-row muted", span { "{sales_text}" } }
+                div { class: "city-row",
+                    span { "{rank_text}" }
+                    span { "{title_text}" }
+                }
+                div { class: "city-row muted",
+                    span { "{sales_text}" }
+                }
             }
             div { class: "city-card",
-                div { class: "city-row muted", span { "{i18n::t(\"guild.upgrades\")}" } }
+                div { class: "city-row muted",
+                    span { "{i18n::t(\"guild.upgrades\")}" }
+                }
                 if upgrades_done {
-                    div { class: "city-row muted", span { "{i18n::t(\"guild.upgrades_done\")}" } }
+                    div { class: "city-row muted",
+                        span { "{i18n::t(\"guild.upgrades_done\")}" }
+                    }
                 }
                 for (id , name , desc , price , bought) in upgrades {
                     GuildUpgradeRow {
@@ -1653,10 +1738,12 @@ fn GuildScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                 }
             }
-
         } else {
             div { class: "city-card",
-                div { class: "city-row", span { "{sales_text}" } span { "{need_text}" } }
+                div { class: "city-row",
+                    span { "{sales_text}" }
+                    span { "{need_text}" }
+                }
                 button {
                     class: "city-btn",
                     disabled: !can_join,
@@ -1701,7 +1788,9 @@ fn GuildUpgradeRow(
                 span { class: "city-upgrade-name", "{name}" }
                 span { class: "city-row-muted", "{price_text}" }
             }
-            div { class: "city-row muted", span { "{desc}" } }
+            div { class: "city-row muted",
+                span { "{desc}" }
+            }
             if !bought {
                 button {
                     class: "city-btn small",
@@ -1836,7 +1925,10 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
         return rsx! {
             div { class: "city-card",
                 p { class: "city-hint", "{locked_text}" }
-                div { class: "city-row", span { "{sales_text}" } span { "{rating_text}" } }
+                div { class: "city-row",
+                    span { "{sales_text}" }
+                    span { "{rating_text}" }
+                }
             }
         };
     }
@@ -1897,13 +1989,23 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
     };
     rsx! {
         div { class: "city-card",
-            div { class: "city-row", span { "{sales_text}" } span { "{profit_text}" } }
-            div { class: "city-row", span { "{avg_text}" } span { "{title_text}" } }
-            div { class: "city-row muted", span { "{taxes_text}" } }
+            div { class: "city-row",
+                span { "{sales_text}" }
+                span { "{profit_text}" }
+            }
+            div { class: "city-row",
+                span { "{avg_text}" }
+                span { "{title_text}" }
+            }
+            div { class: "city-row muted",
+                span { "{taxes_text}" }
+            }
         }
 
         div { class: "city-card",
-            div { class: "city-row muted", span { "{i18n::t(\"town_hall.top\")}" } }
+            div { class: "city-row muted",
+                span { "{i18n::t(\"town_hall.top\")}" }
+            }
             if top.is_empty() {
                 p { class: "city-hint", "{i18n::t(\"town_hall.no_sales\")}" }
             } else {
@@ -1917,14 +2019,18 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         div { class: "city-card",
-            div { class: "city-row muted", span { "{i18n::t(\"town_hall.history\")}" } }
+            div { class: "city-row muted",
+                span { "{i18n::t(\"town_hall.history\")}" }
+            }
             if history.is_empty() {
                 p { class: "city-hint", "{i18n::t(\"town_hall.nothing\")}" }
             } else {
                 // Ключ — номер строки: одинаковые продажи дают одинаковый
                 // ключ, а повторяющиеся ключи ломают перерисовку списка.
                 for (index , line) in history.into_iter().enumerate() {
-                    div { class: "city-row muted", key: "{index}", span { "{line}" } }
+                    div { class: "city-row muted", key: "{index}",
+                        span { "{line}" }
+                    }
                 }
             }
         }
@@ -1933,7 +2039,9 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
             div { class: "city-row",
                 span { class: "city-upgrade-name", "{i18n::t(\"charter.name\")}" }
             }
-            div { class: "city-row muted", span { "{i18n::t(\"charter.desc\")}" } }
+            div { class: "city-row muted",
+                span { "{i18n::t(\"charter.desc\")}" }
+            }
             if view.city.hire_charter {
                 div { class: "city-msg", "{i18n::t(\"charter.owned\")}" }
             } else {
@@ -1963,7 +2071,9 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
             div { class: "city-row",
                 span { class: "city-upgrade-name", "{i18n::t(\"smith.permit.name\")}" }
             }
-            div { class: "city-row muted", span { "{i18n::t(\"smith.permit.desc\")}" } }
+            div { class: "city-row muted",
+                span { "{i18n::t(\"smith.permit.desc\")}" }
+            }
             if view.city.smith_second_permit {
                 div { class: "city-msg", "{i18n::t(\"smith.permit.owned\")}" }
             } else {
@@ -1993,7 +2103,9 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
             div { class: "city-row",
                 span { class: "city-upgrade-name", "{i18n::t(\"traveler_house.title\")}" }
             }
-            div { class: "city-row muted", span { "{i18n::t(\"traveler_house.hint\")}" } }
+            div { class: "city-row muted",
+                span { "{i18n::t(\"traveler_house.hint\")}" }
+            }
             if view.city.traveler_house_rented && !house_built {
                 div { class: "city-row traveler-loc closed",
                     span { class: "city-upgrade-name", "{i18n::t(\"traveler_house.title\")}" }
@@ -2070,9 +2182,6 @@ fn TavernScreen(state: Signal<GameState>, view: GameState) -> Element {
         // Дом построен — вкладка путешественников уехала в Дом.
         tab.set(0);
     }
-    let house_modal = view.city.traveler_house_offered
-        && view.city.traveler_house_answer.is_none()
-        && !house_built;
     let message_text = message();
 
     rsx! {
@@ -2102,10 +2211,15 @@ fn TavernScreen(state: Signal<GameState>, view: GameState) -> Element {
                             city::buy_rumor(&mut guard)
                         };
                         match outcome {
-                            Ok(pair) => message.set(i18n::tf(
-                                "event.rumor.desc",
-                                &[ingredient_name(&pair.dead), ingredient_name(&pair.hot)],
-                            )),
+                            Ok(pair) => {
+                                message
+                                    .set(
+                                        i18n::tf(
+                                            "event.rumor.desc",
+                                            &[ingredient_name(&pair.dead), ingredient_name(&pair.hot)],
+                                        ),
+                                    )
+                            }
                             Err(error) => message.set(error.text().to_string()),
                         }
                         refresh_view(state);
@@ -2113,16 +2227,22 @@ fn TavernScreen(state: Signal<GameState>, view: GameState) -> Element {
                     "{rumor_text}"
                 }
                 if !cooldown_text.is_empty() {
-                    div { class: "city-row muted", span { "{cooldown_text}" } }
+                    div { class: "city-row muted",
+                        span { "{cooldown_text}" }
+                    }
                 }
-                div { class: "city-row muted", span { "{active_rumor_text}" } }
+                div { class: "city-row muted",
+                    span { "{active_rumor_text}" }
+                }
                 if !message_text.is_empty() {
                     div { class: "city-msg", "{message_text}" }
                 }
             }
 
             div { class: "city-card",
-                div { class: "city-row muted", span { "{i18n::t(\"tavern.dice\")}" } }
+                div { class: "city-row muted",
+                    span { "{i18n::t(\"tavern.dice\")}" }
+                }
                 div { class: "city-row",
                     span { "{bet_text}" }
                 }
@@ -2155,42 +2275,6 @@ fn TavernScreen(state: Signal<GameState>, view: GameState) -> Element {
             }
         } else {
             TravelerList { state, view: view.clone(), with_gear: false }
-        }
-
-        if house_modal {
-            div { class: "notif-overlay",                div { class: "notif-panel offer-modal",
-                    div { class: "notif-head",
-                        h2 { class: "notif-title", "{i18n::t(\"traveler.house_offer_title\")}" }
-                    }
-                    p { class: "letter-body", "{i18n::t(\"traveler.house_offer\")}" }
-                    div { class: "offer-actions",
-                        button {
-                            class: "offer-accept",
-                            onclick: move |_| {
-                                {
-                                    let mut guard = state.write();
-                                    city::traveler_house_decision(&mut guard, true);
-                                }
-                                refresh_view(state);
-                                let mut screen = use_context::<Signal<CityView>>();
-                                screen.set(CityView::TownHall);
-                            },
-                            "{i18n::t(\"traveler.house_yes\")}"
-                        }
-                        button {
-                            class: "offer-later",
-                            onclick: move |_| {
-                                {
-                                    let mut guard = state.write();
-                                    city::traveler_house_decision(&mut guard, false);
-                                }
-                                refresh_view(state);
-                            },
-                            "{i18n::t(\"traveler.house_later\")}"
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -2263,9 +2347,13 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
                     span { class: "city-upgrade-name", "{counter_text}" }
                     span { class: "city-row-muted", "{i18n::t(\"traveler.house_ask\")}" }
                 }
-                div { class: "city-row muted", span { "{house_hint_text}" } }
+                div { class: "city-row muted",
+                    span { "{house_hint_text}" }
+                }
             } else {
-                div { class: "city-row", span { class: "city-upgrade-name", "{counter_text}" } }
+                div { class: "city-row",
+                    span { class: "city-upgrade-name", "{counter_text}" }
+                }
             }
             if travelers.is_empty() {
                 p { class: "city-hint", "{i18n::t(\"traveler.none\")}" }
@@ -2297,10 +2385,7 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
                                             span { class: "city-row-muted", "{specialism}" }
                                         }
                                     }
-                                    span {
-                                        class: if ready { "traveler-chip" } else { "traveler-chip away" },
-                                        "{status}"
-                                    }
+                                    span { class: if ready { "traveler-chip" } else { "traveler-chip away" }, "{status}" }
                                     span { class: "traveler-circles", "{circles}" }
                                     button {
                                         class: "city-btn small",
@@ -2334,9 +2419,13 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
                     }
                 }
                 if !away_lines.is_empty() {
-                    div { class: "city-row muted", span { "{away_text}" } }
+                    div { class: "city-row muted",
+                        span { "{away_text}" }
+                    }
                     for line in away_lines {
-                        div { class: "city-row muted", span { "{line}" } }
+                        div { class: "city-row muted",
+                            span { "{line}" }
+                        }
                     }
                 }
             }
@@ -2347,15 +2436,180 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
     }
 }
 
+/// Страница разговорного квеста: история, вопрос и три варианта ответа.
+///
+/// Отдельным экраном, а не строкой в карточке: на телефоне три длинных
+/// ответа в узкой карточке не читались.
+#[component]
+fn TravelerQuestScreen(state: Signal<GameState>, view: GameState) -> Element {
+    let mut state = state;
+    let mut message = use_signal(String::new);
+    let mut quest_traveler = use_context::<Signal<Option<usize>>>();
+    let mut screen = use_context::<Signal<CityView>>();
+    let origin = use_context::<Signal<CityView>>();
+    let message_text = message();
+    let Some(index) = quest_traveler() else {
+        return rsx! {
+            p { class: "city-hint", "{i18n::t(\"traveler.quest_missing\")}" }
+        };
+    };
+    let Some(traveler) = view.city.travelers.get(index) else {
+        return rsx! {
+            p { class: "city-hint", "{i18n::t(\"traveler.quest_missing\")}" }
+        };
+    };
+    let name = city::traveler_name(traveler.profile_id).to_string();
+    let circles = traveler_circles_text(city::traveler_circles(traveler));
+    let step = city::TravelerQuestStep::of(traveler);
+
+    let mut title = String::new();
+    let mut intro = String::new();
+    let mut ask = String::new();
+    let mut choices: Vec<TravelerChoiceView> = Vec::new();
+    let mut result_text = String::new();
+    let mut is_result = false;
+    let mut is_compass = false;
+    let mut compass_have = false;
+    match &step {
+        city::TravelerQuestStep::Active(quest_id) | city::TravelerQuestStep::Start(quest_id) => {
+            if let Some(quest) = city::traveler_quest(quest_id) {
+                title = i18n::t(&format!("traveler_quest.{quest_id}.title")).to_string();
+                intro = i18n::t(&format!("traveler_quest.{quest_id}.intro")).to_string();
+                ask = i18n::t(&format!("traveler_quest.{quest_id}.ask")).to_string();
+                is_compass = quest.kind == city::TravelerQuestKind::Compass;
+                compass_have = view.item_count(city::TRAVELER_COMPASS_ITEM) > 0;
+                for choice in quest.choices {
+                    choices.push(TravelerChoiceView {
+                        id: choice.id.to_string(),
+                        text: i18n::t(&format!("traveler_quest.{quest_id}.choice.{}", choice.id))
+                            .to_string(),
+                    });
+                }
+            }
+        }
+        city::TravelerQuestStep::Result { quest, good, .. } => {
+            is_result = true;
+            let key = if *good { "good" } else { "bad" };
+            result_text =
+                i18n::t(&format!("traveler_quest.{quest}.result_{key}")).to_string();
+        }
+        _ => {}
+    }
+    rsx! {
+        div { class: "city-card traveler-quest-page",
+            div { class: "traveler-quest-head",
+                span { class: "traveler-face", "👤" }
+                span { class: "traveler-names",
+                    span { class: "city-upgrade-name", "{name}" }
+                    span { class: "traveler-circles", "{circles}" }
+                }
+            }
+            if is_result {
+                p { class: "traveler-result", "{result_text}" }
+                button {
+                    class: "city-btn",
+                    onclick: move |_| {
+                        {
+                            let mut guard = state.write();
+                            let _ = city::finish_traveler_quest(&mut guard, index);
+                        }
+                        refresh_view(state);
+                        screen.set(*origin.peek());
+                    },
+                    "{i18n::t(\"traveler.quest_close\")}"
+                }
+            } else if is_compass {
+                span { class: "city-upgrade-name", "{title}" }
+                p { class: "traveler-intro", "{intro}" }
+                p { class: "traveler-ask", "{ask}" }
+                button {
+                    class: "city-btn",
+                    disabled: !compass_have,
+                    onclick: move |_| {
+                        let outcome = {
+                            let mut guard = state.write();
+                            city::deliver_compass(&mut guard, index)
+                        };
+                        match outcome {
+                            Ok(()) => message.set(i18n::t("traveler.compass_given").to_string()),
+                            Err(error) => message.set(error.text().to_string()),
+                        }
+                        refresh_view(state);
+                    },
+                    if compass_have {
+                        "{i18n::t(\"traveler.give_compass\")}"
+                    } else {
+                        "{i18n::t(\"traveler.need_compass\")}"
+                    }
+                }
+            } else if !ask.is_empty() {
+                span { class: "city-upgrade-name", "{title}" }
+                p { class: "traveler-intro", "{intro}" }
+                p { class: "traveler-ask", "{ask}" }
+                div { class: "traveler-choice-list",
+                    for choice in choices {
+                        {
+                            let id = choice.id.clone();
+                            let text = choice.text.clone();
+                            rsx! {
+                                button {
+                                    class: "traveler-choice",
+                                    onclick: move |_| {
+                                        let outcome = {
+                                            let mut guard = state.write();
+                                            city::answer_traveler_quest(&mut guard, index, &id)
+                                        };
+                                        if let Err(error) = outcome {
+                                            message.set(error.text().to_string());
+                                        }
+                                        refresh_view(state);
+                                    },
+                                    "{text}"
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                p { class: "city-hint", "{i18n::t(\"traveler.quest_missing\")}" }
+            }
+            if !message_text.is_empty() {
+                div { class: "city-msg", "{message_text}" }
+            }
+            if !is_result {
+                button {
+                    class: "city-btn small",
+                    onclick: move |_| {
+                        quest_traveler.set(None);
+                        screen.set(*origin.peek());
+                    },
+                    "{i18n::t(\"city.back\")}"
+                }
+            }
+        }
+    }
+}
+
 /// Окно-приглашение друга-путешественника. Кнопка «Да» перебрасывает
 /// в Ратушу, где живёт аренда земли под Дом странников.
+///
+/// `overlay: false` — окно стоит внутри экрана города и не закрывает всё
+/// приложение: тогда под ним ничего не прокручивается.
 #[component]
-pub fn TravelerHouseModal(state: Signal<GameState>, city_view: Signal<CityView>) -> Element {
+pub fn TravelerHouseModal(
+    state: Signal<GameState>,
+    city_view: Signal<CityView>,
+    #[props(default = true)] overlay: bool,
+) -> Element {
     let mut state = state;
     let mut city_view = city_view;
-    let mut tab = use_context::<Signal<usize>>();
+    let blocker = if overlay {
+        "notif-overlay"
+    } else {
+        "notif-overlay city-modal-inline"
+    };
     rsx! {
-        div { class: "notif-overlay",
+        div { class: "{blocker}",
             div { class: "notif-panel offer-modal",
                 div { class: "notif-head",
                     h2 { class: "notif-title", "{i18n::t(\"traveler.house_offer_title\")}" }
@@ -2371,7 +2625,6 @@ pub fn TravelerHouseModal(state: Signal<GameState>, city_view: Signal<CityView>)
                             }
                             refresh_view(state);
                             city_view.set(CityView::TownHall);
-                            tab.set(crate::ui::TAB_CITY);
                         },
                         "{i18n::t(\"traveler.house_yes\")}"
                     }
@@ -2383,6 +2636,7 @@ pub fn TravelerHouseModal(state: Signal<GameState>, city_view: Signal<CityView>)
                                 city::traveler_house_decision(&mut guard, false);
                             }
                             refresh_view(state);
+                            city_view.set(CityView::TownHall);
                         },
                         "{i18n::t(\"traveler.house_later\")}"
                     }
@@ -2619,33 +2873,6 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                 div { class: "traveler-quest",
                     span { class: "city-upgrade-name", "{card.quest_title}" }
                     span { class: "city-row-muted", "{card.quest_intro}" }
-                    if !card.quest_choice.is_empty() {
-                        p { class: "traveler-ask", "{card.quest_choice}" }
-                        for choice in card.choices {
-                            {
-                                let id = choice.id.clone();
-                                let text = choice.text.clone();
-                                rsx! {
-                                    button {
-                                        class: "city-btn small",
-                                        onclick: move |_| {
-                                            let outcome = {
-                                                let mut guard = state.write();
-                                                city::answer_traveler_quest(&mut guard, index, &id)
-                                            };
-                                            match outcome {
-                                                Ok(true) => message.set(i18n::t("traveler.answer_good").to_string()),
-                                                Ok(false) => message.set(i18n::t("traveler.answer_bad").to_string()),
-                                                Err(error) => message.set(error.text().to_string()),
-                                            }
-                                            refresh_view(state);
-                                        },
-                                        "{text}"
-                                    }
-                                }
-                            }
-                        }
-                    }
                     if card.quest_kind == Some(city::TravelerQuestKind::Compass) {
                         button {
                             class: "city-btn",
@@ -2671,12 +2898,37 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                                     let mut guard = state.write();
                                     city::start_traveler_quest(&mut guard, index)
                                 };
-                                if let Err(error) = outcome {
-                                    message.set(error.text().to_string());
+                                match outcome {
+                                    Ok(()) => {
+                                        // История открывается отдельной страницей.
+                                        let mut quest_traveler =
+                                            use_context::<Signal<Option<usize>>>();
+                                        quest_traveler.set(Some(index));
+                                        let mut screen = use_context::<Signal<CityView>>();
+                                        let mut origin = use_context::<Signal<CityView>>();
+                                        origin.set(*screen.peek());
+                                        screen.set(CityView::Quest);
+                                    }
+                                    Err(error) => message.set(error.text().to_string()),
                                 }
                                 refresh_view(state);
                             },
                             "{card.quest_action}"
+                        }
+                    } else if !card.quest_choice.is_empty() {
+                        // Квест уже начат: возвращаемся на его страницу.
+                        button {
+                            class: "city-btn",
+                            onclick: move |_| {
+                                let mut quest_traveler =
+                                    use_context::<Signal<Option<usize>>>();
+                                quest_traveler.set(Some(index));
+                                let mut screen = use_context::<Signal<CityView>>();
+                                let mut origin = use_context::<Signal<CityView>>();
+                                origin.set(*screen.peek());
+                                screen.set(CityView::Quest);
+                            },
+                            "{i18n::t(\"traveler.quest_open\")}"
                         }
                     }
                 }
@@ -2722,25 +2974,29 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                     }
                 }
             } else if card.empty_trip {
-                div { class: "city-row muted", span { "{i18n::t(\"traveler.empty_trip\")}" } }
+                div { class: "city-row muted",
+                    span { "{i18n::t(\"traveler.empty_trip\")}" }
+                }
             }
             if !card.gear.is_empty() {
                 div { class: "traveler-gear",
-                    div { class: "city-row muted", span { "{i18n::t(\"traveler.gear\")}" } }
+                    div { class: "city-row muted",
+                        span { "{i18n::t(\"traveler.gear\")}" }
+                    }
                     for gear in card.gear {
                         {
                             let slot = gear.slot;
                             let label = gear.label.clone();
                             let worn_id = gear.item_id.clone();
                             let worn_name = gear.name.clone();
-                            let active = if gear_slot() == slot { " city-btn small active" } else { " city-btn small" };
+                            let active = if gear_slot() == slot {
+                                " city-btn small active"
+                            } else {
+                                " city-btn small"
+                            };
                             rsx! {
                                 div { class: "city-row traveler-gear-row",
-                                    button {
-                                        class: "{active}",
-                                        onclick: move |_| gear_slot.set(slot),
-                                        "{label}"
-                                    }
+                                    button { class: "{active}", onclick: move |_| gear_slot.set(slot), "{label}" }
                                     span { class: "city-upgrade-name", "{worn_name}" }
                                     if worn_id.is_some() {
                                         button {
@@ -2763,7 +3019,9 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                         }
                     }
                     if card.gear_picks.is_empty() {
-                        div { class: "city-row muted", span { "{i18n::t(\"traveler.gear_none\")}" } }
+                        div { class: "city-row muted",
+                            span { "{i18n::t(\"traveler.gear_none\")}" }
+                        }
                     } else {
                         div { class: "traveler-gear-picks",
                             for pick in card.gear_picks {
@@ -2791,10 +3049,14 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                             }
                         }
                     }
-                    div { class: "city-row muted", span { "{card.gear_hint}" } }
+                    div { class: "city-row muted",
+                        span { "{card.gear_hint}" }
+                    }
                 }
             }
-            div { class: "city-row muted", span { "{i18n::t(\"traveler.locations\")}" } }
+            div { class: "city-row muted",
+                span { "{i18n::t(\"traveler.locations\")}" }
+            }
             for location in card.locations {
                 {
                     let id = location.id.clone();

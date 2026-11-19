@@ -239,6 +239,20 @@ pub struct DevSettings {
     pub gold_per_sec: f64,
 }
 
+/// Стадия счёта по зарплатам: счёт остаётся в колокольчике после прочтения,
+/// поэтому в нём должно стоять одно из трёх, а не «сколько насчитали в
+/// прошлый тик».
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SalaryBillStage {
+    /// Счёт ещё не выставляли.
+    #[default]
+    None,
+    /// Выплатить сумели — счёт закрыт.
+    Paid,
+    /// Не хватило золота: наёмные ушли, кузнецы встали.
+    Unpaid,
+}
+
 /// Письмо в колокольчике: отложенное предложение постройки.
 ///
 /// Заголовок и текст берутся из словаря по `id` письма
@@ -512,6 +526,13 @@ pub struct GameState {
     /// Письма в колокольчике.
     #[serde(default)]
     pub letters: Vec<Letter>,
+    /// Момент (в `total_play_seconds`), когда выплатили/насчитали зарплаты.
+    /// С него считается следующее начисление вместе с процентом и разбивкой.
+    #[serde(default)]
+    pub salary_log_at: f64,
+    /// Где лежит последний счёт по зарплатам, чтобы не класть его каждый тик.
+    #[serde(default)]
+    pub salary_bill_stage: SalaryBillStage,
     /// Банк уже предложен игроку (порог 800 золота).
     #[serde(default)]
     pub bank_seen: bool,
@@ -698,6 +719,8 @@ impl Default for GameState {
             compass_blueprint_studied: false,
             city: CityState::default(),
             letters: Vec::new(),
+            salary_log_at: 0.0,
+            salary_bill_stage: SalaryBillStage::None,
             bank_seen: false,
             pending_event: None,
             offline_events: Vec::new(),

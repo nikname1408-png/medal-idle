@@ -117,4 +117,3 @@ mod text_encoding_tests {
 }
 
 pub use app::App;
-pub use app::TAB_CITY;
