@@ -11,7 +11,7 @@ use crate::game::items;
 use crate::game::state::GameState;
 
 use super::app::{format_num, refresh_view, CostLabel, TravelerFocus};
-use super::inventory::{ingredient_name, ItemIcon};
+use super::inventory::{ingredient_name, slot_short, ItemCell, ItemDetails, ItemIcon};
 
 const ICON_CITY_BANK: Asset = asset!("/assets/icons/city_bank.png");
 const ICON_CITY_CHURCH: Asset = asset!("/assets/icons/city_church.png");
@@ -556,15 +556,21 @@ struct TravelerCardView {
     /// Компас лежит в сумке: кнопку можно нажать.
     compass_ready: bool,
     locations: Vec<TravelerTripView>,
-    /// Что путешественник принёс и ждёт, пока это заберут.
-    loot_text: String,
+    /// Что путешественник принёс и ждёт, пока это заберут, — квадратами.
+    loot: Vec<TravelerLootView>,
     payout_text: String,
     claim_ready: bool,
     empty_trip: bool,
-    /// Снаряжение: три слота, пока Дом странников не построен — пусто.
+    /// Снаряжение: семь слотов в порядке `EquipSlot::ALL`.
     gear: Vec<TravelerGearView>,
+    /// Что можно надеть в каждый слот (индекс — номер слота).
+    gear_picks: Vec<Vec<TravelerGearPickView>>,
+    /// Сколько вещей сета странника надето и что это даёт.
+    set_text: String,
+    set_active: bool,
+    /// Сколько вещей сета надето — для карточки предмета.
+    set_pieces: u32,
     gear_hint: String,
-    gear_picks: Vec<TravelerGearPickView>,
 }
 
 /// Один слот снаряжения путешественника.
@@ -572,8 +578,10 @@ struct TravelerCardView {
 struct TravelerGearView {
     slot: usize,
     label: String,
-    item_id: Option<String>,
-    name: String,
+    short: String,
+    item: Option<items::Item>,
+    /// Сколько таких вещей лежит в сумке — для карточки предмета.
+    bag_count: u32,
 }
 
 /// Вещь из сумки, которую можно надеть на путешественника.
@@ -581,6 +589,15 @@ struct TravelerGearView {
 struct TravelerGearPickView {
     item_id: String,
     name: String,
+    slot: items::EquipSlot,
+    count: u32,
+}
+
+/// Добыча странника: предмет и количество для квадрата с бейджем.
+#[derive(Clone, PartialEq)]
+struct TravelerLootView {
+    item_id: String,
+    count: u32,
 }
 
 /// Локация, куда можно отправить путешественника.
@@ -1822,16 +1839,9 @@ fn GuildUpgradeRow(
 #[component]
 fn TravelersHouseScreen(state: Signal<GameState>, view: GameState) -> Element {
     let built = city::traveler_house_built(&view);
-    let npc = rsx! {
-        div { class: "city-npc",
-            span { class: "city-npc-avatar", "🏠" }
-            span { class: "city-npc-name", "{i18n::t(\"traveler_house.title\")}" }
-        }
-    };
 
     if built {
         return rsx! {
-            {npc}
             TravelerList { state, view: view.clone(), with_gear: true }
         };
     }
@@ -1840,7 +1850,6 @@ fn TravelersHouseScreen(state: Signal<GameState>, view: GameState) -> Element {
     // дверь ещё закрыта, и показывать стройку нечего.
     if !city::traveler_house_land(&view) {
         return rsx! {
-            {npc}
             div { class: "city-card",
                 div { class: "city-row muted",
                     span { "{i18n::t(\"err.traveler_house_not_offered\")}" }
@@ -1875,7 +1884,6 @@ fn TravelersHouseScreen(state: Signal<GameState>, view: GameState) -> Element {
     );
 
     rsx! {
-        {npc}
         div { class: "city-card",
             div { class: "city-row",
                 span { class: "city-upgrade-name", "{stage_name}" }
@@ -2724,22 +2732,14 @@ fn traveler_card(
             }
         })
         .collect();
-    let loot_parts: Vec<String> = traveler
+    let loot: Vec<TravelerLootView> = traveler
         .carried
         .iter()
-        .map(|(item_id, quantity)| {
-            format!(
-                "{} {}",
-                ingredient_name(item_id),
-                format_num(*quantity as f64)
-            )
+        .map(|(item_id, count)| TravelerLootView {
+            item_id: item_id.clone(),
+            count: *count,
         })
         .collect();
-    let loot_text = if loot_parts.is_empty() {
-        String::new()
-    } else {
-        i18n::tf("traveler.carrying", &[&loot_parts.join(", ")])
-    };
     let payout_text = if traveler.payout > 0.5 {
         let share = city::traveler_loot_value(&traveler.carried);
         let percent = if share > 0.0 {
@@ -2756,47 +2756,74 @@ fn traveler_card(
     };
     let claim_ready = !traveler.carried.is_empty() || traveler.payout > 1e-9;
     let gear = if with_gear {
-        let gear_slots = [
-            "traveler.gear_weapon",
-            "traveler.gear_armor",
-            "traveler.gear_trinket",
-        ];
-        gear_slots
+        items::EquipSlot::ALL
             .iter()
             .enumerate()
-            .map(|(slot, label)| {
-                let item_id = traveler.gear.get(slot).and_then(|id| id.clone());
-                let name = item_id
-                    .as_deref()
-                    .and_then(items::item)
-                    .map(|item| item.name().to_string())
-                    .unwrap_or_else(|| i18n::t("traveler.gear_empty").to_string());
+            .map(|(slot, equip_slot)| {
+                let item_id = traveler.gear_at(slot);
                 TravelerGearView {
                     slot,
-                    label: i18n::t(label).to_string(),
-                    item_id,
-                    name,
+                    label: equip_slot.label().to_string(),
+                    short: super::inventory::slot_short(*equip_slot).to_string(),
+                    item: item_id.and_then(items::item).cloned(),
+                    bag_count: item_id.map(|id| view.item_count(id)).unwrap_or_default(),
                 }
             })
             .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
-    let mut gear_picks: Vec<TravelerGearPickView> = if with_gear {
-        view.inventory
+    // Для каждого квадрата — только те вещи из сумки, что в него встают.
+    let mut gear_picks: Vec<Vec<TravelerGearPickView>> =
+        vec![Vec::new(); items::EquipSlot::ALL.len()];
+    if with_gear {
+        let mut pool: Vec<TravelerGearPickView> = view
+            .inventory
             .iter()
             .filter(|(_, count)| **count > 0)
-            .filter_map(|(id, _)| {
-                items::item(id).map(|item| TravelerGearPickView {
-                    item_id: id.clone(),
-                    name: item.name().to_string(),
+            .filter_map(|(id, count)| {
+                items::item(id).and_then(|item| {
+                    item.slot.map(|slot| TravelerGearPickView {
+                        item_id: id.clone(),
+                        name: item.name().to_string(),
+                        slot,
+                        count: *count,
+                    })
                 })
             })
-            .collect()
+            .collect();
+        pool.sort_by(|left, right| left.name.cmp(&right.name));
+        for (slot, equip_slot) in items::EquipSlot::ALL.iter().enumerate() {
+            gear_picks[slot] = pool
+                .iter()
+                .filter(|pick| traveler_gear_fits(pick.slot, *equip_slot))
+                .cloned()
+                .collect();
+        }
+    }
+    let set_pieces = traveler
+        .gear
+        .iter()
+        .flatten()
+        .filter(|item_id| {
+            items::item(item_id)
+                .and_then(|item| item.stats.set_id.as_deref())
+                .map(|set_id| set_id == balance::TRAVELER_SET_ID)
+                .unwrap_or(false)
+        })
+        .count();
+    let set_active = set_pieces >= balance::TRAVELER_SET_PIECES;
+    let set_text = if set_active {
+        i18n::t("set.traveler.active").to_string()
     } else {
-        Vec::new()
+        i18n::tf(
+            "set.traveler.partial",
+            &[
+                &set_pieces.to_string(),
+                &balance::TRAVELER_SET_PIECES.to_string(),
+            ],
+        )
     };
-    gear_picks.sort_by(|left, right| left.name.cmp(&right.name));
     let gear_hint = if city::traveler_house_built(view) {
         i18n::t("traveler.gear_hint").to_string()
     } else {
@@ -2812,13 +2839,119 @@ fn traveler_card(
         compass_wanted,
         compass_ready,
         locations,
-        loot_text,
+        loot,
         payout_text,
         claim_ready,
         empty_trip: traveler.last_empty && !claim_ready,
         gear,
-        gear_hint,
         gear_picks,
+        set_text,
+        set_active,
+        set_pieces: set_pieces as u32,
+        gear_hint,
+    }
+}
+
+/// Встаёт ли вещь в квадрат снаряжения: аксессуары — в любой из двух.
+fn traveler_gear_fits(item_slot: items::EquipSlot, target: items::EquipSlot) -> bool {
+    if item_slot == target {
+        return true;
+    }
+    let accessory = matches!(
+        target,
+        items::EquipSlot::Accessory1 | items::EquipSlot::Accessory2
+    );
+    accessory && item_slot == items::EquipSlot::Accessory1
+}
+
+/// Снаряжение в заданном квадрате; пустой слот — с подписью.
+fn gear_at(card: &TravelerCardView, slot: items::EquipSlot) -> TravelerGearView {
+    card.gear
+        .iter()
+        .find(|gear| gear.slot == slot.index())
+        .cloned()
+        .unwrap_or(TravelerGearView {
+            slot: slot.index(),
+            label: slot.label().to_string(),
+            short: slot_short(slot).to_string(),
+            item: None,
+            bag_count: 0,
+        })
+}
+
+/// Надевает вещь из сумки в выбранный квадрат снаряжения странника.
+fn equip_traveler_item(
+    state: Signal<GameState>,
+    index: usize,
+    slot: usize,
+    item_id: String,
+    message: Signal<String>,
+    gear_mode: Signal<u8>,
+) {
+    let mut state = state;
+    let mut message = message;
+    let mut gear_mode = gear_mode;
+    let outcome = {
+        let mut guard = state.write();
+        city::equip_traveler_gear(&mut guard, index, slot, &item_id)
+    };
+    match outcome {
+        Ok(()) => gear_mode.set(0),
+        Err(error) => message.set(error.text().to_string()),
+    }
+    refresh_view(state);
+}
+
+/// Квадрат снаряжения странника — как `EquipmentSlot` в сумке героя.
+#[component]
+fn TravelerGearCell(
+    gear: TravelerGearView,
+    active: bool,
+    slot_signal: Signal<usize>,
+    mode_signal: Signal<u8>,
+    pick_signal: Signal<Option<String>>,
+) -> Element {
+    let mut slot_signal = slot_signal;
+    let mut mode_signal = mode_signal;
+    let mut pick_signal = pick_signal;
+    let slot = gear.slot;
+    let worn = gear.item.is_some();
+    let class = if active {
+        "equip-cell selected"
+    } else {
+        "equip-cell"
+    };
+    let label = gear.label.clone();
+    let short = gear.short.clone();
+    let item = gear.item.clone();
+
+    rsx! {
+        button {
+            class: "{class}",
+            onclick: move |_| {
+                // Повторный тап по открытому квадрату закрывает карточку.
+                if slot_signal() == slot && mode_signal() != 0 {
+                    mode_signal.set(0);
+                    return;
+                }
+                slot_signal.set(slot);
+                mode_signal.set(if worn { 2 } else { 1 });
+                pick_signal.set(None);
+            },
+            div { class: "equip-cell-icon",
+                if let Some(item) = item.clone() {
+                    ItemIcon { item, class: "equip-icon".to_string() }
+                } else {
+                    "{short}"
+                }
+            }
+            div { class: "equip-cell-label", "{label}" }
+            if let Some(item) = item.clone() {
+                div { class: "equip-cell-name", "{item.name()}" }
+            } else {
+                div { class: "equip-cell-name empty", "{i18n::t(\"bag.empty_slot\")}" }
+            }
+        }
     }
 }
 
@@ -2827,10 +2960,18 @@ fn traveler_card(
 fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) -> Element {
     let mut state = state;
     let mut message = use_signal(String::new);
-    let mut gear_slot = use_signal(|| 0usize);
-    // Сумка открывается тапом по квадрату снаряжения и прячется после выбора.
-    let mut gear_pick_open = use_signal(|| false);
+    // Какой квадрат снаряжения открыт: 0 — ничего, 1 — сумка, 2 — надетое.
+    let gear_slot = use_signal(|| 0usize);
+    let mut gear_mode = use_signal(|| 0u8);
+    let mut pick_item = use_signal(|| None::<String>);
+    let mut loot_open = use_signal(|| None::<String>);
     let message_text = message();
+    // Вещи из сумки, которые встают в выбранный квадрат снаряжения.
+    let bag_picks: Vec<TravelerGearPickView> = card
+        .gear_picks
+        .get(gear_slot())
+        .cloned()
+        .unwrap_or_default();
     rsx! {
         div { class: "traveler-card",
             div { class: "city-row",
@@ -2866,8 +3007,57 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
             }
             if card.claim_ready {
                 div { class: "traveler-loot",
-                    if !card.loot_text.is_empty() {
-                        span { class: "city-row-muted", "{card.loot_text}" }
+                    // Добыча — квадратами, как в сумке: иконка и количество
+                    // в правом верхнем углу. Тап открывает описание вещи.
+                    if !card.loot.is_empty() {
+                        div { class: "inv-grid traveler-loot-grid",
+                            for loot in card.loot.iter() {
+                                {
+                                    let item_id = loot.item_id.clone();
+                                    let selected = loot_open() == Some(item_id.clone());
+                                    rsx! {
+                                        button {
+                                            class: if selected { "inv-item selected" } else { "inv-item" },
+                                            onclick: move |_| {
+                                                let next = if loot_open() == Some(item_id.clone()) {
+                                                    None
+                                                } else {
+                                                    Some(item_id.clone())
+                                                };
+                                                loot_open.set(next);
+                                            },
+                                            if let Some(item) = items::item(&loot.item_id) {
+                                                ItemIcon {
+                                                    item: item.clone(),
+                                                    class: "inv-item-icon".to_string(),
+                                                }
+                                            }
+                                            span { class: "inv-badge", "{loot.count}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(item_id) = loot_open() {
+                            if let Some(item) = items::item(&item_id) {
+                                {
+                                    let count = card
+                                        .loot
+                                        .iter()
+                                        .find(|loot| loot.item_id == item_id)
+                                        .map(|loot| loot.count)
+                                        .unwrap_or(1);
+                                    rsx! {
+                                        ItemDetails {
+                                            item: item.clone(),
+                                            count,
+                                            set_pieces: 0,
+                                            on_close: move |_| loot_open.set(None),
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     if !card.payout_text.is_empty() {
                         span { class: "city-row-muted", "{card.payout_text}" }
@@ -2896,92 +3086,168 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                 div { class: "traveler-gear",
                     div { class: "city-row muted",
                         span { "{i18n::t(\"traveler.gear\")}" }
-                    }
-                    // Квадраты снаряжения как в сумке: тап открывает выбор
-                    // вещи, повторный тап по надетой — снимает.
-                    div { class: "traveler-gear-grid",
-                        for gear in card.gear.iter() {
-                            {
-                                let slot = gear.slot;
-                                let label = gear.label.clone();
-                                let worn_name = gear.name.clone();
-                                let active = if gear_slot() == slot {
-                                    " traveler-gear-tile active"
-                                } else {
-                                    " traveler-gear-tile"
-                                };
-                                rsx! {
-                                    button {
-                                        class: "{active}",
-                                        onclick: move |_| {
-                                            let current = gear_slot();
-                                            gear_slot.set(slot);
-                                            gear_pick_open.set(current != slot);
-                                        },
-                                        span { class: "traveler-gear-label", "{label}" }
-                                        span { class: "traveler-gear-name", "{worn_name}" }
-                                    }
-                                }
-                            }
+                        span {
+                            class: if card.set_active { "equip-set-status active" } else { "equip-set-status" },
+                            "{card.set_text}"
                         }
                     }
-                    // Сумка игрока: открывается между снаряжением и локациями.
-                    if gear_pick_open() {
+                    // Снаряжение странника — та же сетка, что у героя в сумке:
+                    // голова, аксессуар, тело и спина, руки, ноги, аксессуар.
+                    div { class: "equip-grid",
+                        TravelerGearCell {
+                            gear: gear_at(&card, items::EquipSlot::Head),
+                            active: gear_slot() == items::EquipSlot::Head.index(),
+                            slot_signal: gear_slot,
+                            mode_signal: gear_mode,
+                            pick_signal: pick_item,
+                        }
+                        TravelerGearCell {
+                            gear: gear_at(&card, items::EquipSlot::Accessory1),
+                            active: gear_slot() == items::EquipSlot::Accessory1.index(),
+                            slot_signal: gear_slot,
+                            mode_signal: gear_mode,
+                            pick_signal: pick_item,
+                        }
+                        div { class: "equip-pair",
+                            TravelerGearCell {
+                                gear: gear_at(&card, items::EquipSlot::Body),
+                                active: gear_slot() == items::EquipSlot::Body.index(),
+                                slot_signal: gear_slot,
+                                mode_signal: gear_mode,
+                                pick_signal: pick_item,
+                            }
+                            TravelerGearCell {
+                                gear: gear_at(&card, items::EquipSlot::Back),
+                                active: gear_slot() == items::EquipSlot::Back.index(),
+                                slot_signal: gear_slot,
+                                mode_signal: gear_mode,
+                                pick_signal: pick_item,
+                            }
+                        }
+                        TravelerGearCell {
+                            gear: gear_at(&card, items::EquipSlot::Hand),
+                            active: gear_slot() == items::EquipSlot::Hand.index(),
+                            slot_signal: gear_slot,
+                            mode_signal: gear_mode,
+                            pick_signal: pick_item,
+                        }
+                        TravelerGearCell {
+                            gear: gear_at(&card, items::EquipSlot::Feet),
+                            active: gear_slot() == items::EquipSlot::Feet.index(),
+                            slot_signal: gear_slot,
+                            mode_signal: gear_mode,
+                            pick_signal: pick_item,
+                        }
+                        TravelerGearCell {
+                            gear: gear_at(&card, items::EquipSlot::Accessory2),
+                            active: gear_slot() == items::EquipSlot::Accessory2.index(),
+                            slot_signal: gear_slot,
+                            mode_signal: gear_mode,
+                            pick_signal: pick_item,
+                        }
+                    }
+                    // Сумка игрока квадратиками: тап по вещи показывает её
+                    // описание, «Надеть» кладёт вещь в выбранный квадрат.
+                    if gear_mode() == 1 {
                         div { class: "traveler-gear-bag",
-                            if card.gear_picks.is_empty() {
+                            if bag_picks.is_empty() {
                                 div { class: "city-row muted",
                                     span { "{i18n::t(\"traveler.gear_none\")}" }
                                 }
                             } else {
-                                for pick in card.gear_picks {
-                                    {
-                                        let item_id = pick.item_id.clone();
-                                        let name = pick.name.clone();
-                                        rsx! {
-                                            button {
-                                                class: "city-btn small",
-                                                onclick: move |_| {
-                                                    let slot = gear_slot();
-                                                    let outcome = {
-                                                        let mut guard = state.write();
-                                                        city::equip_traveler_gear(&mut guard, index, slot, &item_id)
-                                                    };
-                                                    match outcome {
-                                                        Ok(()) => gear_pick_open.set(false),
-                                                        Err(error) => {
-                                                            message.set(error.text().to_string())
-                                                        }
+                                div { class: "inv-grid",
+                                    for pick in bag_picks.iter() {
+                                        {
+                                            let pick_id = pick.item_id.clone();
+                                            let selected = pick_item() == Some(pick_id.clone());
+                                            rsx! {
+                                                if let Some(item) = items::item(&pick.item_id) {
+                                                    ItemCell {
+                                                        key: "{pick_id}",
+                                                        item: item.clone(),
+                                                        count: pick.count,
+                                                        selected,
+                                                        on_select: move |item_id: String| {
+                                                            pick_item.set(Some(item_id));
+                                                        },
+                                                        on_double_click: move |item_id: String| {
+                                                            equip_traveler_item(
+                                                                state,
+                                                                index,
+                                                                gear_slot(),
+                                                                item_id,
+                                                                message,
+                                                                gear_mode,
+                                                            );
+                                                        },
                                                     }
-                                                    refresh_view(state);
-                                                },
-                                                "{name}"
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    // Надетую вещь снимают тапом по её квадрату ещё раз.
-                    for gear in card.gear.clone() {
-                        if gear.item_id.is_some() && gear_slot() == gear.slot {
-                            {
-                                let slot = gear.slot;
-                                rsx! {
-                                    button {
-                                        class: "city-btn small",
-                                        onclick: move |_| {
-                                            let outcome = {
-                                                let mut guard = state.write();
-                                                city::unequip_traveler_gear(&mut guard, index, slot)
-                                            };
-                                            if let Err(error) = outcome {
-                                                message.set(error.text().to_string());
-                                            }
-                                            refresh_view(state);
-                                        },
-                                        "{i18n::t(\"traveler.gear_take\")}"
+                        // Карточка выбранной вещи — под сеткой, как в сумке.
+                        if let Some(item_id) = pick_item() {
+                            if let Some(item) = items::item(&item_id) {
+                                {
+                                    let count = bag_picks
+                                        .iter()
+                                        .find(|pick| pick.item_id == item_id)
+                                        .map(|pick| pick.count)
+                                        .unwrap_or(1);
+                                    rsx! {
+                                        ItemDetails {
+                                            item: item.clone(),
+                                            count,
+                                            set_pieces: card.set_pieces,
+                                            on_close: move |_| pick_item.set(None),
+                                        }
+                                        button {
+                                            class: "city-btn",
+                                            onclick: move |_| {
+                                                equip_traveler_item(
+                                                    state,
+                                                    index,
+                                                    gear_slot(),
+                                                    item_id.clone(),
+                                                    message,
+                                                    gear_mode,
+                                                );
+                                                pick_item.set(None);
+                                            },
+                                            "{i18n::t(\"btn.equip\")}"
+                                        }
                                     }
+                                }
+                            }
+                        }
+                    }
+                    // Надетую вещь показывает карточка с «Снять».
+                    if gear_mode() == 2 {
+                        if let Some(gear) = card.gear.iter().find(|gear| gear.slot == gear_slot()) {
+                            if let Some(item) = gear.item.clone() {
+                                ItemDetails {
+                                    item,
+                                    count: gear.bag_count,
+                                    set_pieces: card.set_pieces,
+                                    on_close: move |_| gear_mode.set(0),
+                                }
+                                button {
+                                    class: "city-btn",
+                                    onclick: move |_| {
+                                        let outcome = {
+                                            let mut guard = state.write();
+                                            city::unequip_traveler_gear(&mut guard, index, gear_slot())
+                                        };
+                                        if let Err(error) = outcome {
+                                            message.set(error.text().to_string());
+                                        }
+                                        gear_mode.set(0);
+                                        refresh_view(state);
+                                    },
+                                    "{i18n::t(\"btn.unequip\")}"
                                 }
                             }
                         }

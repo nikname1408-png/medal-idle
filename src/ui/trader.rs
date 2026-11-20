@@ -664,7 +664,10 @@ fn TradeRow(
     on_select: EventHandler<String>,
 ) -> Element {
     let locked = view.smith_level() < items::item_unlock_level(&item.id);
-    let buy = trader::sell_price_for_good(&item, &good, view.trade_bonus);
+    // Цена покупки — ровно та, что спишет `trader::buy`: с наценкой рынка
+    // и множителем за неразблокированный товар. Раньше здесь стояла цена
+    // витрины (`sell_price_for_good`), и итог в карточке не сходился с кассой.
+    let buy = trader::buy_price_for(&item, good.demand, good.supply, view.smith_level());
     let sell = trader::sell_price(&item, good.demand, good.supply, view.trade_bonus)
         * view.debt_sell_multiplier();
     let stock = match mode {
@@ -740,16 +743,11 @@ fn ItemCard(
     };
 
     let locked = view.smith_level() < items::item_unlock_level(&item.id);
-    let buy = trader::sell_price_for_good(&item, good, view.trade_bonus);
+    let buy = trader::buy_price_for(&item, good.demand, good.supply, view.smith_level());
     let sell = trader::sell_price(&item, good.demand, good.supply, view.trade_bonus)
         * view.debt_sell_multiplier();
-    // Для заблокированного товара цена покупки уже умножена на 5, поэтому
-    // маржу тоже считаем от неё, иначе карточка занижает её в 5 раз.
-    let margin = if locked {
-        (buy - sell).max(0.0)
-    } else {
-        trader::margin(&item, good.demand, good.supply, view.trade_bonus)
-    };
+    // Маржа считается от той же цены, что видит игрок в карточке.
+    let margin = (buy - sell).max(0.0);
     let status = good.status();
     let owned = view.item_count(&item.id);
 
@@ -860,9 +858,6 @@ fn ItemCard(
             }
             if locked {
                 div { class: "trade-locked", "{i18n::t(\"trade.locked_price\")}" }
-            }
-            if good.is_reserve() {
-                div { class: "trade-locked", "{i18n::t(\"trade.transient_price\")}" }
             }
             div { class: "trade-line",
                 span { "{i18n::t(\"trade.sell_price\")}" }
@@ -1036,7 +1031,7 @@ fn is_available(view: &GameState, mode: Mode, good: &GoodState) -> bool {
     };
     match mode {
         Mode::Buy => {
-            let price = trader::buy_price(item, good.demand, good.supply);
+            let price = trader::buy_price_for(item, good.demand, good.supply, view.smith_level());
             good.stock > 0 && view.gold + 1e-9 >= price && view.can_add_item(&good.item_id, 1)
         }
         Mode::Sell => {
@@ -1050,7 +1045,7 @@ fn is_available(view: &GameState, mode: Mode, good: &GoodState) -> bool {
 fn row_reason(view: &GameState, mode: Mode, item: &Item, good: &GoodState) -> Option<&'static str> {
     match mode {
         Mode::Buy => {
-            let price = trader::buy_price(item, good.demand, good.supply);
+            let price = trader::buy_price_for(item, good.demand, good.supply, view.smith_level());
             if good.stock == 0 {
                 Some(i18n::t("trade.reason.no_stock"))
             } else if view.gold + 1e-9 < price {

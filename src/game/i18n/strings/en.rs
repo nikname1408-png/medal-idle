@@ -550,7 +550,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("trade.hint", "Tap a good to open its card."),
     ("trade.rarity", "[rarity: {}]"),
     ("trade.appearance", "Appearance chance:"),
-    ("trade.buy_price", "Buy price:"),
+    ("trade.buy_price", "Buy price (per item):"),
     ("trade.sell_price", "Sell price:"),
     ("trade.margin", "{} gold   (markup: {})"),
     ("trade.demand", "Demand:"),
@@ -1321,6 +1321,12 @@ pub static WORLD: &[(&str, &str)] = &[
         "Beggar's set active (4/9): +100% manual gathering.",
     ),
     ("set.beggar.partial", "Beggar's set: {} / 4."),
+    ("set.traveler.name", "Traveler's set"),
+    (
+        "set.traveler.active",
+        "Traveler's set active (5/7): +15% rare loot chance, +20% trip speed and -2 minutes per trip.",
+    ),
+    ("set.traveler.partial", "Traveler's set: {} / 5."),
     // ---------- Events ----------
     ("event.bulk.title", "Wholesaler"),
     (

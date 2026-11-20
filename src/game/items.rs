@@ -107,6 +107,15 @@ impl EquipSlot {
             Self::Accessory2 => i18n::t("slot.accessory2"),
         }
     }
+
+    /// Номер слота в порядке `ALL` — по нему снаряжение странника лежит
+    /// в общем списке, как экипировка героя.
+    pub fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|slot| *slot == self)
+            .unwrap_or_default()
+    }
 }
 
 /// Бонусы предмета. `None` — бонуса нет.
@@ -353,11 +362,13 @@ fn build_catalog() -> Vec<Item> {
         item_def("winter_gloves", Category::Gear, 91, Some(EquipSlot::Hand)).with_stats(
             ItemStats {
                 expedition_energy_discount: Some(10.0),
+                set_id: Some("traveler".to_string()),
                 ..ItemStats::default()
             },
         ),
         item_def("jacket", Category::Gear, 187, Some(EquipSlot::Body)).with_stats(ItemStats {
             expedition_energy_discount: Some(15.0),
+            set_id: Some("traveler".to_string()),
             ..ItemStats::default()
         }),
         // ---------- Инструменты для фермы ----------
@@ -410,6 +421,7 @@ fn build_catalog() -> Vec<Item> {
         item_def("wanderers_hood", Category::Gear, 88, Some(EquipSlot::Head)).with_stats(
             ItemStats {
                 expedition_bonus: Some(8.0),
+                set_id: Some("traveler".to_string()),
                 ..ItemStats::default()
             },
         ),
@@ -500,6 +512,7 @@ fn build_catalog() -> Vec<Item> {
             expedition_bonus: Some(15.0),
             expedition_energy_discount: Some(8.0),
             trade_bonus: Some(5.0),
+            set_id: Some("traveler".to_string()),
             ..ItemStats::default()
         }),
         // ---------- Перчатки ----------
@@ -553,6 +566,7 @@ fn build_catalog() -> Vec<Item> {
             ItemStats {
                 expedition_energy_discount: Some(10.0),
                 gather_bonus: Some(3.0),
+                set_id: Some("traveler".to_string()),
                 ..ItemStats::default()
             },
         ),
@@ -583,14 +597,15 @@ fn build_catalog() -> Vec<Item> {
         item_def(
             "silver_ring",
             Category::Jewelry,
-            187,
+            600,
             Some(EquipSlot::Accessory1),
         )
         .with_stats(ItemStats {
-            trade_bonus: Some(3.0),
+            expedition_energy_discount: Some(5.0),
+            set_id: Some("traveler".to_string()),
             ..ItemStats::default()
         })
-        .with_fire_cost(15),
+        .with_fire_cost(20),
         item_def(
             "trader_ring",
             Category::Jewelry,
@@ -623,6 +638,7 @@ fn build_catalog() -> Vec<Item> {
         .with_stats(ItemStats {
             expedition_bonus: Some(10.0),
             expedition_energy_discount: Some(5.0),
+            set_id: Some("traveler".to_string()),
             ..ItemStats::default()
         })
         .with_fire_cost(15),
@@ -1063,8 +1079,8 @@ fn build_recipes() -> Vec<Recipe> {
             "silver_ring",
             "silver_ring",
             1,
-            15,
-            vec![need("silver_ingot", 1)],
+            20,
+            vec![need("silver_ingot", 3)],
         ),
         make_recipe(
             "trader_ring",
@@ -1408,7 +1424,7 @@ mod tests {
             ("iron_boots", 150),
             ("iron_shovel", 20),
             ("hammer", 15),
-            ("silver_ring", 15),
+            ("silver_ring", 20),
             ("trader_ring", 15),
             ("miner_amulet", 15),
             ("wanderer_pendant", 15),
@@ -1482,7 +1498,7 @@ mod tests {
             ("wooden_shovel", 56),
             ("iron_shovel", 188),
             ("hammer", 80),
-            ("silver_ring", 187),
+            ("silver_ring", 600),
             ("trader_ring", 206),
             ("miner_amulet", 206),
             ("wanderer_pendant", 377),

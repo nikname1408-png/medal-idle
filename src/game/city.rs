@@ -264,8 +264,39 @@ pub struct Traveler {
     pub payout: f64,
     /// Если поход пустой — аванс сгорел (для письма и карточки).
     pub last_empty: bool,
-    /// Снаряжение из Дома странников: Оружие / Броня / Аксессуар.
-    pub gear: [Option<String>; 3],
+    /// Снаряжение странника — те же семь слотов, что у героя.
+    pub gear: Vec<Option<String>>,
+}
+
+/// Сколько слотов снаряжения у странника: голова, тело, спина, руки,
+/// ноги и два аксессуара — порядок как в `EquipSlot::ALL`.
+pub const TRAVELER_GEAR_SLOTS: usize = items::EquipSlot::ALL.len();
+
+impl Traveler {
+    /// Вещь в слоте. Старые сохранения короче нового списка, поэтому
+    /// недостающие слоты читаются как пустые.
+    pub fn gear_at(&self, slot: usize) -> Option<&str> {
+        self.gear.get(slot).and_then(|item| item.as_deref())
+    }
+
+    /// Достраивает список снаряжения до семи слотов: так старые
+    /// сохранения с тремя слотами открываются без потери вещей.
+    ///
+    /// В старых сохранениях квадраты значили «оружие / броня / аксессуар»,
+    /// теперь порядок как у героя, поэтому три вещи переезжают в руки,
+    /// тело и первый аксессуар.
+    pub fn normalize_gear(&mut self) {
+        if self.gear.len() == 3 {
+            let old = std::mem::take(&mut self.gear);
+            let mut gear = vec![None; TRAVELER_GEAR_SLOTS];
+            gear[items::EquipSlot::Hand.index()] = old[0].clone();
+            gear[items::EquipSlot::Body.index()] = old[1].clone();
+            gear[items::EquipSlot::Accessory1.index()] = old[2].clone();
+            self.gear = gear;
+            return;
+        }
+        self.gear.resize(TRAVELER_GEAR_SLOTS, None);
+    }
 }
 
 impl Default for Traveler {
@@ -281,7 +312,7 @@ impl Default for Traveler {
             carried: Vec::new(),
             payout: 0.0,
             last_empty: false,
-            gear: [None, None, None],
+            gear: vec![None; TRAVELER_GEAR_SLOTS],
         }
     }
 }
@@ -2630,6 +2661,11 @@ pub fn ensure_travelers(state: &mut GameState) {
     if !state.city.unlocked {
         return;
     }
+    // Старые сохранения держали три слота снаряжения — достраиваем их
+    // до семи, прежде чем что-то показывать.
+    for traveler in state.city.travelers.iter_mut() {
+        traveler.normalize_gear();
+    }
     if state.city.travelers.len() >= balance::TRAVELER_COUNT {
         return;
     }
@@ -2751,9 +2787,14 @@ pub fn send_traveler(
         return Err(TravelerError::NotEnoughGold);
     }
     state.gold -= location.advance;
+    let gear = traveler_gear_bonus(state, index);
     let timestamp = now(state);
+    // Сет странника ускоряет сборы: время похода режется на процент
+    // и ещё на фиксированные минуты, но не короче минуты.
+    let seconds =
+        (location.minutes * 60.0 * (1.0 - gear.time.clamp(0.0, 0.5)) - gear.time_cut).max(60.0);
     let traveler = &mut state.city.travelers[index];
-    traveler.returns_at = timestamp + location.minutes * 60.0;
+    traveler.returns_at = timestamp + seconds;
     traveler.trip = location.id.to_string();
     traveler.advance = location.advance;
     traveler.carried.clear();
@@ -2765,13 +2806,20 @@ pub fn send_traveler(
 /// Снаряжение путешественника даёт прибавку к луту и к доплате.
 ///
 /// `gather_bonus` и `expedition_bonus` предмета работают на всю добычу,
-/// `trade_bonus`/`gold_bonus` — на доплату за лут.
+/// `trade_bonus`/`gold_bonus` — на доплату за лут. Пять вещей сета
+/// странника добавляют редкий лут, скорость и минус две минуты пути.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TravelerGearBonus {
     /// Прибавка к любой добыче.
     pub all: f64,
     /// Прибавка к доплате за лут.
     pub payout: f64,
+    /// Прибавка к шансу редкого лута (0.15 = +15%).
+    pub rare: f64,
+    /// Ускорение похода (0.2 = −20% времени).
+    pub time: f64,
+    /// Сколько секунд срезать с похода сверх процента.
+    pub time_cut: f64,
 }
 
 /// Считает бонусы снаряжения путешественника.
@@ -2780,17 +2828,24 @@ pub fn traveler_gear_bonus(state: &GameState, index: usize) -> TravelerGearBonus
     let Some(traveler) = state.city.travelers.get(index) else {
         return bonus;
     };
+    let step = balance::TRAVELER_GEAR_LOOT_STEP / 100.0;
+    let mut set_pieces = 0;
     for item_id in traveler.gear.iter().flatten() {
         let Some(item) = items::item(item_id) else {
             continue;
         };
         let stats = &item.stats;
-        let step = balance::TRAVELER_GEAR_LOOT_STEP / 100.0;
+        if stats.set_id.as_deref() == Some(balance::TRAVELER_SET_ID) {
+            set_pieces += 1;
+        }
         if let Some(value) = stats.gather_bonus {
             bonus.all += value as f64 * step;
         }
         if let Some(value) = stats.expedition_bonus {
             bonus.all += value as f64 * step;
+        }
+        if let Some(value) = stats.rare_loot_bonus {
+            bonus.rare += value as f64 / 100.0;
         }
         if let Some(value) = stats.trade_bonus {
             bonus.payout += value as f64 / 100.0;
@@ -2798,6 +2853,11 @@ pub fn traveler_gear_bonus(state: &GameState, index: usize) -> TravelerGearBonus
         if let Some(value) = stats.gold_bonus {
             bonus.payout += value as f64 / 100.0;
         }
+    }
+    if set_pieces >= balance::TRAVELER_SET_PIECES {
+        bonus.rare += balance::TRAVELER_SET_RARE_BONUS / 100.0;
+        bonus.time += balance::TRAVELER_SET_SPEED_BONUS / 100.0;
+        bonus.time_cut += balance::TRAVELER_SET_TIME_CUT_SECS;
     }
     bonus
 }
@@ -2847,7 +2907,7 @@ pub fn tick_travelers(state: &mut GameState) {
             continue;
         }
         let gear = traveler_gear_bonus(state, index);
-        let mut loot = roll_traveler_loot(state, &trip);
+        let mut loot = roll_traveler_loot(state, &trip, gear.rare);
         for (_, quantity) in loot.iter_mut() {
             let share = gear_share(gear);
             *quantity = ((*quantity as f64) * (1.0 + share)).round() as u32;
@@ -2922,7 +2982,10 @@ pub fn claim_traveler_loot(state: &mut GameState, index: usize) -> Result<(), Tr
 }
 
 /// Надевает снаряжение на путешественника — только когда Дом странников
-/// построен, предмет лежит в сумке и не надет на героя.
+/// построен, предмет лежит в сумке и подходит к выбранному квадрату.
+///
+/// Слоты те же семь, что у героя, поэтому у странника можно собрать
+/// полноценный сет. Вещь из занятого квадрата сначала возвращается в сумку.
 pub fn equip_traveler_gear(
     state: &mut GameState,
     index: usize,
@@ -2932,17 +2995,43 @@ pub fn equip_traveler_gear(
     if !traveler_house_built(state) {
         return Err(TravelerError::BadTraveler);
     }
-    if slot >= 3 {
+    if slot >= TRAVELER_GEAR_SLOTS {
         return Err(TravelerError::BadTraveler);
     }
-    let Some(traveler) = state.city.travelers.get(index) else {
-        return Err(TravelerError::BadTraveler);
+    let Some(item) = items::item(item_id) else {
+        return Err(TravelerError::MissingGear);
     };
-    if traveler.gear.iter().flatten().any(|id| id == item_id) {
-        return Err(TravelerError::GearSlotTaken);
+    let Some(item_slot) = item.slot else {
+        return Err(TravelerError::MissingGear);
+    };
+    let wanted = items::EquipSlot::ALL[slot];
+    let accessory = matches!(
+        wanted,
+        items::EquipSlot::Accessory1 | items::EquipSlot::Accessory2
+    );
+    let fits = item_slot == wanted || (accessory && item_slot == items::EquipSlot::Accessory1);
+    if !fits {
+        return Err(TravelerError::MissingGear);
     }
     if state.item_count(item_id) == 0 {
         return Err(TravelerError::MissingGear);
+    }
+    if state
+        .city
+        .travelers
+        .get(index)
+        .map(|traveler| traveler.gear.iter().flatten().any(|id| id == item_id))
+        .unwrap_or(true)
+    {
+        return Err(TravelerError::GearSlotTaken);
+    }
+    // Занятый квадрат освобождаем в сумку, а не выбрасываем вещь.
+    let previous = state.city.travelers[index].gear[slot].take();
+    if let Some(previous) = &previous {
+        if !state.add_item(previous, 1) {
+            state.city.travelers[index].gear[slot] = Some(previous.clone());
+            return Err(TravelerError::NoSpace);
+        }
     }
     state.remove_item(item_id, 1);
     state.city.travelers[index].gear[slot] = Some(item_id.to_string());
@@ -2970,7 +3059,14 @@ pub fn unequip_traveler_gear(
 }
 
 /// Бросок лута: сначала шанс пустого, затем `TRAVELER_LOOT_ROLLS` строк.
-fn roll_traveler_loot(state: &mut GameState, location_id: &str) -> Vec<(String, u32)> {
+///
+/// `rare_bonus` поднимает вес дорогих находок (камни, золотая руда,
+/// серебро) — так работает сет странника.
+fn roll_traveler_loot(
+    state: &mut GameState,
+    location_id: &str,
+    rare_bonus: f64,
+) -> Vec<(String, u32)> {
     let Some(location) = balance::TRAVELER_LOCATIONS
         .iter()
         .find(|location| location.id == location_id)
@@ -2980,20 +3076,32 @@ fn roll_traveler_loot(state: &mut GameState, location_id: &str) -> Vec<(String, 
     if random_unit(&mut state.market_seed) < location.empty_chance {
         return Vec::new();
     }
-    let total: u64 = location.loot.iter().map(|row| row.weight as u64).sum();
+    let weights: Vec<f64> = location
+        .loot
+        .iter()
+        .map(|row| {
+            let base = row.weight as f64;
+            if rare_bonus > 0.0 && traveler_rare_item(row.item_id) {
+                base * (1.0 + rare_bonus)
+            } else {
+                base
+            }
+        })
+        .collect();
+    let total: f64 = weights.iter().sum();
     let mut loot: Vec<(String, u32)> = Vec::new();
-    if total == 0 {
+    if total <= 0.0 {
         return loot;
     }
     for _ in 0..balance::TRAVELER_LOOT_ROLLS {
-        let mut pick = super::trader::random_below(&mut state.market_seed, total);
-        let mut chosen = location.loot[0];
-        for row in location.loot {
-            if pick < row.weight as u64 {
+        let mut pick = random_unit(&mut state.market_seed) * total;
+        let mut chosen = location.loot[location.loot.len() - 1];
+        for (row, weight) in location.loot.iter().zip(weights.iter()) {
+            if pick < *weight {
                 chosen = *row;
                 break;
             }
-            pick -= row.weight as u64;
+            pick -= *weight;
         }
         let span = (chosen.max_quantity - chosen.min_quantity + 1) as u64;
         let quantity =
@@ -3005,6 +3113,13 @@ fn roll_traveler_loot(state: &mut GameState, location_id: &str) -> Vec<(String, 
         }
     }
     loot
+}
+
+/// Дорогая находка: на неё и работает прибавка к редкому луту.
+fn traveler_rare_item(item_id: &str) -> bool {
+    items::item(item_id)
+        .map(|item| item.base_price >= 100)
+        .unwrap_or(false)
 }
 
 // ---------- Дом странников ----------
@@ -6411,6 +6526,7 @@ mod tests {
             TravelerGearBonus {
                 all: 0.0,
                 payout: 0.5,
+                ..TravelerGearBonus::default()
             },
         );
         assert!(with_trade >= plain);
@@ -6520,18 +6636,76 @@ mod tests {
         // Снаряжение выдаётся только после постройки дома.
         state.city.traveler_house_ends_at = 0.0;
         state.inventory.insert("leather_hat".to_string(), 1);
-        equip_traveler_gear(&mut state, 0, 2, "leather_hat").unwrap();
+        equip_traveler_gear(&mut state, 0, 0, "leather_hat").unwrap();
         assert_eq!(state.item_count("leather_hat"), 0);
         assert_eq!(
-            state.city.travelers[0].gear[2].as_deref(),
+            state.city.travelers[0].gear[0].as_deref(),
             Some("leather_hat")
         );
         let bonus = traveler_gear_bonus(&state, 0);
         assert!(bonus.all > 0.0);
         // Снять обратно — вещь возвращается в сумку.
-        unequip_traveler_gear(&mut state, 0, 2).unwrap();
+        unequip_traveler_gear(&mut state, 0, 0).unwrap();
         assert_eq!(state.item_count("leather_hat"), 1);
-        assert!(state.city.travelers[0].gear[2].is_none());
+        assert!(state.city.travelers[0].gear[0].is_none());
+    }
+
+    #[test]
+    fn five_set_pieces_speed_up_the_trip_and_raise_rare_loot() {
+        let mut state = city_with_shop();
+        ensure_travelers(&mut state);
+        state.city.traveler_house_rented = true;
+        state.city.traveler_house_stage = balance::TRAVELER_HOUSE_STAGES;
+        state.city.traveler_house_ends_at = 0.0;
+        let pieces = [
+            ("wanderers_hood", items::EquipSlot::Head),
+            ("jacket", items::EquipSlot::Body),
+            ("travelers_cloak", items::EquipSlot::Back),
+            ("winter_gloves", items::EquipSlot::Hand),
+            ("winter_boots", items::EquipSlot::Feet),
+        ];
+        for (item_id, slot) in pieces {
+            state.inventory.insert(item_id.to_string(), 1);
+            equip_traveler_gear(&mut state, 0, slot.index(), item_id).unwrap();
+        }
+        let bonus = traveler_gear_bonus(&state, 0);
+        assert!((bonus.rare - balance::TRAVELER_SET_RARE_BONUS / 100.0).abs() < 1e-6);
+        assert!((bonus.time - balance::TRAVELER_SET_SPEED_BONUS / 100.0).abs() < 1e-6);
+        assert!((bonus.time_cut - balance::TRAVELER_SET_TIME_CUT_SECS).abs() < 1e-6);
+        // Поход на пять минут с полным сетом короче на 20 % и ещё на две минуты.
+        let location = &balance::TRAVELER_LOCATIONS[0];
+        state.gold = 10_000.0;
+        let started = state.total_play_seconds;
+        send_traveler(&mut state, 0, location.id).unwrap();
+        let seconds = state.city.travelers[0].returns_at - started;
+        assert!((seconds - (location.minutes * 60.0 * 0.8 - 120.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn three_old_gear_slots_move_to_the_new_grid() {
+        let mut state = city_with_shop();
+        ensure_travelers(&mut state);
+        // Старое сохранение: оружие, броня, аксессуар.
+        state.city.travelers[0].gear = vec![
+            Some("iron_shovel".to_string()),
+            Some("jacket".to_string()),
+            Some("miner_amulet".to_string()),
+        ];
+        state.city.travelers[0].normalize_gear();
+        let gear = &state.city.travelers[0].gear;
+        assert_eq!(gear.len(), TRAVELER_GEAR_SLOTS);
+        assert_eq!(
+            gear[items::EquipSlot::Hand.index()].as_deref(),
+            Some("iron_shovel")
+        );
+        assert_eq!(
+            gear[items::EquipSlot::Body.index()].as_deref(),
+            Some("jacket")
+        );
+        assert_eq!(
+            gear[items::EquipSlot::Accessory1.index()].as_deref(),
+            Some("miner_amulet")
+        );
     }
 
     #[test]

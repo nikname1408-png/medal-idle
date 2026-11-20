@@ -421,10 +421,19 @@ fn SmithUpgradeRow(
     let can_buy = actions::can_afford(&view, cost);
     let level_text = i18n::tf("smith.level", &[&level.to_string(), &max.to_string()]);
     let effect = match line {
-        SmithLine::Speed => i18n::tf(
-            "smith.interval_line",
-            &[&format_duration(balance::smith_interval(level))],
-        ),
+        SmithLine::Speed => {
+            // Показываем десятые доли секунды: иначе 2.8 с и ровно 2.0 с
+            // округляются до «2 с», и последнее улучшение кажется пустым.
+            let interval = balance::smith_interval(level);
+            let text = if interval < 10.0 {
+                let value = format!("{interval:.1}");
+                let value = value.trim_end_matches(".0").to_string();
+                i18n::tf("time.seconds", &[&value])
+            } else {
+                format_duration(interval)
+            };
+            i18n::tf("smith.interval_line", &[&text])
+        }
         SmithLine::Forge => i18n::tf(
             "smith.forge_line",
             &[

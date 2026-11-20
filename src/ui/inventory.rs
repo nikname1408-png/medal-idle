@@ -12,11 +12,11 @@ use crate::game::state::{EquipError, GameState};
 use super::app::{format_num, refresh_view};
 
 /// Сколько предметов сета нужно, чтобы его бонус стал активным.
-fn set_required_pieces(set_id: &str) -> u32 {
-    if set_id == "beggar" {
-        4
-    } else {
-        3
+pub(crate) fn set_required_pieces(set_id: &str) -> u32 {
+    match set_id {
+        "beggar" => 4,
+        "traveler" => 5,
+        _ => 3,
     }
 }
 
@@ -602,7 +602,7 @@ fn EquipDetail(
 }
 
 #[component]
-fn ItemCell(
+pub(crate) fn ItemCell(
     item: Item,
     count: u32,
     selected: bool,
@@ -633,6 +633,64 @@ fn ItemCell(
             if count > 1 {
                 span { class: if count >= items::ITEM_STACK_LIMIT { "inv-badge full" } else { "inv-badge" },
                     "{count}"
+                }
+            }
+        }
+    }
+}
+
+/// Описание предмета без кнопок действия: та же шапка, тип, описание и
+/// бонусы, что в карточке сумки. Нужно вне инвентаря — например, для
+/// снаряжения и добычи странника.
+#[component]
+pub(crate) fn ItemDetails(
+    item: Item,
+    count: u32,
+    set_pieces: u32,
+    on_close: EventHandler<()>,
+) -> Element {
+    let item_name = item.name();
+    let category = item.category.label();
+    let rarity = item.rarity();
+    let description = item.description();
+    let stats = item.stats.summary();
+    let base_price = item.base_price;
+    let slot = item.slot;
+    let set_status_text = item.stats.set_id.as_ref().map(|set_id| {
+        if set_pieces >= set_required_pieces(set_id) {
+            i18n::t(&format!("set.{set_id}.active")).to_string()
+        } else {
+            let pieces = set_pieces.to_string();
+            i18n::tf(&format!("set.{set_id}.partial"), &[pieces.as_str()])
+        }
+    });
+
+    rsx! {
+        section { class: "inv-detail",
+            div { class: "inv-detail-head",
+                ItemIcon { item: item.clone(), class: "inv-detail-icon".to_string() }
+                span { class: "inv-detail-name", "{item_name}" }
+                span { class: "inv-detail-price",
+                    "{i18n::tf(\"bag.price\", &[&base_price.to_string()])}"
+                }
+                button {
+                    class: "inv-detail-close",
+                    onclick: move |_| on_close.call(()),
+                    "×"
+                }
+            }
+            div { class: "inv-detail-slot", "[{category} · {rarity}]" }
+            div { class: "inv-detail-desc", "{description}" }
+            div { class: "inv-detail-stats",
+                span {
+                    "{i18n::tf(\"bag.in_bag\", &[&count.to_string(), &items::ITEM_STACK_LIMIT.to_string()])}"
+                }
+                span { "{i18n::tf(\"bag.bonuses\", &[&stats])}" }
+                if let Some(slot) = slot {
+                    span { "{i18n::tf(\"bag.slot_line\", &[slot.label()])}" }
+                }
+                if let Some(text) = set_status_text.as_deref() {
+                    span { class: "equip-set-status", "{text}" }
                 }
             }
         }
@@ -1345,7 +1403,7 @@ fn WardrobePanel(state: Signal<GameState>, view: GameState, message: Signal<Stri
     }
 }
 
-fn slot_short(slot: EquipSlot) -> &'static str {
+pub(crate) fn slot_short(slot: EquipSlot) -> &'static str {
     match slot {
         EquipSlot::Hand => i18n::t("slot.short.hand"),
         EquipSlot::Body => i18n::t("slot.short.body"),

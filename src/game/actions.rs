@@ -1754,7 +1754,10 @@ mod tests {
             state.equipped(items::EquipSlot::Accessory1),
             Some("silver_ring")
         );
-        assert!((state.trade_bonus - 0.03).abs() < 1e-6);
+        // Серебряное кольцо больше не даёт торговли: оно бережёт энергию
+        // в походах на 5 %.
+        assert!((state.trade_bonus).abs() < 1e-6);
+        assert!((state.expedition_energy_discount - 0.05).abs() < 1e-6);
     }
 
     #[test]

@@ -233,22 +233,6 @@ pub fn sell_price(item: &Item, demand: u8, supply: u8, trade_bonus: f32) -> f64 
     (item.base_price as f64 * factor * bonus).round().max(1.0)
 }
 
-/// Цена, по которой торговец продаёт товар с витрины.
-/// Если у товара есть `avg_cost` (транзитный или переполненный), цена
-/// = `avg_cost * 1.5` (наценка +50%).
-pub fn sell_price_for_good(item: &Item, good: &GoodState, trade_bonus: f32) -> f64 {
-    if let Some(avg) = good.avg_cost {
-        (avg * 1.5).round().max(1.0)
-    } else {
-        sell_price(item, good.demand, good.supply, trade_bonus)
-    }
-}
-
-/// Наценка торговца: разница между покупкой и продажей.
-pub fn margin(item: &Item, demand: u8, supply: u8, trade_bonus: f32) -> f64 {
-    (buy_price(item, demand, supply) - sell_price(item, demand, supply, trade_bonus)).max(0.0)
-}
-
 /// Один товар на рынке.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

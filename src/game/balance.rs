@@ -762,6 +762,17 @@ pub const TRAVELER_LOOT_ROLLS: u32 = 12;
 /// Сколько лута добавляет каждая точка бонуса снаряжения (в %).
 pub const TRAVELER_GEAR_LOOT_STEP: f64 = 1.0;
 
+/// Сет странника: пять вещей из семи дают редкий лут и ускоряют поход.
+pub const TRAVELER_SET_ID: &str = "traveler";
+/// Сколько вещей сета нужно надеть.
+pub const TRAVELER_SET_PIECES: usize = 5;
+/// +% к шансу редкой находки.
+pub const TRAVELER_SET_RARE_BONUS: f64 = 15.0;
+/// +% к скорости похода (20 = на 20% меньше времени).
+pub const TRAVELER_SET_SPEED_BONUS: f64 = 20.0;
+/// Сколько секунд срезать с похода сверх процента.
+pub const TRAVELER_SET_TIME_CUT_SECS: f64 = 120.0;
+
 /// Сколько путешественников живёт в доме после его постройки.
 pub const TRAVELER_TARGET_COUNT: usize = 5;
 

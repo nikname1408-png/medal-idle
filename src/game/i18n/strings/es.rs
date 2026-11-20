@@ -577,7 +577,7 @@ pub static ENTRIES: &[(&str, &str)] = &[
     ("trade.hint", "Toca una mercancía para abrir su ficha."),
     ("trade.rarity", "[rareza: {}]"),
     ("trade.appearance", "Probabilidad de aparición:"),
-    ("trade.buy_price", "Precio de compra:"),
+    ("trade.buy_price", "Precio de compra (por unidad):"),
     ("trade.sell_price", "Precio de venta:"),
     ("trade.margin", "{} oro   (margen: {})"),
     ("trade.demand", "Demanda:"),
@@ -1375,6 +1375,12 @@ pub static WORLD: &[(&str, &str)] = &[
         "Conjunto de mendigo activo (4/9): +100% a la recolección manual.",
     ),
     ("set.beggar.partial", "Conjunto de mendigo: {} / 4."),
+    ("set.traveler.name", "Conjunto de viajero"),
+    (
+        "set.traveler.active",
+        "Conjunto de viajero activo (5/7): +15% de hallazgos raros, +20% de velocidad y -2 minutos por viaje.",
+    ),
+    ("set.traveler.partial", "Conjunto de viajero: {} / 5."),
     // ---------- Eventos ----------
     ("event.bulk.title", "Mayorista"),
     (

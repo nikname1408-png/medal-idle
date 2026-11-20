@@ -4349,16 +4349,18 @@ button {
     text-align: center;
 }
 
-/* Сумка игрока под снаряжением: выбираем вещь для слота. */
+/* Сумка игрока под снаряжением: квадраты как в инвентаре. */
 .traveler-gear-bag {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
     max-height: 132px;
     padding: 5px;
     overflow-y: auto;
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.12);
+}
+
+.traveler-gear-bag .inv-grid,
+.traveler-loot-grid {
+    width: 100%;
 }
 
 /* Добыча, доплата и снаряжение в карточке путешественника. */

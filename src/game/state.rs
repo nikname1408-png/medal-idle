@@ -2163,6 +2163,10 @@ impl GameState {
         city::drop_empty_slots(self);
         // Спрос города переехал на торговую модель (спрос/предложение/тренд).
         city::migrate_demand(self);
+        // У странников было три слота снаряжения, стало семь.
+        for traveler in self.city.travelers.iter_mut() {
+            traveler.normalize_gear();
+        }
         self.recalculate_stats();
 
         // Рекорды появились в новой версии. У старых сохранений их нет —
