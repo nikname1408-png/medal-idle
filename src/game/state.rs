@@ -2147,7 +2147,9 @@ impl GameState {
                 self.city.next_tax_at = self.total_play_seconds + balance::CITY_TAX_INTERVAL;
             }
             if self.city.next_event_at <= 0.0 {
-                self.city.next_event_at = self.total_play_seconds + balance::CITY_TAX_INTERVAL;
+                // Первое событие — через пять минут, а не через полчаса:
+                // иначе в короткой сессии игрок не видел ни одного события.
+                self.city.next_event_at = self.total_play_seconds + balance::CITY_EVENT_FIRST_SECS;
             }
             if self.city.shop.is_none() {
                 self.city.shop = Some(city::Shop::default());

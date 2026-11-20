@@ -62,6 +62,10 @@ pub struct Cost {
     pub boards: u32,
     /// Железные слитки (предмет `iron_ingot`).
     pub iron_ingots: u32,
+    /// Каменные блоки (предмет `stone_block`).
+    pub stone_blocks: u32,
+    /// Кирпичи (предмет `brick`).
+    pub bricks: u32,
 }
 
 /// Стоимость из дерева, камня и золота без предметов и энергии.
@@ -73,6 +77,8 @@ fn cost(wood: f64, stone: f64, gold: f64) -> Cost {
         energy: 0.0,
         boards: 0,
         iron_ingots: 0,
+        stone_blocks: 0,
+        bricks: 0,
     }
 }
 
@@ -189,6 +195,8 @@ pub fn coal_pit_cost(level: u32) -> Cost {
             energy: 0.0,
             boards: 0,
             iron_ingots: 0,
+            stone_blocks: 0,
+            bricks: 0,
         },
         1 => Cost {
             wood: COAL_PIT_FIRST_WOOD,
@@ -197,6 +205,8 @@ pub fn coal_pit_cost(level: u32) -> Cost {
             energy: 0.0,
             boards: 0,
             iron_ingots: 0,
+            stone_blocks: 0,
+            bricks: 0,
         },
         _ => {
             let factor = COAL_PIT_COST_GROWTH.powi(level as i32 - 2);
@@ -223,6 +233,8 @@ pub fn forge_cost(level: u32) -> Cost {
             energy: FORGE_UNLOCK_ENERGY,
             boards: 0,
             iron_ingots: 0,
+            stone_blocks: 0,
+            bricks: 0,
         },
         1 => Cost {
             wood: FORGE_FIRST_WOOD,
@@ -231,6 +243,8 @@ pub fn forge_cost(level: u32) -> Cost {
             energy: 0.0,
             boards: 0,
             iron_ingots: 0,
+            stone_blocks: 0,
+            bricks: 0,
         },
         _ => {
             let factor = FORGE_COST_GROWTH.powi(level as i32 - 2);
@@ -267,6 +281,8 @@ pub fn bank_cost(level: u32) -> Cost {
             energy: 0.0,
             boards: 0,
             iron_ingots: BANK_UNLOCK_IRON_INGOTS,
+            stone_blocks: 0,
+            bricks: 0,
         },
         1 => Cost {
             wood: BANK_FIRST_WOOD,
@@ -275,6 +291,8 @@ pub fn bank_cost(level: u32) -> Cost {
             energy: 0.0,
             boards: 0,
             iron_ingots: 0,
+            stone_blocks: 0,
+            bricks: 0,
         },
         _ => {
             let factor = BANK_COST_GROWTH.powi(level as i32 - 2);
@@ -378,12 +396,15 @@ pub const EXPEDITION_ENERGY_COST: f64 = 10.0;
 /// Шанс найти лут за один тик пути (1 с), %.
 pub const EXPEDITION_LOOT_CHANCE: u32 = 15;
 /// Шансы редкости лута при сработавшем броске, в промилле (0..1000).
-/// Обычный 70%, необычный 20%, редкий 8%, эпический 1.9%, легендарный 0.1%.
+/// Обычный 70%, необычный 20%, редкий 7.7%, эпический 1.9%, легендарный 0.3%.
+///
+/// Легендарных было 0.1 %: за 6700 секунд в Древних руинах игрок не увидел
+/// ни одного драгоценного камня. Шанс поднят втрое — до 0.3 %.
 pub const EXPEDITION_COMMON_WEIGHT: u32 = 700;
 pub const EXPEDITION_UNCOMMON_WEIGHT: u32 = 200;
-pub const EXPEDITION_RARE_WEIGHT: u32 = 80;
-pub const EXPEDITION_EPIC_WEIGHT: u32 = 19;
-pub const EXPEDITION_LEGENDARY_WEIGHT: u32 = 1;
+pub const EXPEDITION_RARE_WEIGHT: u32 = 77;
+pub const EXPEDITION_EPIC_WEIGHT: u32 = 20;
+pub const EXPEDITION_LEGENDARY_WEIGHT: u32 = 3;
 
 /// Отдельная проверка чертежа паровой машины в Древних руинах.
 ///
@@ -623,6 +644,13 @@ pub const SHOP_MAX_RATING: f32 = 5.0;
 pub const SHOP_PRICE_MIN: f32 = 0.5;
 pub const SHOP_PRICE_MAX: f32 = 2.0;
 pub const SHOP_BUYER_BASE_INTERVAL: f64 = 25.0;
+/// Насколько быстрее приходят покупатели за каждую лишнюю полку.
+///
+/// Со старта полок три и скорость обычная; каждая следующая полка ускоряет
+/// поток на 5 % интервала. К восьми полкам поток быстрее на четверть
+/// (интервал ×0.75). Значение намеренно скромное: полки не должны
+/// превращать лавку в печатный станок.
+pub const SHOP_SLOT_FLOW_STEP: f64 = 0.05;
 /// Рейтинг растёт не за каждую продажу, а раз в N продаж.
 pub const SHOP_RATING_SALES_PER_GAIN: u32 = 5;
 pub const SHOP_RATING_PER_GAIN: f32 = 0.25;
@@ -701,7 +729,10 @@ pub const CHARTER_COST: f64 = 25_000.0;
 // ---------- Путешественники в таверне ----------
 
 /// Сколько путешественников живёт в таверне.
-pub const TRAVELER_COUNT: usize = 3;
+///
+/// В таверне теперь один авантюрист: остальные появляются только в Доме
+/// странников, и то за доплату.
+pub const TRAVELER_COUNT: usize = 1;
 /// Один кружок дружбы в очках.
 pub const TRAVELER_FRIENDSHIP_POINT: u32 = 10;
 /// Потолок дружбы: пять кружков.
@@ -713,18 +744,32 @@ pub const TRAVELER_QUEST_GAIN: u32 = 10;
 /// Штраф дружбы за провальный квест.
 pub const TRAVELER_QUEST_LOSS: u32 = 10;
 /// Доплата за лут при возвращении.
-pub const TRAVELER_PAYOUT_PERCENT: f64 = 0.15;
+pub const TRAVELER_PAYOUT_PERCENT: f64 = 0.35;
 /// Доля лута, которая становится доплатой.
-pub const TRAVELER_PAYOUT_LOOT_SHARE: f64 = 0.15;
+///
+/// Раньше было 15 %: походы за 25 минут приносили копейки, и отправлять
+/// путешественника было незачем. Теперь походы короче, а доплата — треть
+/// стоимости лута.
+pub const TRAVELER_PAYOUT_LOOT_SHARE: f64 = 0.30;
 /// Минимальная доплата, если в снаряжении есть торговый бонус.
-pub const TRAVELER_PAYOUT_MIN_WITH_TRADE: f64 = 0.05;
+pub const TRAVELER_PAYOUT_MIN_WITH_TRADE: f64 = 0.10;
 /// Сколько лута везёт путешественник за поход (строк таблицы).
-pub const TRAVELER_LOOT_ROLLS: u32 = 5;
+///
+/// Игрок просил поднять шансы дропа странников. Механики «поиска раз в 15 с»
+/// в коде нет: лут бросается один раз при возвращении, поэтому шансы
+/// подняты числом бросков (8 → 12) и меньшим шансом пустого возврата.
+pub const TRAVELER_LOOT_ROLLS: u32 = 12;
 /// Сколько лута добавляет каждая точка бонуса снаряжения (в %).
 pub const TRAVELER_GEAR_LOOT_STEP: f64 = 1.0;
 
 /// Сколько путешественников живёт в доме после его постройки.
 pub const TRAVELER_TARGET_COUNT: usize = 5;
+
+/// Сколько походов должен пройти странник, чтобы потерять компас.
+///
+/// Игрок просил: отправить авантюриста в путешествие два раза, после чего
+/// он рассказывает про потерянный компас и просит принести новый.
+pub const TRAVELER_TRIPS_BEFORE_COMPASS: u32 = 2;
 
 /// Одна строка лута локации путешественника.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -753,12 +798,16 @@ pub struct TravelerLocationDef {
 
 /// Шесть направлений путешественников.
 /// До постройки дома доступны только три ближние.
+///
+/// Походы короткие: раньше ближний путь занимал 10 минут, а дальний — все
+/// 30, и странник возвращался почти с пустыми руками. Теперь дальняя
+/// дорога — четверть часа, а строк лута за поход вдвое больше.
 pub const TRAVELER_LOCATIONS: [TravelerLocationDef; 6] = [
     TravelerLocationDef {
         id: "river_meadows",
-        minutes: 10.0,
+        minutes: 5.0,
         advance: 500.0,
-        empty_chance: 0.10,
+        empty_chance: 0.02,
         needs_house: false,
         loot: &[
             TravelerLootDef {
@@ -795,9 +844,9 @@ pub const TRAVELER_LOCATIONS: [TravelerLocationDef; 6] = [
     },
     TravelerLocationDef {
         id: "stony_hill",
-        minutes: 15.0,
+        minutes: 8.0,
         advance: 800.0,
-        empty_chance: 0.15,
+        empty_chance: 0.03,
         needs_house: false,
         loot: &[
             TravelerLootDef {
@@ -828,132 +877,132 @@ pub const TRAVELER_LOCATIONS: [TravelerLocationDef; 6] = [
     },
     TravelerLocationDef {
         id: "thick_forest",
-        minutes: 20.0,
+        minutes: 10.0,
         advance: 600.0,
-        empty_chance: 0.12,
+        empty_chance: 0.02,
         needs_house: false,
         loot: &[
             TravelerLootDef {
                 item_id: "wood",
-                min_quantity: 80,
-                max_quantity: 150,
+                min_quantity: 120,
+                max_quantity: 220,
                 weight: 55,
             },
             TravelerLootDef {
                 item_id: "leather",
-                min_quantity: 10,
-                max_quantity: 20,
+                min_quantity: 15,
+                max_quantity: 30,
                 weight: 20,
             },
             TravelerLootDef {
                 item_id: "fiber",
-                min_quantity: 15,
-                max_quantity: 30,
+                min_quantity: 20,
+                max_quantity: 45,
                 weight: 25,
             },
         ],
     },
     TravelerLocationDef {
         id: "highlands",
-        minutes: 25.0,
+        minutes: 12.0,
         advance: 1_500.0,
-        empty_chance: 0.20,
+        empty_chance: 0.04,
         needs_house: true,
         loot: &[
             TravelerLootDef {
                 item_id: "stone",
-                min_quantity: 40,
-                max_quantity: 90,
+                min_quantity: 60,
+                max_quantity: 130,
                 weight: 35,
             },
             TravelerLootDef {
                 item_id: "iron",
-                min_quantity: 15,
-                max_quantity: 50,
+                min_quantity: 25,
+                max_quantity: 70,
                 weight: 20,
             },
             TravelerLootDef {
                 item_id: "silver",
-                min_quantity: 5,
-                max_quantity: 10,
+                min_quantity: 8,
+                max_quantity: 18,
                 weight: 15,
             },
             TravelerLootDef {
                 item_id: "quartz",
-                min_quantity: 5,
-                max_quantity: 20,
+                min_quantity: 8,
+                max_quantity: 30,
                 weight: 30,
             },
         ],
     },
     TravelerLocationDef {
         id: "old_mines",
-        minutes: 30.0,
+        minutes: 15.0,
         advance: 2_000.0,
-        empty_chance: 0.25,
+        empty_chance: 0.04,
         needs_house: true,
         loot: &[
             TravelerLootDef {
                 item_id: "iron",
-                min_quantity: 20,
-                max_quantity: 60,
+                min_quantity: 40,
+                max_quantity: 110,
                 weight: 40,
             },
             TravelerLootDef {
                 item_id: "coal",
-                min_quantity: 10,
-                max_quantity: 30,
+                min_quantity: 25,
+                max_quantity: 60,
                 weight: 35,
             },
             TravelerLootDef {
                 item_id: "gold_ore",
-                min_quantity: 1,
-                max_quantity: 10,
+                min_quantity: 3,
+                max_quantity: 18,
                 weight: 10,
             },
             TravelerLootDef {
                 item_id: "gems",
-                min_quantity: 1,
-                max_quantity: 10,
+                min_quantity: 2,
+                max_quantity: 15,
                 weight: 15,
             },
         ],
     },
     TravelerLocationDef {
         id: "overseas_coast",
-        minutes: 30.0,
+        minutes: 15.0,
         advance: 1_800.0,
-        empty_chance: 0.15,
+        empty_chance: 0.03,
         needs_house: true,
         loot: &[
             TravelerLootDef {
                 item_id: "wood",
-                min_quantity: 50,
-                max_quantity: 100,
+                min_quantity: 100,
+                max_quantity: 200,
                 weight: 35,
             },
             TravelerLootDef {
                 item_id: "leather",
-                min_quantity: 10,
-                max_quantity: 40,
+                min_quantity: 20,
+                max_quantity: 60,
                 weight: 25,
             },
             TravelerLootDef {
                 item_id: "fiber",
-                min_quantity: 10,
-                max_quantity: 30,
+                min_quantity: 25,
+                max_quantity: 60,
                 weight: 20,
             },
             TravelerLootDef {
                 item_id: "quartz",
-                min_quantity: 5,
-                max_quantity: 15,
+                min_quantity: 10,
+                max_quantity: 30,
                 weight: 15,
             },
             TravelerLootDef {
                 item_id: "cloth",
-                min_quantity: 1,
-                max_quantity: 8,
+                min_quantity: 3,
+                max_quantity: 15,
                 weight: 5,
             },
         ],
@@ -966,16 +1015,50 @@ pub const TRAVELER_LOCATIONS: [TravelerLocationDef; 6] = [
 pub const TRAVELER_HOUSE_RENT: f64 = 8_000.0;
 /// Сколько этапов у стройки.
 pub const TRAVELER_HOUSE_STAGES: u32 = 3;
-/// Сколько длится один этап стройки.
-pub const TRAVELER_HOUSE_STAGE_SECS: f64 = 20.0 * 60.0;
+/// Сколько длится один этап стройки. Игрок просил 8 минут вместо 20.
+pub const TRAVELER_HOUSE_STAGE_SECS: f64 = 8.0 * 60.0;
+
+/// Сколько странников живёт в доме бесплатно.
+pub const TRAVELER_HOUSE_FREE_BEDS: usize = 2;
+/// Цена найма первого странника сверх бесплатных мест.
+pub const TRAVELER_HIRE_BASE_PRICE: f64 = 5_000.0;
+/// Во сколько раз дорожает каждый следующий найм.
+pub const TRAVELER_HIRE_PRICE_GROWTH: f64 = 1.4;
 
 /// Материалы и золото одного этапа стройки. Первый этап — фундамент,
 /// второй — стены, третий — крыша.
 pub fn traveler_house_cost(stage: u32) -> Cost {
     match stage {
-        0 => cost(600.0, 400.0, 3_000.0),
-        1 => cost(900.0, 700.0, 6_000.0),
-        _ => cost(1_200.0, 1_000.0, 10_000.0),
+        0 => Cost {
+            wood: 5_000.0,
+            stone: 10_000.0,
+            gold: 10_000.0,
+            energy: 0.0,
+            boards: 1_500,
+            iron_ingots: 0,
+            stone_blocks: 500,
+            bricks: 0,
+        },
+        1 => Cost {
+            wood: 10_000.0,
+            stone: 5_000.0,
+            gold: 15_000.0,
+            energy: 0.0,
+            boards: 3_000,
+            iron_ingots: 0,
+            stone_blocks: 200,
+            bricks: 300,
+        },
+        _ => Cost {
+            wood: 15_000.0,
+            stone: 0.0,
+            gold: 10_000.0,
+            energy: 0.0,
+            boards: 3_000,
+            iron_ingots: 0,
+            stone_blocks: 0,
+            bricks: 200,
+        },
     }
 }
 
@@ -986,7 +1069,10 @@ pub const SMITH_COUNT: usize = 2;
 /// Стартовое число ячеек рецептов у кузнеца.
 pub const SMITH_START_SLOTS: usize = 5;
 /// Максимум прокачек скорости.
-pub const SMITH_SPEED_MAX_LEVEL: u32 = 5;
+///
+/// Было 5 уровней с паузой 18 секунд (3 поделки в минуту). Теперь скорость
+/// разгоняется до 2 секунд между ковками — 0.5 поделки в секунду.
+pub const SMITH_SPEED_MAX_LEVEL: u32 = 9;
 /// Максимум прокачек горна.
 pub const SMITH_FORGE_MAX_LEVEL: u32 = 5;
 /// Максимум прокачек ячеек рецептов.
@@ -1000,9 +1086,9 @@ pub const SMITH_FIRST_PERMIT_GOLD: f64 = 10_000.0;
 /// Разрешение ратуши на вторую кузницу.
 pub const SMITH_SECOND_PERMIT_GOLD: f64 = 20_000.0;
 
-/// Пауза между ковками по уровню скорости: 60 → 18 секунд.
+/// Пауза между ковками по уровню скорости: 60 → 2 секунды (0.5 поделки в секунду).
 pub fn smith_interval(speed_level: u32) -> f64 {
-    const SECS: [f64; 6] = [60.0, 48.0, 38.0, 30.0, 24.0, 18.0];
+    const SECS: [f64; 10] = [60.0, 42.0, 30.0, 21.0, 15.0, 10.0, 6.5, 4.0, 2.8, 2.0];
     SECS[(speed_level as usize).min(SECS.len() - 1)]
 }
 
@@ -1038,19 +1124,29 @@ pub fn smith_build_cost(index: usize) -> Cost {
 }
 
 /// Улучшение скорости: золото, дерево и камень.
+///
+/// Девять уровней — по цене прошлой таблицы, но каждая ступень подешевела
+/// примерно на четверть: разгон до 0.5 поделки в секунду не должен упираться
+/// в цену целого города.
 pub fn smith_speed_cost(level: u32) -> Cost {
-    const GOLD: [f64; 5] = [2_000.0, 3_500.0, 6_000.0, 10_000.0, 16_000.0];
-    const WOOD: [f64; 5] = [600.0, 900.0, 1_400.0, 2_100.0, 3_200.0];
-    const STONE: [f64; 5] = [400.0, 600.0, 900.0, 1_400.0, 2_100.0];
+    const GOLD: [f64; 9] = [
+        1_500.0, 2_400.0, 3_800.0, 6_000.0, 9_000.0, 13_000.0, 18_000.0, 24_000.0, 32_000.0,
+    ];
+    const WOOD: [f64; 9] = [
+        450.0, 650.0, 950.0, 1_350.0, 1_900.0, 2_600.0, 3_400.0, 4_400.0, 5_600.0,
+    ];
+    const STONE: [f64; 9] = [
+        300.0, 450.0, 650.0, 950.0, 1_300.0, 1_800.0, 2_400.0, 3_100.0, 4_000.0,
+    ];
     let index = (level as usize).min(GOLD.len() - 1);
     cost(WOOD[index], STONE[index], GOLD[index])
 }
 
 /// Улучшение горна: золото, камень и железные слитки.
 pub fn smith_forge_cost(level: u32) -> Cost {
-    const GOLD: [f64; 5] = [2_500.0, 4_500.0, 7_500.0, 12_000.0, 19_000.0];
-    const STONE: [f64; 5] = [500.0, 800.0, 1_200.0, 1_800.0, 2_700.0];
-    const INGOTS: [u32; 5] = [20, 35, 60, 100, 160];
+    const GOLD: [f64; 5] = [2_000.0, 3_400.0, 5_500.0, 8_500.0, 13_000.0];
+    const STONE: [f64; 5] = [400.0, 650.0, 950.0, 1_400.0, 2_100.0];
+    const INGOTS: [u32; 5] = [16, 28, 46, 76, 120];
     let index = (level as usize).min(GOLD.len() - 1);
     Cost {
         wood: 0.0,
@@ -1059,12 +1155,14 @@ pub fn smith_forge_cost(level: u32) -> Cost {
         energy: 0.0,
         boards: 0,
         iron_ingots: INGOTS[index],
+        stone_blocks: 0,
+        bricks: 0,
     }
 }
 
 /// Улучшение ячеек рецептов: только золото.
 pub fn smith_slots_cost(level: u32) -> Cost {
-    const GOLD: [f64; 5] = [3_000.0, 5_500.0, 9_000.0, 15_000.0, 24_000.0];
+    const GOLD: [f64; 5] = [2_400.0, 4_200.0, 6_800.0, 11_000.0, 17_000.0];
     let index = (level as usize).min(GOLD.len() - 1);
     cost(0.0, 0.0, GOLD[index])
 }
@@ -1073,8 +1171,14 @@ pub fn smith_slots_cost(level: u32) -> Cost {
 
 /// Разовая цена найма приказчика.
 pub const CLERK_PRICE: f64 = 3_000.0;
-/// Зарплата приказчика за цикл (30 минут).
-pub const CLERK_SALARY: f64 = 100.0;
+/// Доля прибыли лавки за цикл, которую забирает приказчик.
+///
+/// Раньше он получал фиксированные 100 золота, и при живой лавке это была
+/// почти бесплатная рабочая сила. Теперь приказчик — партнёр: 5 % выручки
+/// за цикл, но не больше `CLERK_SALARY_MAX`.
+pub const CLERK_PROFIT_SHARE: f64 = 0.05;
+/// Потолок зарплаты приказчика за цикл.
+pub const CLERK_SALARY_MAX: f64 = 2_500.0;
 /// Как часто приказчик проверяет полки.
 ///
 /// Приказчик не «просыпается по таймеру»: он смотрит за лавкой постоянно,
@@ -1130,8 +1234,19 @@ pub const CHURCH_BLESSING_VIP_BONUS: f64 = 0.10;
 pub const CHURCH_BLESSING_PRICE_BONUS: f64 = 0.05;
 
 /// Городские события: шанс запуска и разброс интервала.
-pub const CITY_EVENT_CHANCE: u64 = 35;
-pub const CITY_EVENT_JITTER: f64 = 10.0 * 60.0;
+pub const CITY_EVENT_CHANCE: u64 = 65;
+pub const CITY_EVENT_JITTER: f64 = 5.0 * 60.0;
+/// Через сколько после открытия города проходит первый бросок события.
+///
+/// Раньше первое событие ждало полный налоговый цикл (30 минут), поэтому
+/// в короткой сессии игрок не видел ни одного события.
+pub const CITY_EVENT_FIRST_SECS: f64 = 5.0 * 60.0;
+/// Если бросок не дал события, следующая попытка — через этот промежуток.
+///
+/// Раньше неудачный бросок откладывал событие ещё на полчаса: за вечер
+/// игры игрок мог не увидеть ни одного события. Теперь «пусто» стоит
+/// всего две минуты, поэтому события приходят регулярно.
+pub const CITY_EVENT_RETRY_SECS: f64 = 2.0 * 60.0;
 pub const CITY_EVENT_COMPETITOR_SECS: f64 = 30.0 * 60.0;
 pub const CITY_EVENT_EPIDEMIC_SECS: f64 = 30.0 * 60.0;
 pub const CITY_EVENT_FESTIVAL_SECS: f64 = 30.0 * 60.0;

@@ -4060,11 +4060,20 @@ button {
     color: #1a1a1a;
 }
 
-/* Строка путешественника: строка и раскрытая карточка под ней. */
-.traveler-row {
+/* Блок путешественника: имя сверху, действия отдельной строкой.
+ *
+ * Раньше имя, кружки дружбы, кнопка «Поговорить» и аванс стояли в одной
+ * строке: на телефоне они наезжали друг на друга. Теперь у каждого
+ * странника свой блок, а действия уходят на вторую строку. */
+.traveler-block {
+    display: flex;
     flex-direction: column;
-    align-items: stretch;
-    gap: 3px;
+    gap: 4px;
+    margin: 4px 0;
+    padding: 6px 7px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel-2);
 }
 
 .traveler-main {
@@ -4072,6 +4081,12 @@ button {
     align-items: center;
     gap: 6px;
     width: 100%;
+    min-width: 0;
+}
+
+.traveler-actions {
+    justify-content: flex-end;
+    gap: 8px;
 }
 
 .traveler-name-btn {
@@ -4098,6 +4113,14 @@ button {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    overflow: hidden;
+}
+
+.traveler-names .city-upgrade-name,
+.traveler-names .city-row-muted {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .traveler-chip {
@@ -4163,6 +4186,179 @@ button {
 
 .traveler-loc.closed {
     opacity: 0.55;
+}
+
+/* Дом странников: жители квадратами, как ячейки сумки, и «+» для найма. */
+.traveler-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0;
+}
+
+.traveler-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 72px;
+    min-height: 72px;
+    padding: 5px 4px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel-2);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.traveler-tile.active {
+    border-color: var(--select);
+    background: var(--accent-soft);
+}
+
+.traveler-tile.hire {
+    border-style: dashed;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--select);
+}
+
+.traveler-tile.hire.full {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.traveler-tile-name {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.traveler-tile-status {
+    font-size: 9px;
+    color: var(--gold);
+    text-align: center;
+}
+
+.traveler-tile-status.away {
+    color: var(--muted);
+}
+
+.traveler-hire {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.traveler-hire-price {
+    max-width: 76px;
+    font-size: 9px;
+    color: var(--muted);
+    text-align: center;
+}
+
+/* Этап странника: сколько походов осталось / просьба о компасе. */
+.traveler-stage {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 10.5px;
+}
+
+/* Направление: свой блок с дропом, шансами, временем и оплатой. */
+.traveler-loc {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 5px 6px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel-2);
+}
+
+.traveler-loc-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.traveler-loc-loot {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.traveler-loot-line {
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1.35;
+}
+
+.traveler-loc-pay {
+    align-self: flex-start;
+}
+
+/* Снаряжение странника: квадраты как в сумке, без наборов и гардероба. */
+.traveler-gear-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.traveler-gear-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 72px;
+    min-height: 58px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel-2);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.traveler-gear-tile.active {
+    border-color: var(--select);
+    background: var(--accent-soft);
+}
+
+.traveler-gear-label {
+    font-size: 9px;
+    color: var(--muted);
+}
+
+.traveler-gear-name {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9.5px;
+    text-align: center;
+}
+
+/* Сумка игрока под снаряжением: выбираем вещь для слота. */
+.traveler-gear-bag {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 132px;
+    padding: 5px;
+    overflow-y: auto;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.12);
 }
 
 /* Добыча, доплата и снаряжение в карточке путешественника. */

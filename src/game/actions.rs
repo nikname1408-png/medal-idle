@@ -236,6 +236,8 @@ pub fn can_afford(state: &GameState, cost: Cost) -> bool {
         && state.energy + 1e-9 >= cost.energy
         && state.item_count("board") >= cost.boards
         && state.item_count("iron_ingot") >= cost.iron_ingots
+        && state.item_count("stone_block") >= cost.stone_blocks
+        && state.item_count("brick") >= cost.bricks
 }
 
 /// Списывает стоимость постройки. Возвращает `false`, если не хватает.
@@ -249,6 +251,8 @@ pub(crate) fn spend_cost(state: &mut GameState, cost: Cost) -> bool {
     state.energy = (state.energy - cost.energy).max(0.0);
     state.remove_item("board", cost.boards);
     state.remove_item("iron_ingot", cost.iron_ingots);
+    state.remove_item("stone_block", cost.stone_blocks);
+    state.remove_item("brick", cost.bricks);
     true
 }
 

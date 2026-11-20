@@ -112,6 +112,8 @@ pub struct CityState {
     pub legacy_next_smith_craft_at: f64,
     /// Приказчик в лавке нанят.
     pub clerk_hired: bool,
+    /// Приказчик поставлен на паузу: полки и склад он не трогает.
+    pub clerk_paused: bool,
     /// Наценка, с которой приказчик выставляет товар.
     pub clerk_mult: f32,
     /// Момент следующей работы приказчика.
@@ -177,6 +179,7 @@ impl Default for CityState {
             legacy_smith_paused: false,
             legacy_next_smith_craft_at: 0.0,
             clerk_hired: false,
+            clerk_paused: false,
             clerk_mult: balance::CLERK_DEFAULT_MULT,
             next_clerk_at: 0.0,
             next_clerk_rotate_at: 0.0,
@@ -243,16 +246,12 @@ impl Default for SmithState {
 pub struct Traveler {
     /// Номер в `TRAVELER_PROFILES`.
     pub profile_id: usize,
-    /// Очки дружбы (0–50, кружок = 10).
+    /// Очки дружбы (0–50, кружок = 10). Остались только для отображения.
     pub friendship: u32,
-    /// Квесты, которые путешественник задал.
-    pub quests_asked: Vec<String>,
-    /// Проваленные квесты: в пул этого персонажа они уже не вернутся.
-    pub quests_failed: Vec<String>,
-    /// Квест, который сейчас ждёт решения игрока.
-    pub active_quest: Option<String>,
-    /// Квест пройден и ждёт подтверждения обычной репликой.
-    pub quest_result: bool,
+    /// Сколько походов странник уже закончил.
+    pub trips_done: u32,
+    /// Странник рассказал, что потерял в пути компас, и ждёт его.
+    pub compass_asked: bool,
     /// 0 — свободен; иначе момент возвращения в `total_play_seconds`.
     pub returns_at: f64,
     /// Куда ушёл путешественник (id локации путешественников).
@@ -274,10 +273,8 @@ impl Default for Traveler {
         Self {
             profile_id: 0,
             friendship: 0,
-            quests_asked: Vec::new(),
-            quests_failed: Vec::new(),
-            active_quest: None,
-            quest_result: false,
+            trips_done: 0,
+            compass_asked: false,
             returns_at: 0.0,
             trip: String::new(),
             advance: 0.0,
@@ -773,74 +770,89 @@ pub struct UpgradeDef {
 
 /// Все улучшения гильдии, сгруппированные цепочками.
 /// Порядок в массиве — порядок отображения в UI.
-pub const GUILD_UPGRADES: [UpgradeDef; 13] = [
-    // Цепочка слотов полки.
+pub const GUILD_UPGRADES: [UpgradeDef; 16] = [
+    // Цепочка слотов полки: 3 стартовых + 5 улучшений = 8 полок.
     UpgradeDef {
         id: "slots_1",
-        price: 8_000.0,
+        price: 5_000.0,
         requires: None,
     },
     UpgradeDef {
         id: "slots_2",
-        price: 20_000.0,
+        price: 12_000.0,
         requires: Some("slots_1"),
+    },
+    UpgradeDef {
+        id: "slots_3",
+        price: 24_000.0,
+        requires: Some("slots_2"),
+    },
+    UpgradeDef {
+        id: "slots_4",
+        price: 45_000.0,
+        requires: Some("slots_3"),
+    },
+    UpgradeDef {
+        id: "slots_5",
+        price: 78_000.0,
+        requires: Some("slots_4"),
     },
     // Цепочка сейфа (лимит кассы).
     UpgradeDef {
         id: "cash_1",
-        price: 6_000.0,
+        price: 3_600.0,
         requires: None,
     },
     UpgradeDef {
         id: "cash_2",
-        price: 15_000.0,
+        price: 9_000.0,
         requires: Some("cash_1"),
     },
     UpgradeDef {
         id: "cash_3",
-        price: 30_000.0,
+        price: 18_000.0,
         requires: Some("cash_2"),
     },
     UpgradeDef {
         id: "cash_4",
-        price: 80_000.0,
+        price: 48_000.0,
         requires: Some("cash_3"),
     },
     UpgradeDef {
         id: "cash_5",
-        price: 200_000.0,
+        price: 120_000.0,
         requires: Some("cash_4"),
     },
     // Отдельные улучшения (без цепочки).
     UpgradeDef {
         id: "advert",
-        price: 10_000.0,
+        price: 6_000.0,
         requires: None,
     },
     UpgradeDef {
         id: "price_license",
-        price: 25_000.0,
+        price: 15_000.0,
         requires: None,
     },
     UpgradeDef {
         id: "vip_license",
-        price: 30_000.0,
+        price: 18_000.0,
         requires: None,
     },
     // Цепочка склада приказчика (+5 ячеек за улучшение, до 20).
     UpgradeDef {
         id: "stock_1",
-        price: 12_000.0,
+        price: 7_000.0,
         requires: None,
     },
     UpgradeDef {
         id: "stock_2",
-        price: 35_000.0,
+        price: 20_000.0,
         requires: Some("stock_1"),
     },
     UpgradeDef {
         id: "stock_3",
-        price: 90_000.0,
+        price: 55_000.0,
         requires: Some("stock_2"),
     },
 ];
@@ -1086,6 +1098,19 @@ pub fn buyer_interval(state: &GameState) -> Option<f64> {
         .map(|shop| shop.rating as f64)
         .unwrap_or(balance::SHOP_STARTING_RATING as f64);
     let mut interval = (balance::SHOP_BUYER_BASE_INTERVAL * (1.0 - rating * 0.1)).max(10.0);
+    // Чем больше полок, тем больше народу заходит: каждая полка сверх
+    // стартовых трёх ускоряет поток на `SHOP_SLOT_FLOW_STEP` (к восьми
+    // полкам — на четверть). Прирост намеренно маленький: полки не должны
+    // превращать лавку в печатный станок.
+    let slots = state
+        .city
+        .shop
+        .as_ref()
+        .map(|shop| shop.slots.len() as u32)
+        .unwrap_or(balance::SHOP_STARTING_SLOTS);
+    let extra = slots.saturating_sub(balance::SHOP_STARTING_SLOTS);
+    let flow = 1.0 - balance::SHOP_SLOT_FLOW_STEP * extra as f64;
+    interval *= flow.clamp(0.5, 1.0);
     if fair_active(state) {
         interval *= 0.5;
     }
@@ -1199,8 +1224,10 @@ fn step_entry(entry: &mut DemandEntry, seed: &mut u64) {
     let target_supply = (balance::DEMAND_EQUILIBRIUM as i32 - trend).clamp(5, 95) as u8;
     entry.demand = (entry.demand as i32 + super::market::noise(seed, 2)).clamp(5, 95) as u8;
     entry.supply = (entry.supply as i32 + super::market::noise(seed, 2)).clamp(5, 95) as u8;
-    entry.demand = super::market::approach(entry.demand, target_demand, balance::DEMAND_RETURN_STEP);
-    entry.supply = super::market::approach(entry.supply, target_supply, balance::DEMAND_RETURN_STEP);
+    entry.demand =
+        super::market::approach(entry.demand, target_demand, balance::DEMAND_RETURN_STEP);
+    entry.supply =
+        super::market::approach(entry.supply, target_supply, balance::DEMAND_RETURN_STEP);
 }
 
 /// Продвигает спрос на `dt` секунд: цеховые шаги и налив полки.
@@ -1699,10 +1726,37 @@ pub fn try_buyer(state: &mut GameState) -> Option<SaleRecord> {
         return None;
     }
     let mut seed = state.market_seed;
-    let index = options[super::trader::random_below(&mut seed, options.len() as u64) as usize];
     let leave_roll = random_unit(&mut seed);
     let amount_roll = random_unit(&mut seed);
     state.market_seed = seed;
+
+    // Слишком дорогую полку обычный покупатель просто пропускает и смотрит
+    // соседние товары. Раньше он уходил из лавки совсем, и одна полка
+    // с наценкой 1.5 обрывала весь поток, даже если остальное дешевле.
+    let fair = fair_active(state);
+    let patient: Vec<usize> = options
+        .iter()
+        .copied()
+        .filter(|index| {
+            if fair {
+                return true;
+            }
+            state
+                .city
+                .shop
+                .as_ref()
+                .and_then(|shop| shop.slots.get(*index))
+                .map(|slot| price_leave_chance(slot.price_mult) <= leave_roll)
+                .unwrap_or(false)
+        })
+        .collect();
+    // Все полки дорогие — тогда покупатель уходит, как и раньше.
+    let all_priced_out = patient.is_empty();
+    let pick_from: &[usize] = if all_priced_out { &options } else { &patient };
+    let mut seed = state.market_seed;
+    let index = pick_from[super::trader::random_below(&mut seed, pick_from.len() as u64) as usize];
+    state.market_seed = seed;
+    let leave_roll = if all_priced_out { leave_roll } else { 0.0 };
 
     match buyer_decision(state, index, leave_roll, vip_roll) {
         BuyerDecision::Buy { vip } => {
@@ -1807,10 +1861,9 @@ pub fn pay_tax(state: &mut GameState) -> TaxOutcome {
         None => return TaxOutcome::NoShop,
     };
     let percent = balance::CITY_TAX_PERCENT;
-    // Налог с производства: процент со стоимости потока линий за цикл.
-    let production_tax = state.city.production_value * balance::CITY_PRODUCTION_TAX_PERCENT;
-    state.city.production_value = 0.0;
-    let amount = revenue * percent + production_tax;
+    // Налог с производства больше не входит в налог лавки: он переехал
+    // в Ратушу отдельной строкой «зарплата рабочим» (`production_salary`).
+    let amount = revenue * percent;
     if amount <= 1e-6 {
         state.city.tax_warning_sent = false;
         state.city.tax_due = 0.0;
@@ -2013,7 +2066,7 @@ pub fn buy_upgrade(state: &mut GameState, id: &str) -> Result<(), GuildError> {
     state.city.upgrades.insert(id.to_string());
 
     match id {
-        "slots_1" | "slots_2" => {
+        "slots_1" | "slots_2" | "slots_3" | "slots_4" | "slots_5" => {
             if let Some(shop) = state.city.shop.as_mut() {
                 shop.max_slots = (shop.max_slots + 1).min(balance::SHOP_MAX_SLOTS);
             }
@@ -2310,13 +2363,44 @@ pub fn hired_salary(state: &GameState) -> f64 {
         * balance::HIRE_SALARY
 }
 
-/// Вся зарплата за цикл: наёмные, кузнецы, приказчик.
+/// Выручка лавки за последний цикл (30 минут) — база зарплаты приказчика.
+fn shop_cycle_revenue(state: &GameState) -> f64 {
+    let Some(shop) = state.city.shop.as_ref() else {
+        return 0.0;
+    };
+    let timestamp = now(state);
+    shop.sales
+        .iter()
+        .filter(|sale| sale.timestamp >= timestamp - balance::CITY_TAX_INTERVAL)
+        .map(|sale| sale.total)
+        .sum()
+}
+
+/// Зарплата приказчика за цикл: 5 % выручки, но не выше потолка.
+///
+/// Приказчик больше не получает фиксированные 100 золота: при живой лавке
+/// это была почти бесплатная рабочая сила.
+pub fn clerk_salary(state: &GameState) -> f64 {
+    if !state.city.clerk_hired {
+        return 0.0;
+    }
+    (shop_cycle_revenue(state) * balance::CLERK_PROFIT_SHARE).min(balance::CLERK_SALARY_MAX)
+}
+
+/// Зарплата рабочим: доля стоимости потока линий за цикл.
+///
+/// Раньше это был «налог с производства» внутри налога лавки. Игрок просил
+/// перенести его в Ратушу отдельной строкой рядом с налогом магазина.
+pub fn production_salary(state: &GameState) -> f64 {
+    state.city.production_value * balance::CITY_PRODUCTION_TAX_PERCENT
+}
+
+/// Вся зарплата за цикл: наёмные, кузнецы, приказчик и рабочие линий.
 pub fn salary_total(state: &GameState) -> f64 {
     let mut total = hired_salary(state);
     total += smith_wages(state);
-    if state.city.clerk_hired {
-        total += balance::CLERK_SALARY;
-    }
+    total += clerk_salary(state);
+    total += production_salary(state);
     total
 }
 
@@ -2395,13 +2479,20 @@ pub fn pay_salaries(state: &mut GameState) -> SalaryOutcome {
     if total <= 1e-6 {
         // Счёт не создаём в пустом городе, но если он уже есть — обновляем,
         // чтобы в колокольчике всегда была последняя сумма.
-        if state.letters.iter().any(|letter| letter.id == "salary_bill") {
+        state.city.production_value = 0.0;
+        if state
+            .letters
+            .iter()
+            .any(|letter| letter.id == "salary_bill")
+        {
             record_salary_bill(state, state::SalaryBillStage::Paid);
         }
         return SalaryOutcome::Nothing;
     }
     if state.gold + 1e-9 >= total {
         state.gold -= total;
+        // Рабочие линий получили своё: поток начинается заново.
+        state.city.production_value = 0.0;
         for smith in &mut state.city.smiths {
             smith.wage_due = 0.0;
             smith.paused = false;
@@ -2409,6 +2500,7 @@ pub fn pay_salaries(state: &mut GameState) -> SalaryOutcome {
         record_salary_bill(state, state::SalaryBillStage::Paid);
         return SalaryOutcome::Paid;
     }
+    state.city.production_value = 0.0;
     let had_hired = state.city.hired_sawmill + state.city.hired_mine + state.city.hired_coal > 0;
     state.city.hired_sawmill = 0;
     state.city.hired_mine = 0;
@@ -2438,9 +2530,13 @@ pub struct TravelerProfileDef {
     pub specialism: &'static str,
 }
 
-/// Три постоянных жителя таверны. После постройки Дома странников к ним
-/// добавятся ещё двое (веха v0.22, пятый блок).
-pub const TRAVELER_PROFILES: [TravelerProfileDef; 3] = [
+/// Пять постоянных жителей таверны. Первые трое живут в таверне сразу,
+/// двое переезжают после постройки Дома странников.
+///
+/// Массив обязан покрывать `balance::TRAVELER_TARGET_COUNT`: раньше здесь
+/// было три записи, а `extend_travelers` добавлял профили 3 и 4, поэтому
+/// `traveler_profile` откатывался на первого — в доме жили три Ивана.
+pub const TRAVELER_PROFILES: [TravelerProfileDef; 5] = [
     TravelerProfileDef {
         id: "ivan",
         specialism: "forester",
@@ -2453,269 +2549,18 @@ pub const TRAVELER_PROFILES: [TravelerProfileDef; 3] = [
         id: "stefan",
         specialism: "miner",
     },
+    TravelerProfileDef {
+        id: "aldric",
+        specialism: "trader",
+    },
+    TravelerProfileDef {
+        id: "helga",
+        specialism: "herbalist",
+    },
 ];
-
-/// Сколько кружков дружбы нужно, чтобы путешественник задал очередной квест.
-/// Два кружка — первый разговорный квест, три — второй, четыре — компас.
-pub const TRAVELER_QUEST_STEPS: [u32; 3] = [2, 3, 4];
-
-/// Сколько кружков дружбы набирается, чтобы стать другом.
-pub const TRAVELER_FRIEND_CIRCLES: u32 = 5;
-
-/// Сколько кружков рисуется в карточке.
-pub const TRAVELER_CIRCLES: u32 = 5;
 
 /// Предмет, который путешественник просит принести.
 pub const TRAVELER_COMPASS_ITEM: &str = "compass";
-
-/// Тип квеста путешественника.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TravelerQuestKind {
-    /// Разговор: игрок выбирает ответ.
-    Story,
-    /// Принести изготовленный компас.
-    Compass,
-}
-
-/// Вариант ответа в разговорном квесте.
-pub struct TravelerChoiceDef {
-    pub id: &'static str,
-    /// Правильный ли ответ (успех — прибавка дружбы).
-    pub good: bool,
-}
-
-/// Разговорный квест путешественника.
-pub struct TravelerQuestDef {
-    /// Ключ `traveler_quest.<id>.title/.intro`.
-    pub id: &'static str,
-    pub kind: TravelerQuestKind,
-    pub choices: &'static [TravelerChoiceDef],
-}
-
-/// Перевал в тумане: совет старухи у костра — брать соль.
-const PASS_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "salt",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "raven",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "night",
-        good: false,
-    },
-];
-
-/// Разбойники без оружия: отдать половину и уйти живым.
-const BANDITS_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "share",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "run",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "fight",
-        good: false,
-    },
-];
-
-/// Капитан и компас: чужое возвращают хозяину.
-const CAPTAIN_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "gave",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "kept",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "sold",
-        good: false,
-    },
-];
-
-/// Купец и кожа: честная цена важнее наживы.
-const LEATHER_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "friend",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "me",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "neither",
-        good: false,
-    },
-];
-
-/// Шум в лесу: это был заблудившийся охотник.
-const FOREST_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "hunter",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "werewolf",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "ghost",
-        good: false,
-    },
-];
-
-/// Иностранное слово: «киоск» — маленькая лавка для путников.
-const KIOSK_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "shop",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "weapon",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "knot",
-        good: false,
-    },
-];
-
-/// Колодец в пустыне: вода живая, её можно пить.
-const DESERT_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "drink",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "test",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "pass",
-        good: false,
-    },
-];
-
-/// Песня у костра: пела мать, провожавшая сына.
-const SONG_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "mother",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "bandit",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "witch",
-        good: false,
-    },
-];
-
-/// Две дороги: через лес — там можно укрыться от непогоды.
-const ROADS_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "forest",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "field",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "river",
-        good: false,
-    },
-];
-
-/// Последний город: важнее всего оказался друг.
-const CITY_CHOICES: &[TravelerChoiceDef] = &[
-    TravelerChoiceDef {
-        id: "friend",
-        good: true,
-    },
-    TravelerChoiceDef {
-        id: "debt",
-        good: false,
-    },
-    TravelerChoiceDef {
-        id: "mistake",
-        good: false,
-    },
-];
-
-/// Пул из десяти разговорных квестов плюс просьба о компасе в конце.
-/// Разговорные истории выдаются в случайном порядке, компас — последним.
-pub const TRAVELER_QUESTS: [TravelerQuestDef; 11] = [
-    TravelerQuestDef {
-        id: "pass_fog",
-        kind: TravelerQuestKind::Story,
-        choices: PASS_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "bandits_unarmed",
-        kind: TravelerQuestKind::Story,
-        choices: BANDITS_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "captain_compass",
-        kind: TravelerQuestKind::Story,
-        choices: CAPTAIN_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "merchant_leather",
-        kind: TravelerQuestKind::Story,
-        choices: LEATHER_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "forest_noise",
-        kind: TravelerQuestKind::Story,
-        choices: FOREST_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "road_language",
-        kind: TravelerQuestKind::Story,
-        choices: KIOSK_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "desert_well",
-        kind: TravelerQuestKind::Story,
-        choices: DESERT_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "campfire_song",
-        kind: TravelerQuestKind::Story,
-        choices: SONG_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "two_roads",
-        kind: TravelerQuestKind::Story,
-        choices: ROADS_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "last_city",
-        kind: TravelerQuestKind::Story,
-        choices: CITY_CHOICES,
-    },
-    TravelerQuestDef {
-        id: "captain_compass_ask",
-        kind: TravelerQuestKind::Compass,
-        choices: &[],
-    },
-];
-
-/// Квест по id.
-pub fn traveler_quest(quest_id: &str) -> Option<&'static TravelerQuestDef> {
-    TRAVELER_QUESTS.iter().find(|quest| quest.id == quest_id)
-}
 
 /// Данные путешественника по номеру в списке.
 pub fn traveler_profile(profile_id: usize) -> &'static TravelerProfileDef {
@@ -2736,100 +2581,51 @@ pub fn traveler_specialism(profile_id: usize) -> &'static str {
     i18n::t(&format!("traveler.spec.{}", profile.specialism))
 }
 
-/// Сколько полных кружков дружбы у путешественника.
-pub fn traveler_circles(traveler: &Traveler) -> u32 {
-    (traveler.friendship / balance::TRAVELER_FRIENDSHIP_POINT).min(TRAVELER_CIRCLES)
-}
-
 /// Свободен ли путешественник (не в походе).
 pub fn traveler_ready(traveler: &Traveler) -> bool {
     traveler.returns_at <= 0.0
 }
 
-/// Стал ли путешественник другом.
-pub fn traveler_is_friend(traveler: &Traveler) -> bool {
-    traveler_circles(traveler) >= TRAVELER_FRIEND_CIRCLES
+/// Потерял ли странник компас и ждёт ли замену.
+pub fn traveler_waits_for_compass(traveler: &Traveler) -> bool {
+    traveler.compass_asked
 }
 
-/// Следующий квест персонажа, если дружба до него доросла.
-pub fn next_traveler_quest(traveler: &Traveler) -> Option<&'static TravelerQuestDef> {
-    if traveler.active_quest.is_some() || !traveler.carried.is_empty() {
-        return None;
-    }
-    let circles = traveler_circles(traveler);
-    if circles < TRAVELER_QUEST_STEPS[0] {
-        return None;
-    }
-    if traveler_is_friend(traveler) {
-        return None;
-    }
-    // Компас — только после двух разговорных квестов.
-    if circles >= TRAVELER_QUEST_STEPS[2] {
-        let last = TRAVELER_QUESTS
-            .iter()
-            .find(|quest| quest.kind == TravelerQuestKind::Compass)
-            .expect("compass quest exists");
-        if !traveler.quests_asked.iter().any(|id| id == last.id) {
-            return Some(last);
-        }
-    }
-    // Разговорные квесты выдаются в порядке пула.
-    TRAVELER_QUESTS
-        .iter()
-        .filter(|quest| quest.kind == TravelerQuestKind::Story)
-        .find(|quest| {
-            !traveler.quests_asked.iter().any(|id| id == quest.id)
-                && !traveler.quests_failed.iter().any(|id| id == quest.id)
-        })
+/// Сколько походов осталось до разговора о компасе.
+pub fn traveler_trips_left(traveler: &Traveler) -> u32 {
+    balance::TRAVELER_TRIPS_BEFORE_COMPASS.saturating_sub(traveler.trips_done)
 }
 
-/// Что сейчас можно сделать с путешественником: строка квеста в карточке.
+/// Что сейчас происходит у странника: подпись в его карточке.
 #[derive(Clone, Debug, PartialEq)]
-pub enum TravelerQuestStep {
-    /// Ничего: дружбы не хватает.
-    None,
-    /// Можно начать квест (`next_traveler_quest`).
-    Start(String),
-    /// Квест начат и ждёт решения игрока.
-    Active(String),
-    /// Квест пройден, нужно закрыть реплику.
-    Result {
-        quest: String,
-        good: bool,
-        friend: bool,
-    },
-    /// Путешественник стал другом и предлагает построить Дом странников.
-    OfferHouse,
+pub enum TravelerStage {
+    /// Ещё ходит в походы: до потери компаса осталось N раз.
+    Trips { left: u32 },
+    /// Потерял компас в пути и просит новый.
+    Compass,
+    /// Компас передан: дом предложен, земля в Ратуше открыта.
+    HouseOffered,
 }
 
-impl TravelerQuestStep {
-    /// Что сейчас можно сделать с путешественником.
-    pub fn of(traveler: &Traveler) -> Self {
-        if let Some(quest) = traveler.active_quest.clone() {
-            if traveler.quest_result {
-                let friend = traveler_is_friend(traveler);
-                let good = !traveler.quests_failed.contains(&quest);
-                return Self::Result {
-                    quest,
-                    good,
-                    friend,
-                };
-            }
-            return Self::Active(quest);
+impl TravelerStage {
+    /// Что сейчас происходит у странника.
+    pub fn of(state: &GameState, traveler: &Traveler) -> Self {
+        if state.city.traveler_house_offered {
+            return Self::HouseOffered;
         }
-        if traveler_is_friend(traveler) {
-            return Self::OfferHouse;
+        if traveler_waits_for_compass(traveler) {
+            return Self::Compass;
         }
-        match next_traveler_quest(traveler) {
-            Some(quest) => Self::Start(quest.id.to_string()),
-            None => Self::None,
+        Self::Trips {
+            left: traveler_trips_left(traveler),
         }
     }
 }
 
-/// Создаёт троих постоянных жителей таверны, если их ещё нет.
+/// Создаёт жителей таверны, если их ещё нет.
 ///
-/// До открытия города путешественников нет: их приносит с собой город.
+/// В таверне живёт один авантюрист: остальные появляются в Доме странников
+/// за доплату.
 pub fn ensure_travelers(state: &mut GameState) {
     if !state.city.unlocked {
         return;
@@ -2858,186 +2654,58 @@ pub fn ensure_travelers(state: &mut GameState) {
         .sort_by_key(|traveler| traveler.profile_id);
 }
 
-/// Начинает квест путешественника.
-pub fn start_traveler_quest(state: &mut GameState, index: usize) -> Result<(), TravelerError> {
-    ensure_travelers(state);
-    let Some(traveler) = state.city.travelers.get(index) else {
+/// Сколько стоит следующий странник в Доме.
+///
+/// Первые два живут бесплатно, дальше каждый дороже предыдущего на 40 %:
+/// 5 000, 7 000, 9 800 и так далее.
+pub fn traveler_hire_price(state: &GameState) -> f64 {
+    let paid = state
+        .city
+        .travelers
+        .len()
+        .saturating_sub(balance::TRAVELER_HOUSE_FREE_BEDS);
+    balance::TRAVELER_HIRE_BASE_PRICE * balance::TRAVELER_HIRE_PRICE_GROWTH.powi(paid as i32)
+}
+
+/// Нанимает ещё одного странника в Дом.
+pub fn hire_traveler(state: &mut GameState) -> Result<(), TravelerError> {
+    if !traveler_house_built(state) {
+        return Err(TravelerError::HouseNotOffered);
+    }
+    let profile_id = state.city.travelers.len();
+    if profile_id >= TRAVELER_PROFILES.len() {
         return Err(TravelerError::BadTraveler);
-    };
-    if !traveler_ready(traveler) {
-        return Err(TravelerError::Busy);
     }
-    if traveler.active_quest.is_some() {
-        return Err(TravelerError::QuestDecided);
+    let price = traveler_hire_price(state);
+    if state.gold + 1e-9 < price {
+        return Err(TravelerError::NotEnoughGold);
     }
-    let Some(next) = next_traveler_quest(traveler) else {
-        return Err(TravelerError::NoQuest);
-    };
-    // Компас — последним, а разговорные истории выдаются в случайном
-    // порядке: одна и та же последовательность наскучила бы к третьему
-    // персонажу.
-    let id = if next.kind == TravelerQuestKind::Compass {
-        next.id.to_string()
-    } else {
-        let traveler = &state.city.travelers[index];
-        let pool: Vec<&'static str> = TRAVELER_QUESTS
-            .iter()
-            .filter(|quest| quest.kind == TravelerQuestKind::Story)
-            .filter(|quest| {
-                !traveler.quests_asked.iter().any(|id| id == quest.id)
-                    && !traveler.quests_failed.iter().any(|id| id == quest.id)
-            })
-            .map(|quest| quest.id)
-            .collect();
-        if pool.is_empty() {
-            return Err(TravelerError::NoQuest);
-        }
-        let mut seed = state.market_seed ^ (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        let picked = super::trader::random_below(&mut seed, pool.len() as u64) as usize;
-        state.market_seed = seed;
-        pool[picked].to_string()
-    };
-    let traveler = &mut state.city.travelers[index];
-    traveler.quests_asked.push(id.clone());
-    traveler.active_quest = Some(id);
-    traveler.quest_result = false;
+    state.gold -= price;
+    state.city.travelers.push(Traveler {
+        profile_id,
+        ..Traveler::default()
+    });
     Ok(())
 }
 
-/// Начисляет или снимает дружбу, не выходя за границы.
-fn change_friendship(traveler: &mut Traveler, gain: u32, loss: u32) {
-    if gain > 0 {
-        let room = balance::TRAVELER_FRIENDSHIP_MAX.saturating_sub(traveler.friendship);
-        traveler.friendship += gain.min(room);
-    }
-    if loss > 0 {
-        traveler.friendship = traveler.friendship.saturating_sub(loss);
-    }
-}
-
-/// Отвечает на разговорный квест. Возвращает `true`, если ответ угадан.
-pub fn answer_traveler_quest(
-    state: &mut GameState,
-    index: usize,
-    choice_id: &str,
-) -> Result<bool, TravelerError> {
-    let Some(traveler) = state.city.travelers.get(index) else {
-        return Err(TravelerError::BadTraveler);
-    };
-    if traveler.quest_result {
-        return Err(TravelerError::QuestDecided);
-    }
-    let Some(quest_id) = traveler.active_quest.clone() else {
-        return Err(TravelerError::NoQuest);
-    };
-    let Some(quest) = traveler_quest(&quest_id) else {
-        return Err(TravelerError::NoQuest);
-    };
-    let Some(choice) = quest.choices.iter().find(|choice| choice.id == choice_id) else {
-        return Err(TravelerError::NoQuest);
-    };
-    let good = choice.good;
-    let traveler = &mut state.city.travelers[index];
-    if good {
-        change_friendship(traveler, balance::TRAVELER_QUEST_GAIN, 0);
-    } else {
-        // Промах отнимает кружок дружбы, а история уходит из пула и у
-        // этого персонажа больше не появится.
-        change_friendship(traveler, 0, balance::TRAVELER_QUEST_LOSS);
-        traveler.quests_failed.push(quest_id);
-    }
-    traveler.quest_result = true;
-    Ok(good)
-}
-
-/// Закрывает реплику о результате квеста.
-pub fn finish_traveler_quest(state: &mut GameState, index: usize) -> Result<(), TravelerError> {
-    let Some(traveler) = state.city.travelers.get(index) else {
-        return Err(TravelerError::BadTraveler);
-    };
-    if !traveler.quest_result {
-        return Err(TravelerError::NoQuest);
-    }
-    let traveler = &mut state.city.travelers[index];
-    traveler.active_quest = None;
-    traveler.quest_result = false;
-    Ok(())
-}
-
-/// Принимает принесённый компас: последний квест, после которого
-/// путешественник становится другом.
+/// Принимает принесённый компас: странник предлагает построить дом.
+///
+/// Компас просит только тот, кто уже сходил в два похода.
 pub fn deliver_compass(state: &mut GameState, index: usize) -> Result<(), TravelerError> {
     let Some(traveler) = state.city.travelers.get(index) else {
         return Err(TravelerError::BadTraveler);
     };
-    if traveler.quest_result {
-        return Err(TravelerError::QuestDecided);
-    }
-    let Some(quest_id) = traveler.active_quest.clone() else {
-        return Err(TravelerError::NoQuest);
-    };
-    let Some(quest) = traveler_quest(&quest_id) else {
-        return Err(TravelerError::NoQuest);
-    };
-    if quest.kind != TravelerQuestKind::Compass {
+    if !traveler_waits_for_compass(traveler) {
         return Err(TravelerError::NoQuest);
     }
     if state.item_count(TRAVELER_COMPASS_ITEM) == 0 {
         return Err(TravelerError::NoCompass);
     }
     state.remove_item(TRAVELER_COMPASS_ITEM, 1);
-    let traveler = &mut state.city.travelers[index];
-    change_friendship(traveler, balance::TRAVELER_QUEST_GAIN, 0);
-    traveler.quest_result = true;
+    state.city.travelers[index].compass_asked = false;
     state.city.traveler_house_offered = true;
     state.add_letter("traveler_compass_brought", None);
     Ok(())
-}
-
-/// Что дал разговор с путешественником.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TravelerTalk {
-    /// Дружба выросла на один кружок.
-    Friendship,
-    /// Дружбы уже хватало: разговор сразу открыл историю.
-    Quest,
-}
-
-/// Разговор с путешественником: 100 золотых и один кружок дружбы.
-///
-/// Если дружбы уже хватает на очередную историю, разговор бесплатно
-/// открывает её — иначе игрок платил бы за молчание, а болтовня обгоняла
-/// бы квесты и доводила до дружбы, не рассказав ни одной истории.
-pub fn talk_to_traveler(
-    state: &mut GameState,
-    index: usize,
-) -> Result<TravelerTalk, TravelerError> {
-    ensure_travelers(state);
-    let Some(traveler) = state.city.travelers.get(index) else {
-        return Err(TravelerError::BadTraveler);
-    };
-    if traveler.active_quest.is_some() {
-        return Ok(TravelerTalk::Quest);
-    }
-    if next_traveler_quest(traveler).is_some() {
-        start_traveler_quest(state, index)?;
-        return Ok(TravelerTalk::Quest);
-    }
-    let step = TRAVELER_QUEST_STEPS[0];
-    if traveler_circles(traveler) >= step {
-        return Err(TravelerError::NoQuest);
-    }
-    let price = balance::TRAVELER_TALK_PRICE;
-    if state.gold + 1e-9 < price {
-        return Err(TravelerError::NotEnoughGold);
-    }
-    state.gold -= price;
-    let traveler = &mut state.city.travelers[index];
-    change_friendship(traveler, balance::TRAVELER_QUEST_GAIN, 0);
-    // Дальше дружбу дают сами истории: разговор не должен перескочить порог.
-    let cap = step * balance::TRAVELER_FRIENDSHIP_POINT;
-    traveler.friendship = traveler.friendship.min(cap);
-    Ok(TravelerTalk::Friendship)
 }
 
 /// Ответил ли игрок на предложение построить Дом странников.
@@ -3061,6 +2729,11 @@ pub fn send_traveler(
     };
     if !traveler_ready(traveler) {
         return Err(TravelerError::Busy);
+    }
+    // Пока странник ждёт компас, в дорогу он не собирается: он потерял
+    // ориентир и без компаса не выйдет.
+    if traveler_waits_for_compass(traveler) {
+        return Err(TravelerError::NoQuest);
     }
     if !traveler.carried.is_empty() || traveler.payout > 1e-9 {
         return Err(TravelerError::LootWaiting);
@@ -3151,8 +2824,7 @@ pub fn traveler_payout_value(loot: &[(String, u32)], gear: TravelerGearBonus) ->
         return 0.0;
     }
     let mut share = balance::TRAVELER_PAYOUT_LOOT_SHARE
-        + (balance::TRAVELER_PAYOUT_PERCENT - balance::TRAVELER_PAYOUT_LOOT_SHARE)
-            * gear.payout;
+        + (balance::TRAVELER_PAYOUT_PERCENT - balance::TRAVELER_PAYOUT_LOOT_SHARE) * gear.payout;
     if gear.payout > 0.0 {
         share = share.max(balance::TRAVELER_PAYOUT_MIN_WITH_TRADE);
     }
@@ -3181,7 +2853,8 @@ pub fn tick_travelers(state: &mut GameState) {
             *quantity = ((*quantity as f64) * (1.0 + share)).round() as u32;
         }
         let payout = traveler_payout_value(&loot, gear);
-        let carried: Vec<(String, u32)> = loot.iter().filter(|(_, qty)| *qty > 0).cloned().collect();
+        let carried: Vec<(String, u32)> =
+            loot.iter().filter(|(_, qty)| *qty > 0).cloned().collect();
         let traveler = &mut state.city.travelers[index];
         traveler.returns_at = 0.0;
         traveler.trip.clear();
@@ -3189,6 +2862,14 @@ pub fn tick_travelers(state: &mut GameState) {
         traveler.last_empty = carried.is_empty();
         traveler.carried = carried;
         traveler.payout = payout;
+        traveler.trips_done += 1;
+        // После двух походов странник теряет компас и просит новый: с этого
+        // момента отправлять его больше нельзя, пока компас не вернут.
+        if traveler.trips_done >= balance::TRAVELER_TRIPS_BEFORE_COMPASS
+            && !state.city.traveler_house_offered
+        {
+            traveler.compass_asked = true;
+        }
         let letter_id = if traveler.last_empty {
             format!("traveler_empty:{}", traveler.profile_id)
         } else {
@@ -3420,9 +3101,12 @@ pub fn tick_traveler_house(state: &mut GameState) {
     }
 }
 
-/// После постройки дома в таверне живут пятеро.
+/// После постройки дома в нём живут двое бесплатных странников.
+///
+/// Остальные места покупаются за золото (`hire_traveler`), поэтому дом
+/// больше не подселяет всех пятерых даром.
 fn extend_travelers(state: &mut GameState) {
-    for profile_id in TRAVELER_PROFILES.len()..balance::TRAVELER_TARGET_COUNT {
+    for profile_id in 0..balance::TRAVELER_HOUSE_FREE_BEDS {
         if state
             .city
             .travelers
@@ -3907,6 +3591,14 @@ pub fn set_clerk_mult(state: &mut GameState, mult: f32) {
     state.city.clerk_mult = mult.clamp(balance::CLERK_MULT_MIN, balance::CLERK_MULT_MAX);
 }
 
+/// Ставит приказчика на паузу или снимает её.
+///
+/// Пауза нужна, когда игрок сам раскладывает полки: иначе приказчик
+/// переставляет товар прямо под руками.
+pub fn toggle_clerk_pause(state: &mut GameState) {
+    state.city.clerk_paused = !state.city.clerk_paused;
+}
+
 /// Приказчик постоянно следит за лавкой.
 ///
 /// Раньше он просыпался раз в минуту по таймеру и за один заход делал всё:
@@ -3918,6 +3610,10 @@ pub fn set_clerk_mult(state: &mut GameState, mult: f32) {
 /// `CLERK_ROTATE_SECS` и только при явной выгоде.
 pub fn tick_clerk(state: &mut GameState) {
     if !state.city.clerk_hired {
+        return;
+    }
+    // Пауза: приказчик отдыхает и не трогает ни полки, ни склад.
+    if state.city.clerk_paused {
         return;
     }
     state.city.next_clerk_at = now(state);
@@ -4158,13 +3854,11 @@ pub fn stock_plan(
         let b = demand_of(state, &right.item_id);
         // Сначала то, что город хочет сильнее; при равном спросе — то,
         // у чего больше невыпитого налива.
-        b.demand
-            .cmp(&a.demand)
-            .then_with(|| {
-                b.available
-                    .partial_cmp(&a.available)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        b.demand.cmp(&a.demand).then_with(|| {
+            b.available
+                .partial_cmp(&a.available)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     let mut plan: Vec<(String, u32)> = Vec::new();
@@ -4414,12 +4108,15 @@ fn roll_competitor_items(state: &mut GameState) -> Vec<String> {
     picked
 }
 
-/// Случайное городское событие. Вызывается по таймеру раз в 30 минут.
-pub fn try_spawn_event(state: &mut GameState) {
+/// Случайное городское событие. Возвращает `true`, если событие началось.
+///
+/// Вызывается по таймеру: если бросок не прошёл, город попробует ещё раз
+/// через `CITY_EVENT_RETRY_SECS`, а не через полчаса.
+pub fn try_spawn_event(state: &mut GameState) -> bool {
     let timestamp = now(state);
     let chance = super::trader::random_below(&mut state.market_seed, 100);
     if chance >= balance::CITY_EVENT_CHANCE {
-        return;
+        return false;
     }
     let pick = super::trader::random_below(&mut state.market_seed, 100) as u32;
     state.city.active_event = match pick {
@@ -4452,6 +4149,7 @@ pub fn try_spawn_event(state: &mut GameState) {
             ends_at: timestamp + balance::CITY_EVENT_FAIR_SECS,
         }),
     };
+    true
 }
 
 /// Городской тик: сюжет, налоги, события, покупатели.
@@ -4466,7 +4164,7 @@ pub fn tick_city(state: &mut GameState) {
         state.city.next_tax_at = timestamp + balance::CITY_TAX_INTERVAL;
     }
     if state.city.next_event_at <= 0.0 {
-        state.city.next_event_at = timestamp + balance::CITY_TAX_INTERVAL;
+        state.city.next_event_at = timestamp + balance::CITY_EVENT_FIRST_SECS;
     }
     if state.city.next_salary_at <= 0.0 {
         state.city.next_salary_at = timestamp + balance::CITY_TAX_INTERVAL;
@@ -4510,9 +4208,15 @@ pub fn tick_city(state: &mut GameState) {
     tick_traveler_house(state);
 
     if timestamp >= state.city.next_event_at {
-        try_spawn_event(state);
+        let started = try_spawn_event(state);
         let jitter = super::trader::random_below(&mut state.market_seed, 1_201) as f64 - 600.0;
-        state.city.next_event_at = timestamp + balance::CITY_TAX_INTERVAL + jitter;
+        // Событие началось — следующий бросок через полчаса (плюс разброс).
+        // Пусто — короткая пауза, иначе игрок мог месяцами не видеть событий.
+        state.city.next_event_at = if started {
+            timestamp + balance::CITY_TAX_INTERVAL + jitter
+        } else {
+            timestamp + balance::CITY_EVENT_RETRY_SECS + jitter * 0.1
+        };
     }
 
     // Покупатели.
@@ -4838,6 +4542,40 @@ mod tests {
             buyer_decision(&state, 0, 0.0, 0.99),
             BuyerDecision::Buy { .. }
         ));
+    }
+
+    #[test]
+    fn expensive_shelf_does_not_stop_the_flow() {
+        let mut state = city_with_shop();
+        state.add_item("robe", 500);
+        state.add_item("candle", 500);
+        add_slot(&mut state, "robe", 200, 1.5).unwrap();
+        add_slot(&mut state, "candle", 200, 1.0).unwrap();
+        let rating_before = state.city.shop.as_ref().unwrap().rating;
+
+        // Дорогая полка не должна выгонять покупателей из лавки: они
+        // просто берут соседний товар. Раньше наценка 1.5 обрывала поток.
+        let mut sold = 0;
+        for _ in 0..200 {
+            {
+                let shop = state.city.shop.as_mut().unwrap();
+                shop.cash = 0.0;
+                for slot in shop.slots.iter_mut() {
+                    slot.quantity = 100;
+                }
+            }
+            if try_buyer(&mut state).is_some() {
+                sold += 1;
+            }
+        }
+
+        assert!(sold > 100, "поток оборвался: продаж {sold}");
+        let shop = state.city.shop.as_ref().unwrap();
+        assert!(
+            shop.rating >= rating_before - 1e-6,
+            "рейтинг упал: {}",
+            shop.rating
+        );
     }
 
     #[test]
@@ -5575,10 +5313,16 @@ mod tests {
         state.gold = 10_000.0;
 
         assert_eq!(pay_salaries(&mut state), SalaryOutcome::Paid);
-        assert!(state.letters.iter().any(|letter| letter.id == "salary_bill"));
+        assert!(state
+            .letters
+            .iter()
+            .any(|letter| letter.id == "salary_bill"));
         // Прочитали — письмо остаётся на месте.
         state.open_letter("salary_bill");
-        assert!(state.letters.iter().any(|letter| letter.id == "salary_bill"));
+        assert!(state
+            .letters
+            .iter()
+            .any(|letter| letter.id == "salary_bill"));
 
         // Состояние счёта не переписывается повторным тиком.
         assert_eq!(state.salary_bill_stage, state::SalaryBillStage::Paid);
@@ -6308,13 +6052,19 @@ mod tests {
         state.city.next_clerk_at = 100.0;
         state.total_play_seconds = 100.0;
         tick_clerk(&mut state);
-        assert_eq!(shelf_quantity(&state, "wooden_bucket"), balance::CLERK_BATCH);
+        assert_eq!(
+            shelf_quantity(&state, "wooden_bucket"),
+            balance::CLERK_BATCH
+        );
 
         // Второй цикл не докладывает: на полке уже партия.
         state.total_play_seconds = 100.0 + balance::CLERK_INTERVAL;
         state.city.next_clerk_at = state.total_play_seconds;
         tick_clerk(&mut state);
-        assert_eq!(shelf_quantity(&state, "wooden_bucket"), balance::CLERK_BATCH);
+        assert_eq!(
+            shelf_quantity(&state, "wooden_bucket"),
+            balance::CLERK_BATCH
+        );
     }
 
     #[test]
@@ -6393,182 +6143,221 @@ mod tests {
     }
 
     #[test]
-    fn travelers_start_with_three_characters() {
+    fn tavern_keeps_a_single_adventurer() {
         let mut state = city_with_shop();
         ensure_travelers(&mut state);
         assert_eq!(state.city.travelers.len(), balance::TRAVELER_COUNT);
+        assert_eq!(balance::TRAVELER_COUNT, 1);
         let ids: Vec<usize> = state
             .city
             .travelers
             .iter()
             .map(|traveler| traveler.profile_id)
             .collect();
-        assert_eq!(ids, vec![0, 1, 2]);
-        // Повторный вызов ничего не добавляет и не сбрасывает дружбу.
-        state.city.travelers[0].friendship = 20;
+        assert_eq!(ids, vec![0]);
+        // Повторный вызов ничего не добавляет.
         ensure_travelers(&mut state);
         assert_eq!(state.city.travelers.len(), balance::TRAVELER_COUNT);
-        assert_eq!(state.city.travelers[0].friendship, 20);
     }
 
     #[test]
-    fn talk_costs_gold_and_adds_friendship() {
+    fn building_the_house_does_not_add_residents_for_free() {
         let mut state = city_with_shop();
         ensure_travelers(&mut state);
+        assert_eq!(state.city.travelers.len(), balance::TRAVELER_COUNT);
 
-        state.gold = 50.0;
-        assert_eq!(
-            talk_to_traveler(&mut state, 0),
-            Err(TravelerError::NotEnoughGold)
-        );
+        // Достраиваем дом: последний этап завершается в тике.
+        state.city.traveler_house_rented = true;
+        state.city.traveler_house_stage = balance::TRAVELER_HOUSE_STAGES - 1;
+        state.city.traveler_house_ends_at = state.total_play_seconds + 1.0;
+        state.total_play_seconds += 2.0;
+        tick_traveler_house(&mut state);
 
-        state.gold = balance::TRAVELER_TALK_PRICE * 10.0;
+        assert!(traveler_house_built(&state));
+        // Дом даёт ровно два бесплатных места: второй житель появляется,
+        // а остальные — только за золото.
         assert_eq!(
-            talk_to_traveler(&mut state, 0),
-            Ok(TravelerTalk::Friendship)
+            state.city.travelers.len(),
+            balance::TRAVELER_HOUSE_FREE_BEDS
         );
-        assert_eq!(
-            state.city.travelers[0].friendship,
-            balance::TRAVELER_FRIENDSHIP_POINT
-        );
-        assert_eq!(traveler_circles(&state.city.travelers[0]), 1);
-
-        // Второй разговор добирает дружбу до первого квеста, но не выше.
-        assert_eq!(
-            talk_to_traveler(&mut state, 0),
-            Ok(TravelerTalk::Friendship)
-        );
-        assert_eq!(
-            state.city.travelers[0].friendship,
-            balance::TRAVELER_FRIENDSHIP_POINT * TRAVELER_QUEST_STEPS[0]
-        );
-        assert_eq!(traveler_circles(&state.city.travelers[0]), 2);
-
-        // Дальше разговор не копит дружбу, а сразу открывает историю.
-        assert_eq!(talk_to_traveler(&mut state, 0), Ok(TravelerTalk::Quest));
-        assert!(state.city.travelers[0].active_quest.is_some());
     }
 
     #[test]
-    fn traveler_quest_chain_leads_to_friendship() {
+    fn hiring_fills_the_house_one_by_one() {
         let mut state = city_with_shop();
         ensure_travelers(&mut state);
-        state.city.travelers[0].friendship = 20;
-
-        // Разговорные истории выдаются случайно: подбираем верный ответ
-        // по самому квесту, а не по его месту в пуле.
-        let quest = next_traveler_quest(&state.city.travelers[0]).unwrap();
-        assert_eq!(quest.kind, TravelerQuestKind::Story);
-        start_traveler_quest(&mut state, 0).unwrap();
+        state.city.traveler_house_rented = true;
+        // Достраиваем дом в тике: он сам даёт два бесплатных места.
+        state.city.traveler_house_stage = balance::TRAVELER_HOUSE_STAGES - 1;
+        state.city.traveler_house_ends_at = state.total_play_seconds + 1.0;
+        state.total_play_seconds += 2.0;
+        tick_traveler_house(&mut state);
+        assert!(traveler_house_built(&state));
         assert_eq!(
-            start_traveler_quest(&mut state, 0),
-            Err(TravelerError::QuestDecided)
+            state.city.travelers.len(),
+            balance::TRAVELER_HOUSE_FREE_BEDS
         );
-        assert!(answer_traveler_quest(&mut state, 0, "base").is_err());
-        let first_id = state.city.travelers[0].active_quest.clone().unwrap();
-        let good_choice = traveler_quest(&first_id)
-            .unwrap()
-            .choices
+
+        state.gold = 1_000_000.0;
+        // Первый наём стоит базовую цену, дальше +40 % за каждого.
+        let first = traveler_hire_price(&state);
+        assert!((first - balance::TRAVELER_HIRE_BASE_PRICE).abs() < 1e-6);
+        hire_traveler(&mut state).expect("первый наём");
+        let second = traveler_hire_price(&state);
+        assert!(
+            (second - first * balance::TRAVELER_HIRE_PRICE_GROWTH).abs() < 1e-6,
+            "{first} -> {second}"
+        );
+        hire_traveler(&mut state).expect("второй наём");
+
+        let ids: Vec<usize> = state
+            .city
+            .travelers
             .iter()
-            .find(|choice| choice.good)
-            .unwrap()
-            .id;
-        let good = answer_traveler_quest(&mut state, 0, good_choice).unwrap();
-        assert!(good);
-        assert_eq!(state.city.travelers[0].friendship, 30);
-        finish_traveler_quest(&mut state, 0).unwrap();
-        assert_eq!(traveler_circles(&state.city.travelers[0]), 3);
+            .map(|traveler| traveler.profile_id)
+            .collect();
+        let mut unique = ids.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len(), "профили повторились: {ids:?}");
+    }
 
-        // Второй разговорный квест на трёх кружках — другая история.
-        let quest = next_traveler_quest(&state.city.travelers[0]).unwrap();
-        assert_eq!(quest.kind, TravelerQuestKind::Story);
-        start_traveler_quest(&mut state, 0).unwrap();
-        let second_id = state.city.travelers[0].active_quest.clone().unwrap();
-        assert_ne!(second_id, first_id, "история повторилась");
-        let good_choice = traveler_quest(&second_id)
-            .unwrap()
-            .choices
-            .iter()
-            .find(|choice| choice.good)
-            .unwrap()
-            .id;
-        answer_traveler_quest(&mut state, 0, good_choice).unwrap();
-        finish_traveler_quest(&mut state, 0).unwrap();
-        assert_eq!(state.city.travelers[0].friendship, 40);
-
-        // На четырёх кружках — просьба о компасе.
-        let quest = next_traveler_quest(&state.city.travelers[0]).unwrap();
-        assert_eq!(quest.kind, TravelerQuestKind::Compass);
+    #[test]
+    fn hiring_needs_a_built_house() {
+        let mut state = city_with_shop();
+        ensure_travelers(&mut state);
+        state.gold = 1_000_000.0;
         assert_eq!(
-            TravelerQuestStep::of(&state.city.travelers[0]),
-            TravelerQuestStep::Start("captain_compass_ask".to_string())
+            hire_traveler(&mut state),
+            Err(TravelerError::HouseNotOffered)
         );
-        start_traveler_quest(&mut state, 0).unwrap();
-        assert_eq!(
-            deliver_compass(&mut state, 0),
-            Err(TravelerError::NoCompass)
-        );
+    }
 
-        state.add_item(TRAVELER_COMPASS_ITEM, 1);
-        deliver_compass(&mut state, 0).unwrap();
-        assert_eq!(state.item_count(TRAVELER_COMPASS_ITEM), 0);
-        finish_traveler_quest(&mut state, 0).unwrap();
-        assert!(traveler_is_friend(&state.city.travelers[0]));
-        assert_eq!(state.city.travelers[0].friendship, 50);
+    #[test]
+    fn two_trips_make_the_traveler_lose_the_compass() {
+        let mut state = city_with_shop();
+        ensure_travelers(&mut state);
+        state.city.travelers[0].trips_done = 0;
+        assert_eq!(traveler_trips_left(&state.city.travelers[0]), 2);
+
+        // Первый поход: компас ещё при себе.
+        state.city.travelers[0].trips_done = 1;
+        assert!(!traveler_waits_for_compass(&state.city.travelers[0]));
+        assert_eq!(traveler_trips_left(&state.city.travelers[0]), 1);
+
+        // Второй поход: странник теряет компас и просит новый.
+        state.city.travelers[0].trips_done = balance::TRAVELER_TRIPS_BEFORE_COMPASS;
+        state.city.travelers[0].returns_at = state.total_play_seconds + 1.0;
+        state.total_play_seconds += 2.0;
+        tick_travelers(&mut state);
+        assert!(traveler_waits_for_compass(&state.city.travelers[0]));
+        assert_eq!(
+            TravelerStage::of(&state, &state.city.travelers[0]),
+            TravelerStage::Compass
+        );
+    }
+
+    #[test]
+    fn compass_opens_the_house_and_stops_the_trips() {
+        let mut state = city_with_shop();
+        ensure_travelers(&mut state);
+        state.city.travelers[0].compass_asked = true;
+        // Пока компаса нет, в дорогу не пускают.
+        assert_eq!(
+            send_traveler(&mut state, 0, "river_meadows"),
+            Err(TravelerError::NoQuest)
+        );
+        state.add_item("compass", 1);
+        deliver_compass(&mut state, 0).expect("компас принят");
         assert!(state.city.traveler_house_offered);
-        assert!(state
-            .letters
-            .iter()
-            .any(|letter| letter.id == "traveler_compass_brought"));
+        assert_eq!(state.item_count("compass"), 0);
         assert_eq!(
-            TravelerQuestStep::of(&state.city.travelers[0]),
-            TravelerQuestStep::OfferHouse
+            TravelerStage::of(&state, &state.city.travelers[0]),
+            TravelerStage::HouseOffered
         );
     }
 
     #[test]
-    fn failed_quest_leaves_the_pool_and_drops_friendship() {
-        let mut state = city_with_shop();
-        ensure_travelers(&mut state);
-        state.city.travelers[0].friendship = 30;
+    fn traveler_profiles_cover_every_resident() {
+        // Раньше профилей было три, а дом добавлял ещё двоих: четвёртый и
+        // пятый откатывались на первый, и в доме жили три Ивана.
+        assert!(TRAVELER_PROFILES.len() >= balance::TRAVELER_TARGET_COUNT);
+        let mut ids: Vec<&str> = TRAVELER_PROFILES.iter().map(|profile| profile.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), TRAVELER_PROFILES.len());
 
-        start_traveler_quest(&mut state, 0).unwrap();
-        let failed_id = state.city.travelers[0].active_quest.clone().unwrap();
-        let bad_choice = traveler_quest(&failed_id)
-            .unwrap()
-            .choices
-            .iter()
-            .find(|choice| !choice.good)
-            .unwrap()
-            .id;
-        let good = answer_traveler_quest(&mut state, 0, bad_choice).unwrap();
-        assert!(!good);
-        // Промах отнимает один кружок дружбы и блокирует историю.
-        assert_eq!(state.city.travelers[0].friendship, 20);
-        finish_traveler_quest(&mut state, 0).unwrap();
-
-        assert!(state.city.travelers[0]
-            .quests_failed
-            .iter()
-            .any(|id| id == &failed_id));
-
-        // Проваленный квест больше не предлагают — идёт другая история.
-        let quest = next_traveler_quest(&state.city.travelers[0]).unwrap();
-        assert_eq!(quest.kind, TravelerQuestKind::Story);
-        assert_ne!(quest.id, failed_id);
+        // У каждого жителя своё имя и своя специализация.
+        let names: Vec<&str> = (0..balance::TRAVELER_TARGET_COUNT)
+            .map(traveler_name)
+            .collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "имена повторяются: {names:?}");
+        assert_eq!(traveler_profile(0).id, "ivan");
+        for profile_id in 1..balance::TRAVELER_TARGET_COUNT {
+            assert_ne!(
+                traveler_profile(profile_id).id,
+                "ivan",
+                "профиль {profile_id} снова откатился на Ивана"
+            );
+        }
     }
 
     #[test]
-    fn old_save_gets_three_fresh_travelers() {
+    fn shop_shelf_chain_reaches_eight_slots() {
+        let mut state = city_with_shop();
+        state.city.guild_unlocked = true;
+        state.gold = 10_000_000.0;
+
+        let before = state.city.shop.as_ref().unwrap().max_slots;
+        for id in ["slots_1", "slots_2", "slots_3", "slots_4", "slots_5"] {
+            buy_upgrade(&mut state, id).expect(id);
+        }
+        assert_eq!(state.city.shop.as_ref().unwrap().max_slots, before + 5);
+        assert!(state.city.shop.as_ref().unwrap().max_slots >= 8);
+        // Дальше цепочки нет: все полки уже куплены.
+        assert!(!available_upgrades(&state)
+            .iter()
+            .any(|def| def.id.starts_with("slots_")));
+    }
+
+    #[test]
+    fn smith_speed_reaches_half_item_per_second() {
+        assert_eq!(
+            balance::smith_interval(balance::SMITH_SPEED_MAX_LEVEL),
+            2.0,
+            "верхняя скорость — 0.5 поделки в секунду"
+        );
+        // Каждая ступень дешевле предыдущей быть не должна, и цена есть
+        // на каждый уровень прокачки.
+        let mut previous = 0.0;
+        for level in 0..balance::SMITH_SPEED_MAX_LEVEL {
+            let cost = balance::smith_speed_cost(level);
+            assert!(cost.gold > previous, "уровень {level} дешевле прошлого");
+            previous = cost.gold;
+        }
+        // Пауза только сокращается.
+        let mut last = f64::INFINITY;
+        for level in 0..=balance::SMITH_SPEED_MAX_LEVEL {
+            let interval = balance::smith_interval(level);
+            assert!(interval < last, "уровень {level} медленнее прошлого");
+            last = interval;
+        }
+    }
+
+    #[test]
+    fn old_save_gets_one_fresh_traveler() {
         let mut state = city_with_shop();
         state.city.travelers.clear();
         ensure_travelers(&mut state);
         assert_eq!(state.city.travelers.len(), balance::TRAVELER_COUNT);
-        assert!(state
-            .city
-            .travelers
-            .iter()
-            .all(|traveler| traveler.friendship == 0 && traveler.active_quest.is_none()));
+        assert!(state.city.travelers.iter().all(|traveler| {
+            traveler.friendship == 0
+                && traveler.trips_done == 0
+                && !traveler.compass_asked
+                && traveler.carried.is_empty()
+        }));
     }
 
     #[test]
@@ -6753,14 +6542,20 @@ mod tests {
         state.gold = 1_000_000.0;
 
         // Дружбы нет — Ратуша землю не выделяет.
-        assert_eq!(rent_traveler_house(&mut state), Err(TravelerError::HouseNotOffered));
+        assert_eq!(
+            rent_traveler_house(&mut state),
+            Err(TravelerError::HouseNotOffered)
+        );
         assert!(!traveler_house_offer_made(&state));
 
         // Друг позвал — землю можно арендовать сразу, не дожидаясь ответа
         // на окно предложения (иначе после компаса игрок запирался).
         state.city.traveler_house_offered = true;
         assert!(traveler_house_offer_made(&state));
-        assert_eq!(start_traveler_house_stage(&mut state), Err(TravelerError::NoLand));
+        assert_eq!(
+            start_traveler_house_stage(&mut state),
+            Err(TravelerError::NoLand)
+        );
         rent_traveler_house(&mut state).unwrap();
         assert!(traveler_house_rented(&state));
         assert_eq!(
@@ -6774,15 +6569,19 @@ mod tests {
     }
 
     #[test]
-    fn one_friend_is_enough_for_the_house() {
+    fn compass_delivery_offers_the_house() {
         let mut state = city_with_shop();
         ensure_travelers(&mut state);
-        // Сблизился только первый — третий по-прежнему чужой.
-        state.city.travelers[0].friendship = balance::TRAVELER_FRIENDSHIP_MAX;
-        assert!(traveler_is_friend(&state.city.travelers[0]));
-        assert!(!traveler_is_friend(&state.city.travelers[2]));
-        // Друг сам позвал строить дом — согласие открывает землю.
-        state.city.traveler_house_offered = true;
+        // Компас приносит только тот, кто уже потерял его в походах.
+        state.add_item(TRAVELER_COMPASS_ITEM, 1);
+        assert_eq!(deliver_compass(&mut state, 0), Err(TravelerError::NoQuest));
+        state.city.travelers[0].compass_asked = true;
+        deliver_compass(&mut state, 0).unwrap();
+        assert!(state.city.traveler_house_offered);
+        assert!(state
+            .letters
+            .iter()
+            .any(|letter| letter.id == "traveler_compass_brought"));
 
         traveler_house_decision(&mut state, true);
         assert!(traveler_house_offer_made(&state));
@@ -6800,25 +6599,33 @@ mod tests {
     }
 
     #[test]
-    fn production_tax_is_charged_with_the_city_tax() {
+    fn production_salary_is_paid_with_the_wages() {
         let mut state = city_with_shop();
         state.gold = 5_000.0;
         state.city.production_value = 10_000.0;
 
+        // 5% от 10 000 = 500: налог лавки больше не берёт эту сумму.
         assert_eq!(pay_tax(&mut state), TaxOutcome::Paid);
-        // 5% от 10 000 = 500: касса пуста, списывается с золота.
+        assert!((state.gold - 5_000.0).abs() < 1e-6);
+        assert!((production_salary(&state) - 500.0).abs() < 1e-6);
+
+        // Зарплата рабочим уходит вместе с жалованьем и обнуляет поток.
+        assert_eq!(pay_salaries(&mut state), SalaryOutcome::Paid);
         assert!((state.gold - 4_500.0).abs() < 1e-6);
         assert!(state.city.production_value.abs() < 1e-6);
     }
 
     #[test]
-    fn unpaid_production_tax_leaves_a_bill() {
+    fn unpaid_production_salary_leaves_workers_unpaid() {
         let mut state = city_with_shop();
         state.gold = 0.0;
         state.city.production_value = 10_000.0;
 
-        assert_eq!(pay_tax(&mut state), TaxOutcome::Short);
-        assert!((state.city.tax_due - 500.0).abs() < 1e-6);
+        // Налог лавки пуст: счёт не выставляется, зарплата — отдельно.
+        assert_eq!(pay_tax(&mut state), TaxOutcome::Paid);
+        assert!(state.city.tax_due.abs() < 1e-6);
+        assert_eq!(pay_salaries(&mut state), SalaryOutcome::Unpaid);
+        assert!(state.city.production_value.abs() < 1e-6);
     }
 
     #[test]

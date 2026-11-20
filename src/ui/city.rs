@@ -34,16 +34,7 @@ pub enum CityView {
     Church,
     /// Дом странников: стройка, а после постройки — сами путешественники.
     TravelersHouse,
-    /// Страница разговорного квеста: история и три варианта ответа.
-    Quest,
 }
-
-/// Куда вернуться со страницы квеста (таверна или Дом странников).
-///
-/// Dioxus хранит контексты по типу, поэтому второй `Signal<CityView>` в том
-/// же дереве затёр бы первый — оборачиваем адрес возврата в свой тип.
-#[derive(Clone, Copy)]
-struct QuestReturn(Signal<CityView>);
 
 /// Золото с подписью ресурса.
 fn money(value: f64) -> String {
@@ -95,7 +86,6 @@ fn view_title(view: CityView) -> &'static str {
         CityView::Tavern => i18n::t("city.tavern"),
         CityView::Church => i18n::t("city.church"),
         CityView::TravelersHouse => i18n::t("traveler_house.title"),
-        CityView::Quest => i18n::t("traveler_quest.page_title"),
     }
 }
 
@@ -155,12 +145,6 @@ pub fn CityScreen(
 ) -> Element {
     let mut subview = subview;
     use_context_provider(move || subview);
-    // Разговорный квест открывается отдельной страницей: здесь живёт, кого
-    // именно слушаем и куда вернуться после ответа.
-    let mut quest_traveler = use_signal(|| Option::<usize>::None);
-    let quest_return = use_signal(|| CityView::Tavern);
-    use_context_provider(move || quest_traveler);
-    use_context_provider(move || QuestReturn(quest_return));
 
     // Системная «Назад» из подэкрана возвращает на карту города.
     // `peek` обязателен: обычное чтение подписало бы эффект на `subview`,
@@ -253,14 +237,7 @@ pub fn CityScreen(
     let house_offer = house_modal
         && view.city.traveler_house_offered
         && view.city.traveler_house_answer.is_none()
-        && !city::traveler_house_built(&view)
-        // Окно идёт после финального квеста: пока открыт его результат,
-        // предложение ждёт, чтобы не накрывать реплику.
-        && view
-            .city
-            .travelers
-            .iter()
-            .all(|traveler| !traveler.quest_result);
+        && !city::traveler_house_built(&view);
 
     rsx! {
         section { class: "city-screen",
@@ -268,14 +245,7 @@ pub fn CityScreen(
                 div { class: "city-head",
                     button {
                         class: "city-back",
-                        onclick: move |_| {
-                            if *subview.peek() == CityView::Quest {
-                                quest_traveler.set(None);
-                                subview.set(*quest_return.peek());
-                            } else {
-                                subview.set(CityView::Map);
-                            }
-                        },
+                        onclick: move |_| subview.set(CityView::Map),
                         "{i18n::t(\"city.back\")}"
                     }
                     h2 { class: "city-title", "{view_title(subview())}" }
@@ -379,7 +349,7 @@ pub fn CityScreen(
                             unlocked: true,
                             on_open: move |_| subview.set(CityView::Guild),
                         }
-                        
+
                         CityBuilding {
                             icon: ICON_CITY_TOWN_HALL,
                             title: i18n::t("city.town_hall").to_string(),
@@ -428,7 +398,7 @@ pub fn CityScreen(
                 CityView::Guild => rsx! {
                     GuildScreen { state, view: view.clone() }
                 },
-                
+
                 CityView::TownHall => rsx! {
                     TownHallScreen { state, view: view.clone() }
                 },
@@ -437,9 +407,6 @@ pub fn CityScreen(
                 },
                 CityView::TravelersHouse => rsx! {
                     TravelersHouseScreen { state, view: view.clone() }
-                },
-                CityView::Quest => rsx! {
-                    TravelerQuestScreen { state, view: view.clone() }
                 },
             }
 
@@ -525,9 +492,7 @@ struct TravelerView {
     name: String,
     specialism: String,
     status: String,
-    circles_text: String,
     ready: bool,
-    can_talk: bool,
     advance_text: String,
     info: Option<TravelerCardView>,
 }
@@ -547,6 +512,8 @@ fn travelers_view(state: &GameState, open: Option<usize>, with_gear: bool) -> Ve
             let waiting = !traveler.carried.is_empty() || traveler.payout > 1e-9;
             let status = if waiting {
                 i18n::t("traveler.waiting").to_string()
+            } else if city::traveler_waits_for_compass(traveler) {
+                i18n::t("traveler.lost_compass").to_string()
             } else if ready {
                 i18n::t("traveler.free").to_string()
             } else {
@@ -555,11 +522,6 @@ fn travelers_view(state: &GameState, open: Option<usize>, with_gear: bool) -> Ve
                     &[&format_duration((traveler.returns_at - now).max(0.0))],
                 )
             };
-            let circles = city::traveler_circles(traveler);
-            // «Поговорить» ведёт в историю, когда она открылась, и стоит
-            // золота, только пока дружба ещё не доросла до первого квеста.
-            let step = city::TravelerQuestStep::of(traveler);
-            let in_talk = !matches!(step, city::TravelerQuestStep::None);
             let info = if open == Some(index) {
                 Some(traveler_card(state, traveler, index, with_gear))
             } else {
@@ -570,11 +532,7 @@ fn travelers_view(state: &GameState, open: Option<usize>, with_gear: bool) -> Ve
                 name: city::traveler_name(traveler.profile_id).to_string(),
                 specialism: city::traveler_specialism(traveler.profile_id).to_string(),
                 status,
-                circles_text: traveler_circles_text(circles),
                 ready,
-                can_talk: ready
-                    && !waiting
-                    && (in_talk || state.gold + 1e-9 >= balance::TRAVELER_TALK_PRICE),
                 advance_text: i18n::tf(
                     "traveler.advance",
                     &[&money(balance::TRAVELER_LOCATIONS[0].advance)],
@@ -590,14 +548,13 @@ fn travelers_view(state: &GameState, open: Option<usize>, with_gear: bool) -> Ve
 struct TravelerCardView {
     specialism_text: String,
     advance_text: String,
-    quest_title: String,
-    quest_intro: String,
-    quest_action: String,
-    quest_compose: bool,
-    quest_kind: Option<city::TravelerQuestKind>,
-    quest_choice: String,
-    choices: Vec<TravelerChoiceView>,
-    result: Option<String>,
+    /// Строка о том, сколько походов осталось до потери компаса,
+    /// или просьба принести компас.
+    stage_text: String,
+    /// Странник ждёт компас: показываем кнопку передачи.
+    compass_wanted: bool,
+    /// Компас лежит в сумке: кнопку можно нажать.
+    compass_ready: bool,
     locations: Vec<TravelerTripView>,
     /// Что путешественник принёс и ждёт, пока это заберут.
     loot_text: String,
@@ -626,13 +583,6 @@ struct TravelerGearPickView {
     name: String,
 }
 
-/// Один вариант ответа в разговорном квесте.
-#[derive(Clone, PartialEq)]
-struct TravelerChoiceView {
-    id: String,
-    text: String,
-}
-
 /// Локация, куда можно отправить путешественника.
 #[derive(Clone, PartialEq)]
 struct TravelerTripView {
@@ -642,6 +592,8 @@ struct TravelerTripView {
     advance: String,
     closed: bool,
     can_send: bool,
+    /// Что может выпасть и с каким шансом.
+    loot_lines: Vec<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -810,9 +762,6 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
         "—".to_string()
     };
     let tax_text = i18n::tf("shop.tax_in", &[&tax_left]);
-    let production_value = view.city.production_value;
-    let production_tax = production_value * balance::CITY_PRODUCTION_TAX_PERCENT;
-    let production_text = i18n::tf("shop.production_tax", &[&money(production_tax)]);
     let tax_due = view.city.tax_due;
     let tax_due_text = i18n::tf("tax.due", &[&money(tax_due)]);
     let can_pay_tax = tax_due > 1e-6 && (shop.cash > 0.0 || view.gold > 0.0);
@@ -891,14 +840,12 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
         .unwrap_or(0);
     let picked_amount = pick_amount().clamp(1, picked_have.max(1));
     let put_id = selected_now.clone().unwrap_or_default();
-    let put_name = picked_name.clone();
     let stock_id = put_id.clone();
-    let stock_put_name = picked_name.clone();
 
     let clerk_hired = view.city.clerk_hired;
     let clerk_mult_value = format!("{:.1}", view.city.clerk_mult);
     let clerk_mult_text = i18n::tf("clerk.mult", &[&clerk_mult_value]);
-    let clerk_salary_text = i18n::tf("clerk.salary", &[&money(balance::CLERK_SALARY)]);
+    let clerk_salary_text = i18n::tf("clerk.salary", &[&money(city::clerk_salary(&view))]);
     let clerk_hire_text = i18n::tf("clerk.hire", &[&money(balance::CLERK_PRICE)]);
     let clerk_can_hire = !clerk_hired && view.gold + 1e-9 >= balance::CLERK_PRICE;
 
@@ -915,18 +862,13 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                         class: "city-btn small",
                         disabled: shop.cash <= 0.0,
                         onclick: move |_| {
-                            let taken = {
+                            {
                                 let mut guard = state.write();
-                                city::withdraw_cash(&mut guard)
-                            };
-                            message
-                                .set(
-                                    if taken > 0.0 {
-                                        i18n::tf("shop.withdrawn", &[&money(taken)])
-                                    } else {
-                                        i18n::t("err.no_gold").to_string()
-                                    },
-                                );
+                                city::withdraw_cash(&mut guard);
+                            }
+                            // Без текста: касса и кошелёк сами показывают
+                            // новую сумму.
+                            message.set(String::new());
                             refresh_view(state);
                         },
                         "{i18n::t(\"shop.withdraw\")}"
@@ -934,9 +876,6 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
                 div { class: "city-row muted",
                     span { "{tax_text}" }
-                }
-                div { class: "city-row muted",
-                    span { "{production_text}" }
                 }
                 if tax_due > 1e-6 {
                     div { class: "city-row",
@@ -1058,10 +997,9 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                                 };
                                 match outcome {
                                     Ok(()) => {
-                                        message
-                                            .set(
-                                                i18n::tf("shop.put_done", &[&format!("{} ×{}", put_name, qty)]),
-                                            );
+                                        // Без текста: полка и сумка сами
+                                        // показывают, что вещь переехала.
+                                        message.set(String::new());
                                         selected_goods.set(None);
                                         pick_amount.set(1);
                                     }
@@ -1082,13 +1020,7 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                                 };
                                 match outcome {
                                     Ok(()) => {
-                                        message
-                                            .set(
-                                                i18n::tf(
-                                                    "stock.added",
-                                                    &[&format!("{} ×{}", stock_put_name, qty)],
-                                                ),
-                                            );
+                                        message.set(String::new());
                                         selected_goods.set(None);
                                         pick_amount.set(1);
                                     }
@@ -1146,6 +1078,22 @@ fn ShopScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                     div { class: "city-row muted",
                         span { "{clerk_salary_text}" }
+                    }
+                    // Пауза приказчика: он перестаёт трогать полки и склад.
+                    button {
+                        class: if view.city.clerk_paused { "city-btn paused" } else { "city-btn" },
+                        onclick: move |_| {
+                            {
+                                let mut guard = state.write();
+                                city::toggle_clerk_pause(&mut guard);
+                            }
+                            refresh_view(state);
+                        },
+                        if view.city.clerk_paused {
+                            "{i18n::t(\"clerk.resume\")}"
+                        } else {
+                            "{i18n::t(\"clerk.pause\")}"
+                        }
                     }
                     button {
                         class: "city-btn",
@@ -1280,7 +1228,6 @@ fn StockPanel(state: Signal<GameState>, view: GameState, message: Signal<String>
         .map(|row| row.name.clone())
         .unwrap_or_default();
     let item_have = picked_row.as_ref().map(|row| row.quantity).unwrap_or(0);
-    let back_name = item_name.clone();
     let amount_now = amount().clamp(1, item_have.max(1));
 
     rsx! {
@@ -1380,13 +1327,7 @@ fn StockPanel(state: Signal<GameState>, view: GameState, message: Signal<String>
                             };
                             match outcome {
                                 Ok(()) => {
-                                    message
-                                        .set(
-                                            i18n::tf(
-                                                "stock.put_done",
-                                                &[&format!("{quantity} × {item_name}")],
-                                            ),
-                                        );
+                                    message.set(String::new());
                                     picked.set(None);
                                     amount.set(1);
                                 }
@@ -1409,13 +1350,7 @@ fn StockPanel(state: Signal<GameState>, view: GameState, message: Signal<String>
                             };
                             match outcome {
                                 Ok(()) => {
-                                    message
-                                        .set(
-                                            i18n::tf(
-                                                "stock.back_done",
-                                                &[&format!("{quantity} × {back_name}")],
-                                            ),
-                                        );
+                                    message.set(String::new());
                                     picked.set(None);
                                     amount.set(1);
                                 }
@@ -1659,10 +1594,7 @@ fn ChurchScreen(state: Signal<GameState>, view: GameState) -> Element {
     } else {
         i18n::tf("church.cooldown", &[&format_duration(confession_left)])
     };
-    let missed_text = i18n::tf(
-        "church.missed",
-        &[&view.city.taxes_missed.to_string()],
-    );
+    let missed_text = i18n::tf("church.missed", &[&view.city.taxes_missed.to_string()]);
     let message_text = message();
 
     rsx! {
@@ -1980,6 +1912,8 @@ fn TravelersHouseScreen(state: Signal<GameState>, view: GameState) -> Element {
 fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut state = state;
     let mut message = use_signal(String::new);
+    // Две вкладки: обзор лавки и налог с зарплатой рабочим.
+    let mut tab = use_signal(|| 0usize);
     let shop = view.city.shop.clone().unwrap_or_default();
     let sales = shop.total_sales;
     let sales_text = i18n::tf("town_hall.sales", &[&sales.to_string()]);
@@ -2063,7 +1997,78 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
     } else {
         i18n::t("traveler_house.rented").to_string()
     };
+
+    // Вкладка «Налог»: налог магазина и зарплата рабочим отдельными строками.
+    let tax_shop_percent = i18n::tf(
+        "town_hall.tax_shop",
+        &[&format_num(balance::CITY_TAX_PERCENT * 100.0)],
+    );
+    let cycle_revenue: f64 = shop
+        .sales
+        .iter()
+        .filter(|sale| sale.timestamp >= view.total_play_seconds - balance::CITY_TAX_INTERVAL)
+        .map(|sale| sale.total)
+        .sum();
+    let shop_tax_line = i18n::tf(
+        "town_hall.tax_shop_line",
+        &[&money(cycle_revenue * balance::CITY_TAX_PERCENT)],
+    );
+    let workers_line = i18n::tf(
+        "town_hall.salary_workers",
+        &[&money(city::production_salary(&view))],
+    );
+    let salary_line = i18n::tf(
+        "town_hall.salary_total",
+        &[&money(city::salary_total(&view))],
+    );
+    let salary_next = match city::salary_due_in(&view) {
+        Some(left) => i18n::tf("town_hall.salary_next", &[&format_duration(left)]),
+        None => String::new(),
+    };
+
     rsx! {
+        div { class: "tavern-tabs",
+            button {
+                class: if tab() == 0 { "city-tab active" } else { "city-btn small" },
+                onclick: move |_| tab.set(0),
+                "{i18n::t(\"town_hall.tab_overview\")}"
+            }
+            button {
+                class: if tab() == 1 { "city-tab active" } else { "city-btn small" },
+                onclick: move |_| tab.set(1),
+                "{i18n::t(\"town_hall.tab_tax\")}"
+            }
+        }
+
+        if tab() == 1 {
+            div { class: "city-card",
+                div { class: "city-row",
+                    span { "{tax_shop_percent}" }
+                }
+                div { class: "city-row",
+                    span { "{shop_tax_line}" }
+                }
+                div { class: "city-row muted",
+                    span { "{taxes_text}" }
+                }
+            }
+            div { class: "city-card",
+                div { class: "city-row",
+                    span { "{workers_line}" }
+                }
+                div { class: "city-row",
+                    span { "{salary_line}" }
+                }
+                if !salary_next.is_empty() {
+                    div { class: "city-row muted",
+                        span { "{salary_next}" }
+                    }
+                }
+                div { class: "city-row muted",
+                    span { "{i18n::t(\"town_hall.salary_hint\")}" }
+                }
+            }
+        } else {
         div { class: "city-card",
             div { class: "city-row",
                 span { "{sales_text}" }
@@ -2138,9 +2143,6 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
                     "{charter_buy}"
                 }
             }
-            if !message().is_empty() {
-                div { class: "city-msg", "{message()}" }
-            }
         }
 
         div { class: "city-card",
@@ -2172,9 +2174,6 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
                     "{first_permit_buy}"
                 }
             }
-            if !message().is_empty() {
-                div { class: "city-msg", "{message()}" }
-            }
         }
 
         div { class: "city-card",
@@ -2203,9 +2202,6 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
                     },
                     "{permit_buy}"
                 }
-            }
-            if !message().is_empty() {
-                div { class: "city-msg", "{message()}" }
             }
         }
 
@@ -2250,6 +2246,12 @@ fn TownHallScreen(state: Signal<GameState>, view: GameState) -> Element {
                     }
                 }
             }
+        }
+        // Одно сообщение на всю ратушу: раньше одинаковый текст висел
+        // под каждым блоком (грамота, разрешения, дом).
+        if !message().is_empty() {
+            div { class: "city-msg", "{message()}" }
+        }
         }
     }
 }
@@ -2391,15 +2393,15 @@ fn TavernScreen(state: Signal<GameState>, view: GameState) -> Element {
 
 /// Список путешественников с раскрывающимися карточками.
 ///
-/// `with_gear` включается только в Доме странников: снаряжение
-/// разрешено надевать лишь там.
+/// `with_gear` включается только в Доме странников: там жители стоят
+/// квадратами, как в сумке, а снаряжение можно надевать лишь там.
 #[component]
 fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> Element {
     let mut state = state;
     let mut message = use_signal(String::new);
     let mut open = use_signal(|| Option::<usize>::None);
     // Письмо о возвращении раскрывает нужную карточку: фокус приходит
-    // из `CityView::Traveler` и срабатывает один раз.
+    // из письма в колокольчике и срабатывает один раз.
     let focus = use_context::<TravelerFocus>().0;
     use_effect(move || {
         if let Some(index) = focus() {
@@ -2409,10 +2411,6 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
     });
     let house_built = city::traveler_house_built(&view);
     let travelers = travelers_view(&view, open(), with_gear);
-    // «Поговорить» из общего списка открывает историю отдельной страницей.
-    let mut quest_traveler = use_context::<Signal<Option<usize>>>();
-    let mut screen = use_context::<Signal<CityView>>();
-    let mut quest_return = use_context::<QuestReturn>().0;
     let free_count = view
         .city
         .travelers
@@ -2423,7 +2421,7 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
         "traveler.counter",
         &[
             &free_count.to_string(),
-            &balance::TRAVELER_TARGET_COUNT.to_string(),
+            &view.city.travelers.len().to_string(),
         ],
     );
     let away_text = i18n::t("traveler.all_away").to_string();
@@ -2437,9 +2435,7 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
                     "traveler.will_back",
                     &[
                         city::traveler_name(traveler.profile_id),
-                        &format_duration(
-                            (traveler.returns_at - view.total_play_seconds).max(0.0),
-                        ),
+                        &format_duration((traveler.returns_at - view.total_play_seconds).max(0.0)),
                     ],
                 )
             })
@@ -2452,6 +2448,11 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
     } else {
         i18n::t("traveler.house_hint").to_string()
     };
+    // В Доме мест всего пять: когда они кончились, квадрат «+» гаснет.
+    let can_hire = with_gear && view.city.travelers.len() < city::TRAVELER_PROFILES.len();
+    let hire_price = city::traveler_hire_price(&view);
+    let hire_text = i18n::tf("traveler.hire_price", &[&money(hire_price)]);
+    let full_text = i18n::t("traveler.house_full").to_string();
     let message_text = message();
 
     rsx! {
@@ -2471,6 +2472,65 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
             }
             if travelers.is_empty() {
                 p { class: "city-hint", "{i18n::t(\"traveler.none\")}" }
+            } else if with_gear {
+                // Дом странников: квадраты жителей и «+» для найма.
+                div { class: "traveler-grid",
+                    for traveler in travelers.iter() {
+                        {
+                            let index = traveler.index;
+                            let name = traveler.name.clone();
+                            let status = traveler.status.clone();
+                            let ready = traveler.ready;
+                            let open_now = traveler.info.is_some();
+                            rsx! {
+                                button {
+                                    class: if open_now { "traveler-tile active" } else { "traveler-tile" },
+                                    key: "{index}",
+                                    onclick: move |_| {
+                                        let current = open();
+                                        open.set(if current == Some(index) { None } else { Some(index) });
+                                    },
+                                    span { class: "traveler-face", "👤" }
+                                    span { class: "traveler-tile-name", "{name}" }
+                                    span {
+                                        class: if ready { "traveler-tile-status" } else { "traveler-tile-status away" },
+                                        "{status}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    div { class: "traveler-hire",
+                        button {
+                            class: if can_hire { "traveler-tile hire" } else { "traveler-tile hire full" },
+                            disabled: !can_hire,
+                            onclick: move |_| {
+                                let outcome = {
+                                    let mut guard = state.write();
+                                    city::hire_traveler(&mut guard)
+                                };
+                                match outcome {
+                                    Ok(()) => message.set(String::new()),
+                                    Err(error) => message.set(error.text().to_string()),
+                                }
+                                refresh_view(state);
+                            },
+                            "+"
+                        }
+                        span { class: "traveler-hire-price",
+                            if can_hire {
+                                "{hire_text}"
+                            } else {
+                                "{full_text}"
+                            }
+                        }
+                    }
+                }
+                for traveler in travelers {
+                    if let Some(card) = traveler.info {
+                        TravelerCard { state, index: traveler.index, card }
+                    }
+                }
             } else {
                 for traveler in travelers {
                     {
@@ -2478,59 +2538,26 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
                         let name = traveler.name;
                         let specialism = traveler.specialism;
                         let status = traveler.status;
-                        let circles = traveler.circles_text;
                         let ready = traveler.ready;
-                        let can_talk = traveler.can_talk;
                         let advance = traveler.advance_text;
                         let info = traveler.info;
                         let open_now = info.is_some();
                         rsx! {
-                            div { class: "city-row traveler-row", key: "{index}",
-                                div { class: "traveler-main",
-                                    button {
-                                        class: "traveler-name-btn",
-                                        onclick: move |_| {
-                                            let current = open();
-                                            open.set(if current == Some(index) { None } else { Some(index) });
-                                        },
-                                        span { class: "traveler-face", "👤" }
-                                        span { class: "traveler-names",
-                                            span { class: "city-upgrade-name", "{name}" }
-                                            span { class: "city-row-muted", "{specialism}" }
-                                        }
+                            div { class: "traveler-block", key: "{index}",
+                                button {
+                                    class: "traveler-main traveler-name-btn",
+                                    onclick: move |_| {
+                                        let current = open();
+                                        open.set(if current == Some(index) { None } else { Some(index) });
+                                    },
+                                    span { class: "traveler-face", "👤" }
+                                    span { class: "traveler-names",
+                                        span { class: "city-upgrade-name", "{name}" }
+                                        span { class: "city-row-muted", "{specialism}" }
                                     }
                                     span { class: if ready { "traveler-chip" } else { "traveler-chip away" }, "{status}" }
-                                    span { class: "traveler-circles", "{circles}" }
-                                    button {
-                                        class: "city-btn small",
-                                        disabled: !can_talk,
-                                        onclick: move |_| {
-                                            let outcome = {
-                                                let mut guard = state.write();
-                                                city::talk_to_traveler(&mut guard, index)
-                                            };
-                                            match outcome {
-                                                Ok(city::TravelerTalk::Quest) => {
-                                                    message.set(String::new());
-                                                    // История открылась сразу: ведём
-                                                    // игрока на её страницу.
-                                                    quest_traveler.set(Some(index));
-                                                    quest_return.set(*screen.peek());
-                                                    screen.set(CityView::Quest);
-                                                }
-                                                Ok(city::TravelerTalk::Friendship) => {
-                                                    message.set(String::new())
-                                                }
-                                                Err(error) => message.set(error.text().to_string()),
-                                            }
-                                            refresh_view(state);
-                                        },
-                                        if ready {
-                                            "{i18n::t(\"traveler.talk\")}"
-                                        } else {
-                                            "—"
-                                        }
-                                    }
+                                }
+                                div { class: "traveler-main traveler-actions",
                                     span { class: "city-row-muted traveler-advance", "{advance}" }
                                 }
                                 if open_now {
@@ -2542,173 +2569,19 @@ fn TravelerList(state: Signal<GameState>, view: GameState, with_gear: bool) -> E
                         }
                     }
                 }
-                if !away_lines.is_empty() {
+            }
+            if !away_lines.is_empty() {
+                div { class: "city-row muted",
+                    span { "{away_text}" }
+                }
+                for line in away_lines {
                     div { class: "city-row muted",
-                        span { "{away_text}" }
-                    }
-                    for line in away_lines {
-                        div { class: "city-row muted",
-                            span { "{line}" }
-                        }
+                        span { "{line}" }
                     }
                 }
             }
             if !message_text.is_empty() {
                 div { class: "city-msg", "{message_text}" }
-            }
-        }
-    }
-}
-
-/// Страница разговорного квеста: история, вопрос и три варианта ответа.
-///
-/// Отдельным экраном, а не строкой в карточке: на телефоне три длинных
-/// ответа в узкой карточке не читались.
-#[component]
-fn TravelerQuestScreen(state: Signal<GameState>, view: GameState) -> Element {
-    let mut state = state;
-    let mut message = use_signal(String::new);
-    let mut quest_traveler = use_context::<Signal<Option<usize>>>();
-    let mut screen = use_context::<Signal<CityView>>();
-    let origin = use_context::<QuestReturn>().0;
-    let message_text = message();
-    let Some(index) = quest_traveler() else {
-        return rsx! {
-            p { class: "city-hint", "{i18n::t(\"traveler.quest_missing\")}" }
-        };
-    };
-    let Some(traveler) = view.city.travelers.get(index) else {
-        return rsx! {
-            p { class: "city-hint", "{i18n::t(\"traveler.quest_missing\")}" }
-        };
-    };
-    let name = city::traveler_name(traveler.profile_id).to_string();
-    let circles = traveler_circles_text(city::traveler_circles(traveler));
-    let step = city::TravelerQuestStep::of(traveler);
-
-    let mut title = String::new();
-    let mut intro = String::new();
-    let mut ask = String::new();
-    let mut choices: Vec<TravelerChoiceView> = Vec::new();
-    let mut result_text = String::new();
-    let mut is_result = false;
-    let mut is_compass = false;
-    let mut compass_have = false;
-    match &step {
-        city::TravelerQuestStep::Active(quest_id) | city::TravelerQuestStep::Start(quest_id) => {
-            if let Some(quest) = city::traveler_quest(quest_id) {
-                title = i18n::t(&format!("traveler_quest.{quest_id}.title")).to_string();
-                intro = i18n::t(&format!("traveler_quest.{quest_id}.intro")).to_string();
-                ask = i18n::t(&format!("traveler_quest.{quest_id}.ask")).to_string();
-                is_compass = quest.kind == city::TravelerQuestKind::Compass;
-                compass_have = view.item_count(city::TRAVELER_COMPASS_ITEM) > 0;
-                for choice in quest.choices {
-                    choices.push(TravelerChoiceView {
-                        id: choice.id.to_string(),
-                        text: i18n::t(&format!("traveler_quest.{quest_id}.choice.{}", choice.id))
-                            .to_string(),
-                    });
-                }
-            }
-        }
-        city::TravelerQuestStep::Result { quest, good, .. } => {
-            is_result = true;
-            let key = if *good { "good" } else { "bad" };
-            result_text =
-                i18n::t(&format!("traveler_quest.{quest}.result_{key}")).to_string();
-        }
-        _ => {}
-    }
-    rsx! {
-        div { class: "city-card traveler-quest-page",
-            div { class: "traveler-quest-head",
-                span { class: "traveler-face", "👤" }
-                span { class: "traveler-names",
-                    span { class: "city-upgrade-name", "{name}" }
-                    span { class: "traveler-circles", "{circles}" }
-                }
-            }
-            if is_result {
-                p { class: "traveler-result", "{result_text}" }
-                button {
-                    class: "city-btn",
-                    onclick: move |_| {
-                        {
-                            let mut guard = state.write();
-                            let _ = city::finish_traveler_quest(&mut guard, index);
-                        }
-                        refresh_view(state);
-                        screen.set(*origin.peek());
-                    },
-                    "{i18n::t(\"traveler.quest_close\")}"
-                }
-            } else if is_compass {
-                span { class: "city-upgrade-name", "{title}" }
-                p { class: "traveler-intro", "{intro}" }
-                p { class: "traveler-ask", "{ask}" }
-                button {
-                    class: "city-btn",
-                    disabled: !compass_have,
-                    onclick: move |_| {
-                        let outcome = {
-                            let mut guard = state.write();
-                            city::deliver_compass(&mut guard, index)
-                        };
-                        match outcome {
-                            Ok(()) => message.set(i18n::t("traveler.compass_given").to_string()),
-                            Err(error) => message.set(error.text().to_string()),
-                        }
-                        refresh_view(state);
-                    },
-                    if compass_have {
-                        "{i18n::t(\"traveler.give_compass\")}"
-                    } else {
-                        "{i18n::t(\"traveler.need_compass\")}"
-                    }
-                }
-            } else if !ask.is_empty() {
-                span { class: "city-upgrade-name", "{title}" }
-                p { class: "traveler-intro", "{intro}" }
-                p { class: "traveler-ask", "{ask}" }
-                div { class: "traveler-choice-list",
-                    for choice in choices {
-                        {
-                            let id = choice.id.clone();
-                            let text = choice.text.clone();
-                            rsx! {
-                                button {
-                                    class: "traveler-choice",
-                                    onclick: move |_| {
-                                        let outcome = {
-                                            let mut guard = state.write();
-                                            city::answer_traveler_quest(&mut guard, index, &id)
-                                        };
-                                        if let Err(error) = outcome {
-                                            message.set(error.text().to_string());
-                                        }
-                                        refresh_view(state);
-                                    },
-                                    "{text}"
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                p { class: "city-hint", "{i18n::t(\"traveler.quest_missing\")}" }
-            }
-            if !message_text.is_empty() {
-                div { class: "city-msg", "{message_text}" }
-            }
-            if !is_result {
-                button {
-                    class: "city-btn small",
-                    onclick: move |_| {
-                        quest_traveler.set(None);
-                        screen.set(*origin.peek());
-                    },
-                    "{i18n::t(\"city.back\")}"
-                }
             }
         }
     }
@@ -2779,10 +2652,31 @@ fn dice_text(result: &DiceResult) -> String {
     }
 }
 
-/// Строка из пяти кружков дружбы.
-fn traveler_circles_text(circles: u32) -> String {
-    (0..city::TRAVELER_CIRCLES)
-        .map(|index| if index < circles { "●" } else { "○" })
+/// Что может выпасть в локации и с каким шансом.
+///
+/// Игрок просил показать это прямо в блоке направления, чтобы не гадать,
+/// зачем платить аванс.
+fn traveler_loot_lines(location: &balance::TravelerLocationDef) -> Vec<String> {
+    let total: u64 = location.loot.iter().map(|row| row.weight as u64).sum();
+    if total == 0 {
+        return Vec::new();
+    }
+    location
+        .loot
+        .iter()
+        .map(|row| {
+            let percent = row.weight as f64 / total as f64 * 100.0;
+            let name = ingredient_name(row.item_id);
+            let quantity = if row.min_quantity == row.max_quantity {
+                row.min_quantity.to_string()
+            } else {
+                format!("{}–{}", row.min_quantity, row.max_quantity)
+            };
+            i18n::tf(
+                "traveler.loot_line",
+                &[name, &quantity, &format!("{percent:.0}")],
+            )
+        })
         .collect()
 }
 
@@ -2793,58 +2687,28 @@ fn traveler_card(
     _index: usize,
     with_gear: bool,
 ) -> TravelerCardView {
-    let step = city::TravelerQuestStep::of(traveler);
-    let mut quest_title = String::new();
-    let mut quest_intro = String::new();
-    let mut quest_action = String::new();
-    let mut quest_compose = false;
-    let mut quest_kind = None;
-    let mut quest_choice = String::new();
-    let mut choices = Vec::new();
-    let mut result = None;
-    match step {
-        city::TravelerQuestStep::None => {
-            quest_title = i18n::t("traveler.quest_none").to_string();
-            quest_intro = i18n::t("traveler.quest_none_hint").to_string();
+    // Этап странника: походы до потери компаса, просьба о компасе или уже
+    // предложенный Дом.
+    let (stage_text, compass_wanted, compass_ready) = match city::TravelerStage::of(view, traveler)
+    {
+        city::TravelerStage::Trips { left } => (
+            i18n::tf("traveler.stage_trips", &[&left.to_string()]),
+            false,
+            false,
+        ),
+        city::TravelerStage::Compass => (
+            i18n::t("traveler.stage_compass").to_string(),
+            true,
+            view.item_count(city::TRAVELER_COMPASS_ITEM) > 0,
+        ),
+        city::TravelerStage::HouseOffered => {
+            (i18n::t("traveler.stage_house").to_string(), false, false)
         }
-        city::TravelerQuestStep::Start(quest_id) => {
-            if let Some(quest) = city::traveler_quest(&quest_id) {
-                quest_title = i18n::t(&format!("traveler_quest.{quest_id}.title")).to_string();
-                quest_intro = i18n::t(&format!("traveler_quest.{quest_id}.intro")).to_string();
-                quest_action = i18n::t("traveler.quest_start").to_string();
-                quest_kind = Some(quest.kind);
-            }
-        }
-        city::TravelerQuestStep::Active(quest_id) => {
-            if let Some(quest) = city::traveler_quest(&quest_id) {
-                quest_title = i18n::t(&format!("traveler_quest.{quest_id}.title")).to_string();
-                quest_intro = i18n::t(&format!("traveler_quest.{quest_id}.intro")).to_string();
-                quest_kind = Some(quest.kind);
-                quest_choice = i18n::t(&format!("traveler_quest.{quest_id}.ask")).to_string();
-                for choice in quest.choices {
-                    choices.push(TravelerChoiceView {
-                        id: choice.id.to_string(),
-                        text: i18n::t(&format!("traveler_quest.{quest_id}.choice.{}", choice.id))
-                            .to_string(),
-                    });
-                }
-                if quest.kind == city::TravelerQuestKind::Compass {
-                    let have = view.item_count(city::TRAVELER_COMPASS_ITEM) > 0;
-                    quest_compose = !have;
-                    quest_action = if have {
-                        i18n::t("traveler.give_compass").to_string()
-                    } else {
-                        i18n::t("traveler.need_compass").to_string()
-                    };
-                }
-            }
-        }
-        city::TravelerQuestStep::Result { quest, good, .. } => {
-            let key = if good { "good" } else { "bad" };
-            result = Some(i18n::t(&format!("traveler_quest.{quest}.result_{key}")).to_string());
-        }
-        city::TravelerQuestStep::OfferHouse => {}
-    }
+    };
+    let can_go = city::traveler_ready(traveler)
+        && !compass_wanted
+        && traveler.carried.is_empty()
+        && traveler.payout <= 1e-9;
     let locations = balance::TRAVELER_LOCATIONS
         .iter()
         .map(|location| {
@@ -2855,11 +2719,8 @@ fn traveler_card(
                 time: i18n::tf("traveler.minutes", &[&format_num(location.minutes)]),
                 advance: i18n::tf("traveler.advance", &[&money(location.advance)]),
                 closed,
-                can_send: !closed
-                    && city::traveler_ready(traveler)
-                    && traveler.carried.is_empty()
-                    && traveler.payout <= 1e-9
-                    && view.gold + 1e-9 >= location.advance,
+                can_send: !closed && can_go && view.gold + 1e-9 >= location.advance,
+                loot_lines: traveler_loot_lines(location),
             }
         })
         .collect();
@@ -2867,7 +2728,11 @@ fn traveler_card(
         .carried
         .iter()
         .map(|(item_id, quantity)| {
-            format!("{} {}", ingredient_name(item_id), format_num(*quantity as f64))
+            format!(
+                "{} {}",
+                ingredient_name(item_id),
+                format_num(*quantity as f64)
+            )
         })
         .collect();
     let loot_text = if loot_parts.is_empty() {
@@ -2943,14 +2808,9 @@ fn traveler_card(
             "traveler.advance_mid",
             &[&money(balance::TRAVELER_LOCATIONS[0].advance)],
         ),
-        quest_title,
-        quest_intro,
-        quest_action,
-        quest_compose,
-        quest_kind,
-        quest_choice,
-        choices,
-        result,
+        stage_text,
+        compass_wanted,
+        compass_ready,
         locations,
         loot_text,
         payout_text,
@@ -2968,87 +2828,40 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
     let mut state = state;
     let mut message = use_signal(String::new);
     let mut gear_slot = use_signal(|| 0usize);
-    // Контексты берём на отрисовке: `use_context` внутри обработчика клика
-    // вызывается вне рендера и роняет приложение.
-    let mut quest_traveler = use_context::<Signal<Option<usize>>>();
-    let mut screen = use_context::<Signal<CityView>>();
-    let mut quest_return = use_context::<QuestReturn>().0;
+    // Сумка открывается тапом по квадрату снаряжения и прячется после выбора.
+    let mut gear_pick_open = use_signal(|| false);
     let message_text = message();
-    let has_result = card.result.is_some();
     rsx! {
         div { class: "traveler-card",
             div { class: "city-row",
                 span { class: "city-row-muted", "{card.specialism_text}" }
                 span { class: "city-row-muted", "{card.advance_text}" }
             }
-            if !has_result && !card.quest_title.is_empty() {
-                div { class: "traveler-quest",
-                    span { class: "city-upgrade-name", "{card.quest_title}" }
-                    span { class: "city-row-muted", "{card.quest_intro}" }
-                    if card.quest_kind == Some(city::TravelerQuestKind::Compass) {
-                        button {
-                            class: "city-btn",
-                            disabled: card.quest_compose,
-                            onclick: move |_| {
-                                let outcome = {
-                                    let mut guard = state.write();
-                                    city::deliver_compass(&mut guard, index)
-                                };
-                                match outcome {
-                                    Ok(()) => message.set(i18n::t("traveler.compass_given").to_string()),
-                                    Err(error) => message.set(error.text().to_string()),
+            div { class: "traveler-stage",
+                span { class: "city-row-muted", "{card.stage_text}" }
+                if card.compass_wanted {
+                    button {
+                        class: "city-btn",
+                        disabled: !card.compass_ready,
+                        onclick: move |_| {
+                            let outcome = {
+                                let mut guard = state.write();
+                                city::deliver_compass(&mut guard, index)
+                            };
+                            match outcome {
+                                Ok(()) => {
+                                    message.set(i18n::t("traveler.compass_given").to_string())
                                 }
-                                refresh_view(state);
-                            },
-                            "{card.quest_action}"
-                        }
-                    } else if !card.quest_action.is_empty() {
-                        button {
-                            class: "city-btn",
-                            onclick: move |_| {
-                                let outcome = {
-                                    let mut guard = state.write();
-                                    city::start_traveler_quest(&mut guard, index)
-                                };
-                                match outcome {
-                                    Ok(()) => {
-                                        // История открывается отдельной страницей.
-                                        quest_traveler.set(Some(index));
-                                        quest_return.set(*screen.peek());
-                                        screen.set(CityView::Quest);
-                                    }
-                                    Err(error) => message.set(error.text().to_string()),
-                                }
-                                refresh_view(state);
-                            },
-                            "{card.quest_action}"
-                        }
-                    } else if !card.quest_choice.is_empty() {
-                        // Квест уже начат: возвращаемся на его страницу.
-                        button {
-                            class: "city-btn",
-                            onclick: move |_| {
-                                quest_traveler.set(Some(index));
-                                quest_return.set(*screen.peek());
-                                screen.set(CityView::Quest);
-                            },
-                            "{i18n::t(\"traveler.quest_open\")}"
+                                Err(error) => message.set(error.text().to_string()),
+                            }
+                            refresh_view(state);
+                        },
+                        if card.compass_ready {
+                            "{i18n::t(\"traveler.give_compass\")}"
+                        } else {
+                            "{i18n::t(\"traveler.need_compass\")}"
                         }
                     }
-                }
-            }
-            if let Some(text) = card.result.clone() {
-                div { class: "traveler-result", "{text}" }
-                button {
-                    class: "city-btn small",
-                    onclick: move |_| {
-                        {
-                            let mut guard = state.write();
-                            let _ = city::finish_traveler_quest(&mut guard, index);
-                        }
-                        refresh_view(state);
-                    },
-                    "{i18n::t(\"traveler.quest_close\")}"
                 }
             }
             if card.claim_ready {
@@ -3084,67 +2897,90 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                     div { class: "city-row muted",
                         span { "{i18n::t(\"traveler.gear\")}" }
                     }
-                    for gear in card.gear {
-                        {
-                            let slot = gear.slot;
-                            let label = gear.label.clone();
-                            let worn_id = gear.item_id.clone();
-                            let worn_name = gear.name.clone();
-                            let active = if gear_slot() == slot {
-                                " city-btn small active"
+                    // Квадраты снаряжения как в сумке: тап открывает выбор
+                    // вещи, повторный тап по надетой — снимает.
+                    div { class: "traveler-gear-grid",
+                        for gear in card.gear.iter() {
+                            {
+                                let slot = gear.slot;
+                                let label = gear.label.clone();
+                                let worn_name = gear.name.clone();
+                                let active = if gear_slot() == slot {
+                                    " traveler-gear-tile active"
+                                } else {
+                                    " traveler-gear-tile"
+                                };
+                                rsx! {
+                                    button {
+                                        class: "{active}",
+                                        onclick: move |_| {
+                                            let current = gear_slot();
+                                            gear_slot.set(slot);
+                                            gear_pick_open.set(current != slot);
+                                        },
+                                        span { class: "traveler-gear-label", "{label}" }
+                                        span { class: "traveler-gear-name", "{worn_name}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Сумка игрока: открывается между снаряжением и локациями.
+                    if gear_pick_open() {
+                        div { class: "traveler-gear-bag",
+                            if card.gear_picks.is_empty() {
+                                div { class: "city-row muted",
+                                    span { "{i18n::t(\"traveler.gear_none\")}" }
+                                }
                             } else {
-                                " city-btn small"
-                            };
-                            rsx! {
-                                div { class: "city-row traveler-gear-row",
-                                    button { class: "{active}", onclick: move |_| gear_slot.set(slot), "{label}" }
-                                    span { class: "city-upgrade-name", "{worn_name}" }
-                                    if worn_id.is_some() {
-                                        button {
-                                            class: "city-btn small",
-                                            onclick: move |_| {
-                                                let outcome = {
-                                                    let mut guard = state.write();
-                                                    city::unequip_traveler_gear(&mut guard, index, slot)
-                                                };
-                                                if let Err(error) = outcome {
-                                                    message.set(error.text().to_string());
-                                                }
-                                                refresh_view(state);
-                                            },
-                                            "{i18n::t(\"traveler.gear_take\")}"
+                                for pick in card.gear_picks {
+                                    {
+                                        let item_id = pick.item_id.clone();
+                                        let name = pick.name.clone();
+                                        rsx! {
+                                            button {
+                                                class: "city-btn small",
+                                                onclick: move |_| {
+                                                    let slot = gear_slot();
+                                                    let outcome = {
+                                                        let mut guard = state.write();
+                                                        city::equip_traveler_gear(&mut guard, index, slot, &item_id)
+                                                    };
+                                                    match outcome {
+                                                        Ok(()) => gear_pick_open.set(false),
+                                                        Err(error) => {
+                                                            message.set(error.text().to_string())
+                                                        }
+                                                    }
+                                                    refresh_view(state);
+                                                },
+                                                "{name}"
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    if card.gear_picks.is_empty() {
-                        div { class: "city-row muted",
-                            span { "{i18n::t(\"traveler.gear_none\")}" }
-                        }
-                    } else {
-                        div { class: "traveler-gear-picks",
-                            for pick in card.gear_picks {
-                                {
-                                    let item_id = pick.item_id.clone();
-                                    let name = pick.name.clone();
-                                    rsx! {
-                                        button {
-                                            class: "city-btn small",
-                                            onclick: move |_| {
-                                                let slot = gear_slot();
-                                                let outcome = {
-                                                    let mut guard = state.write();
-                                                    city::equip_traveler_gear(&mut guard, index, slot, &item_id)
-                                                };
-                                                if let Err(error) = outcome {
-                                                    message.set(error.text().to_string());
-                                                }
-                                                refresh_view(state);
-                                            },
-                                            "{name}"
-                                        }
+                    // Надетую вещь снимают тапом по её квадрату ещё раз.
+                    for gear in card.gear.clone() {
+                        if gear.item_id.is_some() && gear_slot() == gear.slot {
+                            {
+                                let slot = gear.slot;
+                                rsx! {
+                                    button {
+                                        class: "city-btn small",
+                                        onclick: move |_| {
+                                            let outcome = {
+                                                let mut guard = state.write();
+                                                city::unequip_traveler_gear(&mut guard, index, slot)
+                                            };
+                                            if let Err(error) = outcome {
+                                                message.set(error.text().to_string());
+                                            }
+                                            refresh_view(state);
+                                        },
+                                        "{i18n::t(\"traveler.gear_take\")}"
                                     }
                                 }
                             }
@@ -3158,6 +2994,7 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
             div { class: "city-row muted",
                 span { "{i18n::t(\"traveler.locations\")}" }
             }
+            // Каждая локация — свой блок: дроп с шансами, время и аванс.
             for location in card.locations {
                 {
                     let id = location.id.clone();
@@ -3167,12 +3004,18 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                     let closed = location.closed;
                     let can_send = location.can_send;
                     rsx! {
-                        div { class: if closed { "city-row traveler-loc closed" } else { "city-row traveler-loc" },
-                            span { class: "city-upgrade-name", "{name}" }
-                            span { class: "city-row-muted", "{time}" }
-                            span { class: "city-row-muted", "{advance}" }
+                        div { class: if closed { "traveler-loc closed" } else { "traveler-loc" },
+                            div { class: "traveler-loc-head",
+                                span { class: "city-upgrade-name", "{name}" }
+                                span { class: "city-row-muted", "{time}" }
+                            }
+                            div { class: "traveler-loc-loot",
+                                for line in location.loot_lines {
+                                    span { class: "traveler-loot-line", "{line}" }
+                                }
+                            }
                             button {
-                                class: "city-btn small",
+                                class: "city-btn traveler-loc-pay",
                                 disabled: !can_send,
                                 onclick: move |_| {
                                     let outcome = {
@@ -3188,7 +3031,7 @@ fn TravelerCard(state: Signal<GameState>, index: usize, card: TravelerCardView) 
                                 if closed {
                                     "{i18n::t(\"traveler.locked\")}"
                                 } else {
-                                    "{i18n::t(\"traveler.send\")}"
+                                    "{advance}"
                                 }
                             }
                         }

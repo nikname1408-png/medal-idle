@@ -29,6 +29,8 @@ const ICON_GEAR: Asset = asset!("/assets/icons/gear.png");
 const ICON_GOLD: Asset = asset!("/assets/icons/gold.png");
 const ICON_BOARD: Asset = asset!("/assets/icons/item_board.png");
 const ICON_IRON_INGOT: Asset = asset!("/assets/icons/item_iron_ingot.png");
+const ICON_STONE_BLOCK: Asset = asset!("/assets/icons/item_stone_block.png");
+const ICON_BRICK: Asset = asset!("/assets/icons/item_brick.png");
 const ICON_SCROLL: Asset = asset!("/assets/icons/scroll.png");
 const ICON_STEAM_PROTOTYPE: Asset = asset!("/assets/icons/item_steam_prototype.png");
 const ICON_STONE: Asset = asset!("/assets/icons/stone.png");
@@ -863,7 +865,8 @@ fn FieldScreen(state: Signal<GameState>, view: GameState) -> Element {
 #[component]
 fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
     let mut state = state;
-    let mut smith_tab = use_signal(|| false);
+    // 0 — работники, 1 — наёмные, 2 — кузнец.
+    let mut work_tab = use_signal(|| 0usize);
     let snapshot = view;
     let slots = snapshot.worker_slots();
     let free = snapshot.workers_free();
@@ -936,34 +939,42 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
     // Вкладка «Наёмные» появляется после грамоты из Ратуши, «Кузнец» —
     // после разрешения ратуши на кузницу. До покупки их не видно.
     let hired_tab_visible = snapshot.city.hire_charter;
-    let smith_tab_visible = snapshot.city.smith_first_permit
-        || snapshot.city.smiths.iter().any(|smith| smith.built);
-    // Если открыта только одна вкладка, показываем её без выбора.
-    let show_smith = if hired_tab_visible && smith_tab_visible {
-        smith_tab()
-    } else {
-        smith_tab_visible
+    let smith_tab_visible =
+        snapshot.city.smith_first_permit || snapshot.city.smiths.iter().any(|smith| smith.built);
+    // Вкладок три: работники, наёмные и кузнец. Раньше «Кузнец» занимал
+    // место вкладки «Наёмные»: после постройки кузницы рабочие пропадали
+    // из «Труда» совсем.
+    let tab = match work_tab() {
+        1 if hired_tab_visible => 1,
+        2 if smith_tab_visible => 2,
+        _ => 0,
     };
     rsx! {
         div { class: "work-tabs",
+            button {
+                class: if tab == 0 { "work-tab active" } else { "work-tab" },
+                onclick: move |_| work_tab.set(0),
+                "{i18n::t(\"sec.workers\")}"
+            }
             if hired_tab_visible {
                 button {
-                    class: if show_smith { "work-tab" } else { "work-tab active" },
-                    onclick: move |_| smith_tab.set(false),
+                    class: if tab == 1 { "work-tab active" } else { "work-tab" },
+                    onclick: move |_| work_tab.set(1),
                     "{i18n::t(\"hire.title\")}"
                 }
             }
             if smith_tab_visible {
                 button {
-                    class: if show_smith { "work-tab active" } else { "work-tab" },
-                    onclick: move |_| smith_tab.set(true),
+                    class: if tab == 2 { "work-tab active" } else { "work-tab" },
+                    onclick: move |_| work_tab.set(2),
                     "{i18n::t(\"work.smith_tab\")}"
                 }
             }
         }
-        if show_smith {
+        if tab == 2 {
             SmithSection { state, view: snapshot.clone() }
-        } else {
+        }
+        if tab == 0 {
         section { class: "section",
             div { class: "section-head static",
                 span { class: "section-title", "{i18n::t(\"sec.work\")}" }
@@ -1050,7 +1061,9 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
         }
 
         div { class: "count-note", "{workers_label}: {free} / {slots}" }
+        }
 
+        if tab == 1 {
         section { class: "section",
             div { class: "section-head static",
                 span { class: "section-title", "{i18n::t(\"hire.title\")}" }
@@ -1114,8 +1127,10 @@ fn WorkScreen(state: Signal<GameState>, view: GameState) -> Element {
                 }
             }
         }
-        SteamEraSection { state, view: snapshot.clone() }
         }
+        // «Эпоха Пара» — общая для «Труда» секция: она не должна исчезать
+        // при переключении вкладок.
+        SteamEraSection { state, view: snapshot.clone() }
     }
 }
 
@@ -1583,9 +1598,19 @@ fn SettingsScreen(state: Signal<GameState>, view: GameState, lang: Signal<i18n::
                         let current = state.peek().clone();
                         match save::export_text(&current) {
                             Ok(text) => {
-                                transfer_text.set(text);
+                                transfer_text.set(text.clone());
                                 transfer_message
                                     .set(i18n::t("settings.export_done").to_string());
+                                // Файл уходит на устройство, а текст остаётся
+                                // в поле: если браузер загрузку запретил,
+                                // сохранение всё равно можно перенести.
+                                spawn(async move {
+                                    if let Err(error) =
+                                        save::download_file(save::EXPORT_FILE_NAME, &text).await
+                                    {
+                                        eprintln!("Не удалось сохранить файл: {error}");
+                                    }
+                                });
                             }
                             Err(error) => transfer_message.set(error),
                         }
@@ -3193,6 +3218,20 @@ pub(super) fn CostLabel(view: GameState, cost: balance::Cost) -> Element {
                     icon: ICON_IRON_INGOT,
                     amount: cost.iron_ingots.to_string(),
                     poor: view.item_count("iron_ingot") < cost.iron_ingots,
+                }
+            }
+            if cost.stone_blocks > 0 {
+                CostPart {
+                    icon: ICON_STONE_BLOCK,
+                    amount: cost.stone_blocks.to_string(),
+                    poor: view.item_count("stone_block") < cost.stone_blocks,
+                }
+            }
+            if cost.bricks > 0 {
+                CostPart {
+                    icon: ICON_BRICK,
+                    amount: cost.bricks.to_string(),
+                    poor: view.item_count("brick") < cost.bricks,
                 }
             }
         }
